@@ -1,4 +1,7 @@
-# Every address this tool touches
+# Every address this tool touches -- Rainbow Six 3
+
+Ghost Recon and Jungle Storm are a different engine and live in
+[PATCHES-GHOSTRECON.md](PATCHES-GHOSTRECON.md).
 
 All addresses are virtual addresses inside the decompressed `SP.SOZ` overlay of
 **Rainbow Six 3 (PS2, SLUS-20883)**, which the EE loads at a fixed base of

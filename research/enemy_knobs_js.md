@@ -56,9 +56,9 @@ Nesting is always Company > Platoon > Team > Actor. One `<Actor>` == one soldier
 | `Normal="0"` | **soldier is REMOVED on Normal** |
 | `Hard="0"` | **soldier is REMOVED on Hard/Elite** |
 | `Hidden="1"` | starts despawned; a script spawns him in later |
-| `Idle` | idle-animation index (1..17 observed) |
-| `Stance` | 1/2/3 (stand / crouch / prone) |
-| `Lvl` | building floor index |
+| `Idle` | idle-animation index; values 1..17 observed |
+| `Stance` | 1 / 2 / 3 — a posture index. Which value is stand / crouch / prone was **not** verified. |
+| `Lvl` | always `"1"` in the retail data; **guess:** a building floor index |
 
 The difficulty attributes are **suppression flags, and their value is always `"0"`** --
 there is no `"1"` form anywhere in either game. Absence of the attribute means
@@ -172,6 +172,17 @@ Jungle Storm is the interesting one: its `DEFEND` game type carries the enemy
 counts as named, directly editable script variables. This is the closest thing
 either game has to a built-in 'enemy wave size' dial, and single-player and co-op
 carry different values (20/25/35 vs 30/40/50).
+
+The `*_Text` / `*Id` values are **string ids**, not numbers to tune. They index
+the string table that the file's `<ScriptCompiled>` blob opens with
+(`rsescript.strings()`), so they resolve:
+
+```
+Lose Text = 8   ->  "?Your base has been captured...  Defeat!"
+```
+
+`rsescript.py` run on a `.GTF` prints both tables and does that cross-reference
+for you.
 
 Every `.GTF` variable table in this game:
 
@@ -330,6 +341,11 @@ Attacker notification      = 18
 Defender notification      = 19
 ```
 
+Note `(SOLO) MOUSE HUNT.GTF` carries two variables named in French --
+`temps partie` (game time, 180) and `penalite` (10). Jungle Storm's extra
+multiplayer modes were evidently authored by a French-speaking team; Ghost
+Recon's `.GTF` set has no French names.
+
 ### 6. `.ATR` skill tiers in this game
 
 **Jungle Storm flattened the enemy skill system.** Weighted by how often each
@@ -349,6 +365,16 @@ for their clothing (`_g_regularcuba_blacksuit.atr`). So in Jungle Storm mission
 difficulty is almost **purely a head-count**, driven by the `Easy`/`Normal`/`Hard`
 suppression flags. That also means the `.ATR` skill fields are a large *untouched*
 lever here -- essentially every enemy in the game currently sits at the floor value.
+
+### 7. Where enemies are NOT
+
+`.AOL` (object list) is world props and doors, `.POL` is visibility portals and
+`.MOL` is level geometry -- despite the "object list" name, **none of them place
+a soldier**. Verified by decompressing every file in both archives and searching
+for `<Actor`: outside `.MIS`, the only file in either game with a positioned
+`<Actor>` is `/TRAINING.TOE`, which places the *player's* training squad.
+
+Every enemy in this game is in a `.MIS`, in `<Units>`. See FORMATS.md S3.1.
 
 ## Per-mission enemy head-count
 

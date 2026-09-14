@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from .engine import _backup_path, iso_crc
+from .engine import backup_dir_for, iso_crc
 from .games import BY_BOOT, PROFILES
 from .iso import Iso, IsoError
 
@@ -74,7 +74,11 @@ def identify(path) -> Detection:
     if missing:
         msgs.append("Missing from the disc: %s." % ", ".join(missing))
 
-    bak = any(os.path.exists(_backup_path(path, o.name)) for o in profile.overlays)
+    folder = backup_dir_for(path)
+    bak = (os.path.exists(os.path.join(folder, "code-words.json"))
+           or os.path.exists(os.path.join(folder, "data-edits.json"))
+           or any(os.path.exists(os.path.join(folder, "%s.orig" % o.name))
+                  for o in profile.overlays))
     return Detection(path, True, profile=profile, boot=profile.boot, crc=crc,
                      volume=volume, message=" ".join(msgs),
                      crc_matches=crc_ok, has_backup=bak)

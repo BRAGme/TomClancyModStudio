@@ -21,9 +21,16 @@ GOOD = "#6fae3f"
 
 BADGE = {
     "verified": (GOOD, "verified in game"),
-    "applied": (WARN, "patch confirmed, effect untested"),
+    "applied": (WARN, "measured, not play-tested"),
     "experimental": (WARN, "untested"),
     "broken": (BAD, "not working"),
+}
+
+#: what an option actually rewrites, shown next to its badge
+TOUCH = {
+    "code": None,
+    "data": (DIM, " GAME DATA "),
+    "cheat": (WARN, " CHEAT FILE "),
 }
 
 #: pixels-per-logical-pixel for the display the window opened on; every fixed

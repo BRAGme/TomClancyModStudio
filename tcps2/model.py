@@ -64,6 +64,9 @@ class Setting:
     #:   "experimental" -- reasoned from the disassembly, never tested
     #:   "broken"       -- known not to work, shipped disabled with the reason
     confidence: str = "verified"
+    #: what this option rewrites: "code" (the executable or overlay), "data"
+    #: (files inside the game's own archives) or "cheat" (an emulator file)
+    touches: str = "code"
 
     def coerce(self, value):
         if self.kind == BOOL:
@@ -93,6 +96,29 @@ class WordEdit:
 
 
 @dataclass
+class FileEdit:
+    """A change to data files inside the game's own archives.
+
+    `select` is a regex over the archive's upper-case paths, `op` names one of
+    the transforms in `dataedit.OPS`, and every transform is required to keep
+    the file length so the compressed chunk boundaries never move.
+    """
+    op: str
+    select: str
+    archive: str = ""
+    params: dict = field(default_factory=dict)
+    note: str = ""
+    #: extra filter resolved from the archive itself. "enemy_templates" narrows
+    #: the match to the .atr files used by non-allied companies, so a "tougher
+    #: enemies" edit cannot quietly buff the player's own squad.
+    scope: str = ""
+
+    def matches(self, key) -> bool:
+        import re
+        return bool(re.search(self.select, key, re.I))
+
+
+@dataclass
 class Overlay:
     """A patchable overlay container inside the ISO."""
     name: str            # UI name, e.g. "SP.SOZ"
@@ -101,6 +127,8 @@ class Overlay:
     kind: str = "soz"    # "soz" (u32 size + zlib) or "raw" (patch the file directly)
     image_size: int = 0  # expected decompressed size, 0 = don't check
     image_sha1: str = "" # sha1 of the PRISTINE decompressed image, "" = don't check
+    file_delta: int = 0  # byte offset in the file that base_va maps to ("raw")
+    file_span: int = 0   # how far that mapping runs, 0 = to the end of the file
 
 
 @dataclass
@@ -117,6 +145,10 @@ class GameProfile:
     build_edits: Callable[[dict], list] = None
     #: ISO -> list[WordEdit] that must go in a pnach rather than the disc
     build_pnach: Callable[[dict], list] = None
+    #: ISO -> list[FileEdit] applied to the game's own data archives
+    build_data: Callable[[dict], list] = None
+    #: which archives this game's data edits live in
+    archive_pattern: str = ""
     #: crc32 PCSX2 uses for the cheat filename, e.g. "21CC1EC3"
     pcsx2_crc: str = ""
     #: {virtual address: stock 32-bit word} for every site the profile touches

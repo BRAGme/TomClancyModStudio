@@ -57,8 +57,104 @@ R6_3 = [
           decal_ring=96, bodies="stock")),
 ]
 
+# Ghost Recon and Jungle Storm scale difficulty with per-actor suppression
+# flags, so "more enemies" is a data edit and "tougher enemies" is a separate
+# dial. The render options are all experimental and stay off in every preset
+# except the one that exists to try them.
+
+GHOST_RECON = [
+    ("Stock — nothing patched",
+     dict(gr_all_difficulties=False, gr_reveal_hidden=False, gr_tier="stock",
+          gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
+          gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
+          gr_weather="stock", gr_first_person_body=False,
+          gr_extra_cameras=False)),
+
+    ("Full enemy count on every difficulty",
+     dict(gr_all_difficulties=True, gr_reveal_hidden=False, gr_tier="stock",
+          gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
+          gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
+          gr_weather="stock", gr_first_person_body=False,
+          gr_extra_cameras=False)),
+
+    ("Harder — full count and a tier up",
+     dict(gr_all_difficulties=True, gr_reveal_hidden=False, gr_tier="up1",
+          gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
+          gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
+          gr_weather="stock", gr_first_person_body=False,
+          gr_extra_cameras=False)),
+
+    ("Brutal — everything, everywhere, elite",
+     dict(gr_all_difficulties=True, gr_reveal_hidden=True, gr_tier="elite",
+          gr_skill=1, gr_decal_pool=20, gr_decal_life="stock",
+          gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
+          gr_weather="stock", gr_first_person_body=False,
+          gr_extra_cameras=False)),
+
+    ("Bullet holes that stay (experimental)",
+     dict(gr_all_difficulties=False, gr_reveal_hidden=False, gr_tier="stock",
+          gr_skill=0, gr_decal_pool=120, gr_decal_life="120",
+          gr_decal_short=True, gr_decal_everywhere=False, gr_ss_effects=False,
+          gr_weather="stock", gr_first_person_body=False,
+          gr_extra_cameras=False)),
+
+    ("Split-screen effects (experimental)",
+     dict(gr_all_difficulties=False, gr_reveal_hidden=False, gr_tier="stock",
+          gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
+          gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=True,
+          gr_weather="stock", gr_first_person_body=False,
+          gr_extra_cameras=False)),
+]
+
+JUNGLE_STORM = [
+    ("Stock — nothing patched",
+     dict(js_defend_enable=False, js_all_difficulties=False,
+          js_reveal_hidden=False, js_skill=0, js_decal_pool=20,
+          js_decal_life="stock", js_decal_short=False,
+          js_decal_everywhere=False, js_ss_effects=False,
+          js_extra_cameras=False)),
+
+    ("Full enemy count on every difficulty",
+     dict(js_defend_enable=False, js_all_difficulties=True,
+          js_reveal_hidden=False, js_skill=0, js_decal_pool=20,
+          js_decal_life="stock", js_decal_short=False,
+          js_decal_everywhere=False, js_ss_effects=False,
+          js_extra_cameras=False)),
+
+    ("Defend — double the waves",
+     dict(js_defend_enable=True, js_defend_recruit=40, js_defend_veteran=50,
+          js_defend_elite=70, js_all_difficulties=False,
+          js_reveal_hidden=False, js_skill=0, js_decal_pool=20,
+          js_decal_life="stock", js_decal_short=False,
+          js_decal_everywhere=False, js_ss_effects=False,
+          js_extra_cameras=False)),
+
+    ("Defend — last stand",
+     dict(js_defend_enable=True, js_defend_recruit=100, js_defend_veteran=140,
+          js_defend_elite=200, js_all_difficulties=True,
+          js_reveal_hidden=False, js_skill=1, js_decal_pool=20,
+          js_decal_life="stock", js_decal_short=False,
+          js_decal_everywhere=False, js_ss_effects=False,
+          js_extra_cameras=False)),
+
+    ("Brutal — full count, skilled enemies",
+     dict(js_defend_enable=True, js_defend_recruit=50, js_defend_veteran=70,
+          js_defend_elite=100, js_all_difficulties=True,
+          js_reveal_hidden=True, js_skill=2, js_decal_pool=20,
+          js_decal_life="stock", js_decal_short=False,
+          js_decal_everywhere=False, js_ss_effects=False,
+          js_extra_cameras=False)),
+
+    ("Bullet holes that stay (experimental)",
+     dict(js_defend_enable=False, js_all_difficulties=False,
+          js_reveal_hidden=False, js_skill=0, js_decal_pool=120,
+          js_decal_life="120", js_decal_short=True,
+          js_decal_everywhere=False, js_ss_effects=False,
+          js_extra_cameras=False)),
+]
+
 PRESETS = {
     "r6_3_slus20883": R6_3,
-    "ghost_recon_slus20613": [],
-    "jungle_storm_slus20820": [],
+    "ghost_recon_slus20613": GHOST_RECON,
+    "jungle_storm_slus20820": JUNGLE_STORM,
 }

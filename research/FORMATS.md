@@ -17,8 +17,8 @@ Tools in this folder:
 |---|---|
 | `grimg.py` | the `.img` archive (loose file or straight out of an ISO) |
 | `rselzo.py` | the chunked-LZO compression layer |
-| `rsescript.py` | the A..P script encoding and the script variable table |
-| `rsb.py` | `.RSB` textures to PNG |
+| `rsescript.py` | the A..P script encoding, the variable table and the string table |
+| `rsb.py` | `.RSB` textures to PNG (imports the two modules above) |
 
 ---
 
@@ -206,6 +206,48 @@ Two details of the reference decoder that are easy to get wrong and which
 Every chunk's decoded length also matches its header's `rawSize` exactly; that
 check is in `rselzo.decompress` and is not disabled.
 
+### 2.4 Writing it back — `rselzo.compress()`, and its limit
+
+`rselzo.py` also contains an LZO1X **encoder**, because §1.7 means a replacement
+file has to fit its slot and an all-STORED rewrite is ~4× too large
+(`M02_FARM.MIS` decompresses 20,367 → 77,123; its stored form would be 77,163).
+
+Since chunks are capped at `0x4000`, a back-reference offset can never exceed
+`0x3FFF`, so the M4 long-offset token is never needed; the encoder emits only M2
+and M3 matches plus literal runs. It uses hash chains, a net-gain cost model
+(M2 costs 2 bytes, M3 costs 3+, so a shorter near match can beat a longer far
+one) and one-byte lazy matching.
+
+**Correctness: verified.** Round-trips exactly on 279 retail files across both
+games (144 GR, 135 JS) plus empty / 1-byte / all-same / incompressible-random
+edge cases. Zero failures.
+
+**Size: NOT competitive with retail, and this matters.**
+
+| game | retail bytes | this encoder | ratio | files that would overflow their slot on an unchanged recompress |
+|---|---:|---:|---:|---:|
+| GR | 1,099,764 | 1,118,149 | **101.7 %** | 100 / 144 |
+| JS | 1,266,391 | 1,288,397 | **101.7 %** | 99 / 135 |
+
+Red Storm evidently shipped `lzo1x_999` (maximum compression, optimal parse);
+this is a greedy encoder with lazy matching. The ~1.7 % gap means **a
+byte-identical round-trip of an unmodified file does not fit back into its own
+slot for roughly 70 % of files.** So:
+
+* always check `len(newBytes) <= originalSlotSize` before writing — never assume;
+* edits that *remove* text (e.g. deleting `Easy = "0"` attributes) usually fit;
+  edits that add `<Actor>` elements usually will not.
+
+Closing the gap needs an optimal (dynamic-programming) parser rather than a
+greedy one; the token cost model needed for that is already in
+`rselzo.lzo1x_compress.cost()`. That is the clean next step, and it is the one
+thing standing between this toolkit and free-form mission editing.
+
+**Caveat stated plainly:** the encoder's output has been validated against this
+repo's own decoder, which is itself validated by decoding 100 % of both retail
+discs. It has **not** been tested by the actual PS2 game. Nothing was written
+back to any ISO or game folder during this work.
+
 ---
 
 ## 3. Extension census
@@ -249,7 +291,7 @@ Note the GR `.MIS` count of 92 is 46 missions × 2 archives.
 | `.GTF` | **game type** — plain XML + two script blobs. |
 | `.ATR` | **actor template** — plain XML. Model + 5 skill integers. |
 | `.KIT` `.KIL` `.GUN` `.PRJ` `.ITM` `.VCL` `.ENV` | plain XML: loadout, kit restriction, weapon, projectile, hand-held item, vehicle, environment. |
-| `.TOE` | **table of equipment** — the *player's* order of battle, same Company/Platoon/Team/Actor grammar as a mission's `<Units>`. |
+| `.TOE` | **table of equipment** — the *player's* order of battle, same Company/Platoon/Team/Actor grammar as a mission's `<Units>`. Both games ship the **same 20 files**, byte-identical after decompression, still named for Ghost Recon's missions (`M01.TOE`..`M15.TOE`) even in Jungle Storm. |
 | `.XML` | plain XML (`<BestTimes/>`, special-feature text). |
 | `.RSB` | texture. See §5. |
 | `.BMZ` `.BMB` `.BMH` | bitmap banks. See §5. |
@@ -257,8 +299,53 @@ Note the GR `.MIS` count of 92 is 46 missions × 2 archives.
 | `.RES` `.CTX` `.WRD` `.GCD` `.LNG` | localisation string tables (binary, not decoded here). |
 | `.CHA` `.CHZ` `.CHR` | character models. |
 | `.QOB` `.QOZ` `.POB` `.POZ` `.MOL` `.SOB` | geometry. RSE templates for these exist in AlexKimov/RSE-file-formats. |
-| `.MAZ` `.SHT` `.AOL` `.POL` `.IDC` `.PAK` | level data (map, shadow, object lists). Not decoded here. |
+| `.AOL` | **Object list** — world props. NOT enemy spawns; see below. |
+| `.POL` | **Portal list** — visibility portals (`p01_24`, `p01_23`, …). |
+| `.MOL` | level geometry; same tagged container, float-heavy payload. |
+| `.MAZ` `.SHT` `.IDC` `.PAK` | other level data (map, shadow, …). Not decoded here. |
 | `.SS` `.SB` `.SH` `.PSS` `.AUD` `.WAV` | audio / FMV. `.PSS` begins `00 00 01 BA`, an MPEG-2 program-stream pack header — it is Sony's standard PS2 MPEG-PS container. |
+
+There is **no `.PLT`** extension in either game; AI plans live inside each
+`.MIS` as `<PlanList>`, not as separate files.
+
+### 3.1 `.AOL` / `.POL` / `.MOL` are NOT spawn data
+
+Worth stating explicitly because the names invite the opposite guess. All three
+share one tagged binary container — a chain of
+`u32 nameLen (includes the NUL), char name[nameLen]` markers with typed payloads
+between them — and the top-level tag says what the file is:
+
+| file | top tag | actual content |
+|---|---|---|
+| `M02_FARM.AOL` | `ObjectList` | world props: `21_<n><door>frontdoor01`, `model=front door 2`, `collision2d=box`, `penetrationType=solidThinWood`, `startSound=1:e_mdooro.wav:0:0:None:`, `debris=debris_wooddoor1.qob`, `destroycatagory=heavy` |
+| `M02_FARM.POL` | `PortalList` | visibility portals: `p01_24`, `p01_23`, `p01_21`, … |
+| `M02_FARM.MOL` | (no list tag) | level geometry; float-heavy |
+
+So `.AOL` is destructible-scenery and door setup, not enemy placement.
+
+**Every enemy in both games is placed in a `.MIS`, inside `<Units>`.** Verified
+by decompressing every file in every archive and searching for `<Actor`:
+
+| ext | files containing `<Actor` | of those, with a `Pos=` attribute |
+|---|---|---|
+| `.MIS` | GR 56, JS 21 | **GR 56, JS 21** |
+| `.ATR` | GR 1460, JS 766 | 0 (`<ActorFile>` is the tag; no placement) |
+| `.TOE` | GR 20, JS 20 | **1 each** — see below |
+| `.KIL` | GR 12, JS 2 | 0 |
+| `.TXT` | GR 1 | 0 |
+
+(GR's 56 is 28 missions × 2 archives, since `menu.img` duplicates them.)
+
+The single `.TOE` exception in each game is `/TRAINING.TOE`, which positions the
+*player's* training squad, not enemies. It also still carries a Red Storm
+developer's absolute path in its `Kit` attributes, byte-identical in both games:
+
+```
+Kit = "c:\documents and settings\garys\desktop\ghost recon\mods\origmiss\kits\rifleman\rifleman-01.kit"
+```
+
+That is leftover authoring data from the PC `origmiss` mod folder that survived
+into both retail PS2 discs.
 
 **The `Z`-suffixed geometry is *not* a compressed copy of the `B`-suffixed
 file.** That is the obvious guess and it is wrong: after decompressing both,
@@ -329,8 +416,9 @@ Two consequences for a mod tool:
 One more surface detail: attributes are written with spaces around the `=`
 (`IgorId = "9"`), so byte-level search-and-replace must allow for that.
 
-`<Class0>`..`<Class5>` are six small integers in `<Engine>` (e.g. M02_FARM has
-1/1/3/1/-/2). They are **almost certainly** how many soldiers of each class the
+`<Class0>`..`<Class5>` are small integers in `<Engine>`; not all six are always
+present (M02_FARM.MIS has Class0=1, Class1=1, Class2=3, Class3=1, Class5=2, and
+no Class4 element at all). They are **almost certainly** how many soldiers of each class the
 player may field, since `.ATR` `<ClassName>` takes exactly four values
 (`rifleman`, `demolitions`, `support`, `sniper`) and the shell UI offers a squad
 builder — but that mapping was **not verified** and the index-to-class order is
@@ -354,9 +442,12 @@ So `PDEFIGFGACAFJGMGPGEHACEEJGFGEG` decodes to `?The Pilot Died`.
 The encoding is fixed-width, so an edit that preserves the payload byte length
 preserves the XML text length, and therefore the archive slot size.
 
-### 4.3 The script variable table
+### 4.3 The two tables
 
-The decoded payload opens with the script's variable table:
+`<ScriptCompiled>` and `<ScriptSource>` are **not** two encodings of the same
+thing — they are different structures and each opens with a different table.
+
+**`<ScriptSource>` → variable table:**
 
 ```
 u32 variableCount
@@ -394,6 +485,41 @@ Worked example, JS `(SP) DEFEND.GTF`:
 
 `(COOP) DEFEND.GTF` is the same file with 30 / 40 / 50.
 
+**`<ScriptCompiled>` → string table:**
+
+```
+u32 stringCount
+repeat stringCount times:
+    u32   id
+    u32   length
+    char  text[length]        (no NUL)
+```
+
+Those ids are exactly what the ScriptSource variables named `*_Text` hold as
+their `value`, so the two tables cross-reference. `(SP) DEFEND.GTF`:
+
+```
+ScriptSource:  Lose Text        = 8
+ScriptCompiled string id 8   -> "?Your base has been captured...  Defeat!"
+               Win Retreat Text = 9   -> "?The enemy is retreating...  Victory!"
+               Win Kills Text   = 10  -> "?The enemy has been wiped out...  Victory!"
+               Win Time Text    = 11  -> "?Time has expired...  Victory!"
+```
+
+(In Jungle Storm's `.GTF` string tables 56 entries start with `?` and 55 do not.
+Every full player-facing *sentence* carries the `?`; the ones without are mostly
+internal (`Reset`, `Intrusion`, `m_alarm1.wav`, `<Uninitialized>`) — though
+short HUD labels such as `"Enemies : "` also lack it, so the split is not clean.
+**Guess:** `?` marks a string the engine looks up / strips before display. Not
+verified.)
+
+**Both parsers were validated against the whole corpus**: the declared count
+matches the number of records that parse for 57/57 GR and 59/59 JS
+`ScriptSource` variable tables, and 57/57 GR and 59/59 JS `ScriptCompiled`
+string tables. Zero mismatches. Applying the variable layout to a
+`ScriptCompiled` payload (or vice versa) yields nonsense — that was the first
+thing this work got wrong.
+
 ### 4.4 What is NOT decoded: the node graph
 
 Past the variable table the payload is a compiled node graph that has **not**
@@ -419,4 +545,195 @@ the cleanest available alignment target for mapping node records.
 
 ## 5. Textures
 
-*(filled in below)*
+`rsb.py` converts these. It was run over the whole corpus: **859 `.RSB` files
+(GR `gr.img` 638, GR `menu.img` 22, JS `gr.img` 199) with 0 failures.**
+
+An `.RSB` inside an archive may be raw or wrapped in the rselzo chunk container;
+call `rselzo.unpack()` first and fall back to the raw bytes.
+
+### 5.1 Header
+
+```
++0x00  u16  version    0, 1, 3, 4, 5, 6
++0x02  u16  flag       1 when version is 0 or 1, else 0
+```
+
+The PS2 build splits the PC build's u32 version field into these two u16s.
+
+### 5.2 Version 3 is NOT a raster — it is a named JPEG wrapper
+
+```
++0x04        u32   nameLen
++0x08        char  name[nameLen]      lower-case, no extension, no NUL
++8+nameLen   u32   jpegLen            == filesize - (12 + nameLen), exactly
++12+nameLen  u8    jpeg[jpegLen]      FF D8 FF E0 .. JFIF .. FF D9
+```
+
+Verified on **all 468** version-3 files across both games: the declared length is
+exact every time and the JPEG EOI marker is present every time. These hold the
+mission briefing / loading / storyboard images (the `SF_*` names) and the
+publisher splash screens. 441 in GR `gr.img`, 27 in JS `gr.img`.
+
+### 5.3 Versions 0, 1, 4, 5, 6 — raster
+
+```
++0x04  u32  width
++0x08  u32  height
++0x0C  u32  redBits
++0x10  u32  greenBits
++0x14  u32  blueBits
++0x18  u32  alphaBits
++0x1C  payload
+```
+
+**The four "bit" words are not channel widths on PS2 — their SUM is the bits per
+pixel.** The individual values only distinguish 565 from 4444.
+
+| mask | bpp | payload at +0x1C |
+|---|---:|---|
+| (1,1,1,1) | 4 | 16 x 4-byte palette (64 B), then `w*h/2` bytes — 2 pixels per byte, **low nibble is the left pixel** |
+| (2,2,2,2) | 8 | 256 x 4-byte palette (1024 B), then `w*h` index bytes |
+| (4,4,4,4) | 16 | u16 LE: B[0:4] G[4:8] R[8:12] A[12:16], expand each with `*17` |
+| (5,6,5,0) | 16 | u16 LE: B[0:5] G[5:11] R[11:16], fully opaque |
+| (8,8,8,8) | 32 | 4 bytes per pixel |
+
+**Channel order** — the same rule as the PC `RSB.bt` template:
+
+* total bits **== 32** -> `A,R,G,B` in memory order
+* anything else -> `B,G,R,A` (this covers both palettes and both 16-bit forms)
+
+**Palette:** a straight array of `(B,G,R,A)` bytes, 256 entries at 8 bpp and 16
+at 4 bpp. No ordering tricks.
+
+**Trailer:** direct-colour rasters carry a fixed properties block after the pixel
+array (`RSB_PROPERTIES` in `RSB(ps2).bt`): 53 bytes for version 4, 61 for
+version 5, 65 for version 6. Palettised rasters have **no trailer at all** —
+`28 + palette + indices` is the exact file size, confirmed on all 227 of them.
+A decoder can ignore the trailer entirely.
+
+### 5.4 Both PS2 traps tested, and both REFUTED for RSB
+
+Worth stating loudly, because both are the standard advice for PS2 textures and
+both are wrong here:
+
+1. **CLUT swizzle: not present.** Applying the usual
+   `[i+8:i+16]` <-> `[i+16:i+24]` swap within each 32-entry block turns
+   `MAIN_MENU_PS2.RSB` from a clean photographic image into blotchy colour
+   patches. Left alone it is correct. (`rsb.py` keeps `SWIZZLE_CLUT256 = False`
+   as a switch so the test reproduces.)
+2. **Alpha 0..128: not present.** Over every palette and every 32-bpp alpha byte
+   in both games the maximum observed alpha is **255**, and 255 is one of the two
+   commonest values. Alpha is a plain 0..255 byte. 4-bit alpha in RGBA4444 is
+   0..15 and expands with `*17`.
+3. **Index planes are linear** — no GS page/block swizzle.
+
+The `.BMZ` banks in section 5.6 are the opposite on both counts, which is exactly
+why these had to be tested rather than assumed.
+
+### 5.5 Variant census
+
+Across GR `gr.img` + GR `menu.img` + JS `gr.img`, 859 files:
+
+```
+v3 jpeg           468      v0 4bpp            39
+v5 16bpp 4444     104      v5 4bpp (JS only)  31
+v1 8bpp            82      v6 32bpp            6
+v5 8bpp            75      v5 16bpp 565        3
+v6 16bpp 4444      43      v6 16bpp 565        3
+                           v5 32bpp            3
+                           v4 16bpp 565        2
+```
+
+### 5.6 BMZ / BMB — partially cracked
+
+**`.BMZ` is not an RSB and not a container of RSBs.** It is an rselzo-compressed
+bank of ready-to-send PS2 GS texture-upload DMA/GIF packets.
+
+```
++0x00 u32  unidentified
++0x04 u32  if the top bit is set, this is a format tag (FFFFFFFF, FFFFFFFE,
+           FFFFFFFD, FFFFFFFC seen) and the record count is at +0x08 with
+           records from +0x0C; otherwise this word IS the record count and
+           records start at +0x08.
+
+record stride:  FFFFFFFF -> 44 B   FFFFFFFE -> 48 B
+                FFFFFFFC -> 68 B   untagged -> 40 B      (FFFFFFFD unknown)
+
+every record starts:  u32 id, u32 width, u32 height, u32 version, u32 bpp
+and ends:             u32 clutPacketOff, u32 pixelPacketOff
+                      (both relative to the end of the record table)
+
+   CLUT   = base + clutPacketOff  + 0xC0,  1024 B (bpp 8) or 64 B (bpp 4)
+   pixels = base + pixelPacketOff + 0x80,  w*h or w*h/2 bytes
+```
+
+Structural invariant, which holds for **546 of the 639** BMZ/BMB files:
+
+```
+rec[i+1].clutPacketOff == rec[i].pixelPacketOff + 0x80 + pixelBytes
+```
+
+**Two differences from RSB, both measured, both the reverse of section 5.4:**
+
+* The BMZ CLUT is **R,G,B,A** — the opposite of an RSB palette. Decoding
+  `D01_BEACH.BMZ` as B,G,R,A gives blue sand and blue grass; as R,G,B,A it gives
+  sand, grass, concrete steps, a green tree billboard, red flowers and a tyre.
+* The 8-bit index plane **is** PS2 PSMT8-swizzled. A linear read gives
+  recognisable shapes buried in salt-and-pepper noise; the standard 16x8
+  block/column de-swizzle cleans it up.
+* Alpha looks like the 0..128 convention (0x80 accounts for 501,473 of ~870,000
+  sampled CLUT alpha bytes) but values above 128 do occur — treat the x2 scale as
+  **probable rather than proven**.
+
+**`.BMB` is a different format and is NOT identified.** `D03_DEPOT.BMB` and
+`DP05_RAVINE.BMB` decompress to data with no record table at all: a
+slowly-varying nibble field, consistent with a lightmap or heightmap rather than
+a texture bank. That is a guess.
+
+**Next probe for the remaining BMZ variants:** stop trusting the record offsets
+and walk the DMA/GIF chain itself. The GS register writes for `BITBLTBUF` (0x50),
+`TRXPOS` (0x51), `TRXREG` (0x52) and `TRXDIR` (0x53) are plainly visible in the
+packet headers and give width / height / format / destination independently of
+the record-table layout.
+
+### 5.7 Verification, and what it turned up
+
+59 decoded images were opened and looked at (33 PNG + 6 JPEG for GR, 26 + 1 for
+JS), in `research/ui_textures/`. Nothing is noise, nothing is skewed, and there
+is no row shear anywhere. The `*_flat/` folders hold the same art flattened onto
+`#1e222a`, because much of it is white-on-transparent and disappears against a
+white matte.
+
+Decisive colour-order test files, worth reusing on any future RSE PS2 title:
+
+* `LANGUAGE_SELECT.RSB` — five national flags. Wrong palette order gives a
+  red-white-blue tricolore and a blue-and-cyan Spanish flag; correct order gives
+  a proper Union Jack, blue-white-red tricolore, black-red-yellow,
+  green-white-red, and red-yellow-red with the coat of arms.
+* `EVILTWIN.RSB` — a photographic human face, ships in **both** games. Decisive
+  for 565: warm skin tones versus blue skin.
+* `DECORATIONS.RSB` — the Bronze Star is gold as ARGB and blue as ABGR.
+
+Two honest caveats:
+
+* `js/VIDEO.png` is solid black. Verified as genuine rather than a decode
+  failure: the source has exactly **one** palette index across all 1024x512
+  pixels. It is a black placeholder plate.
+* `js/BOOT_NOPAD.png` has faint coloured blocks behind the text. These are
+  believed to be in the source art, but that was **not** proven.
+
+**Cut-content find:** `GAME_OVER.RSB` in GR `gr.img` is a complete **E3 Demo**
+screen — the Ghost Recon logo with an "E3 Demo" subtitle over "GAME OVER /
+THANK YOU FOR PLAYING! / See you again in official version" — still sitting in
+the retail archive.
+
+---
+
+## 6. Environment traps
+
+* In Git Bash, an `--extract` or `--cat` pattern that starts with `/` is silently
+  mangled by MSYS path conversion and matches nothing. It also silently truncated
+  a `grimg.py --cat` redirect to 0 bytes. Prefix the command with
+  `MSYS_NO_PATHCONV=1`, or write the pattern without a leading slash.
+* `python-lzo` is not installed on this machine, which is why `rselzo.py` carries
+  its own pure-Python codec rather than binding to the C library.

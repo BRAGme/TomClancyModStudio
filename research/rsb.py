@@ -25,7 +25,10 @@ HEADER  (all little-endian; two shapes, selected by `version`)
   +0x08  char name[nameLen]      lower-case, no extension, no NUL
   +N+8   u32  jpegLen            == filesize - (12 + nameLen), exactly
   +N+12  u8   jpeg[jpegLen]      begins FF D8 FF E0 .. JFIF
-     Verified byte-exact on all 359 version-3 files in GR gr.img.
+     Verified on all 468 version-3 files across both games: jpegLen matched
+     the residual file size exactly every time and every payload ended in
+     FF D9.  These carry all the mission-briefing / loading / storyboard art
+     (the SF_* names) and the DMG_LOGO / MUS_LOGO splash screens.
 
   --- version 0,1,4,5,6 : a raster ----------------------------------------
   +0x04  u32  width
@@ -39,34 +42,81 @@ HEADER  (all little-endian; two shapes, selected by `version`)
 --------------------------------------------------------------------------
 PAYLOAD, by bit mask.  bpp = red+green+blue+alpha
 --------------------------------------------------------------------------
+The four BIT_MASK words are NOT bit widths on PS2.  Their SUM is the bits
+per pixel, and the individual values only distinguish 565 from 4444:
+
   bpp == 4   mask (1,1,1,1)   16-colour palettised
-      +0x1C   16 * 4 bytes  RGBA8888 palette      (64 bytes)
+      +0x1C   16 * 4 bytes  B,G,R,A palette       (64 bytes)
       +0x5C   width*height/2 bytes, 2 pixels per byte, LOW nibble first
   bpp == 8   mask (2,2,2,2)   256-colour palettised
-      +0x1C   256 * 4 bytes RGBA8888 palette      (1024 bytes)
+      +0x1C   256 * 4 bytes B,G,R,A palette       (1024 bytes)
       +0x41C  width*height bytes, one index per pixel
-  bpp == 16  mask (4,4,4,4)   u16 LE, RGBA4444  (R in bits 0-3 .. A in 12-15)
-  bpp == 16  mask (5,6,5,0)   u16 LE, RGB565    (R in bits 0-4, B in 11-15)
-  bpp == 32  mask (8,8,8,8)   4 bytes, R,G,B,A in memory order
+  bpp == 16  mask (4,4,4,4)   u16 LE  B[0:4] G[4:8] R[8:12] A[12:16]
+  bpp == 16  mask (5,6,5,0)   u16 LE  B[0:5] G[5:11] R[11:16], alpha = 255
+  bpp == 32  mask (8,8,8,8)   4 bytes, A,R,G,B in memory order
 
-  Rows are stored top-to-bottom, left-to-right, un-swizzled.  There is NO
-  PS2 page/block swizzle on the index plane - verified visually.
+BYTE ORDER - this is the one thing the data disagrees with itself about,
+and it follows exactly the rule in the PC template RSB.bt:
+      bits total == 32  ->  ARGB
+      anything else     ->  BGRA   (palettes and both 16-bit forms)
+  Proof for the palettised path: /LANGUAGE_SELECT.RSB decodes to the UK,
+  French, Italian and Spanish flags.  Read as R,G,B,A the tricolore comes
+  out red-white-blue and the Spanish flag blue-cyan; read as B,G,R,A every
+  flag is correct.
+  Proof for 565: /EVILTWIN.RSB is a photographic human face - warm skin
+  with R in the HIGH bits, blue skin with R in the low bits.
+  Proof for 32bpp: /DECORATIONS.RSB is the US medal rack - the Bronze Star
+  is gold as A,R,G,B and blue as A,B,G,R.
+  4444 is untestable and does not matter: all 688128 RGBA4444 pixels in
+  both games are grey (r nibble == g nibble == b nibble), 0 exceptions.
+
+  Rows are top-to-bottom, left-to-right, LINEAR.  There is NO PS2
+  page/block swizzle on an RSB index plane (contrast .BMZ, below).
 
 --------------------------------------------------------------------------
-THE TWO PS2 TRAPS - measured, not assumed
+THE TWO PS2 TRAPS - both TESTED, both REFUTED for RSB
 --------------------------------------------------------------------------
- 1. CLUT swizzle: PRESENT, and only on the 256-entry (bpp==8) palette.
-    Entries are stored with the middle two groups of 8 of every 32-entry
-    block exchanged.  Un-swizzle with, for each block of 32 starting at i:
-        pal[i+8:i+16] <-> pal[i+16:i+24]
-    The 16-entry (bpp==4) palette is NOT swizzled (a 16-entry CLUT is a
-    single half-block and the GS never reorders it).
+ 1. CLUT swizzle (swap entries [i+8:i+16] with [i+16:i+24] in every block
+    of 32): NOT PRESENT.  Applying it to /MAIN_MENU_PS2.RSB turns a clean
+    jungle photo into blotchy colour patches; leaving it alone is correct.
+    `unswizzle_clut256()` is kept below so the test can be rerun, and
+    because the .BMZ path may still want it - but SWIZZLE_CLUT256 is False.
 
- 2. Alpha range: PRESENT.  Stored alpha is 0..128 (0x80 = fully opaque),
-    the PS2 GS convention.  Convert with  a = min(255, a*255//128).
-    This applies to the palette alpha (bpp 4 and 8) and to the 8-bit alpha
-    of bpp==32.  It does NOT apply to the 4-bit alpha of RGBA4444, which is
-    a plain 0..15 field expanded by  a*17.
+ 2. Alpha 0..128: NOT PRESENT in RSB.  Alpha is a plain 0..255 byte.
+    Measured over every palette and every 32bpp alpha byte in both games
+    the maximum is 255, and 255 is one of the two most common values.
+    (The .BMZ texture banks look like they DO - see below.)
+
+--------------------------------------------------------------------------
+.BMZ / .BMB  (partial - see the notes in the project write-up)
+--------------------------------------------------------------------------
+.BMZ is NOT an RSB and is not a container of RSBs.  It is an rselzo-
+compressed bank of ready-to-send PS2 GS texture-upload DMA/GIF packets:
+
+  +0x00 u32  (unidentified)
+  +0x04 u32  if the top bit is set this is a format tag (seen FFFFFFFF,
+             FFFFFFFE, FFFFFFFD, FFFFFFFC) and the record count is at +0x08,
+             records start at +0x0C; otherwise this word IS the record
+             count and records start at +0x08.
+  record stride by tag: FFFFFFFF -> 44, FFFFFFFE -> 48, FFFFFFFC -> 68,
+                        no tag   -> 40 bytes.
+  Every record begins  u32 id, u32 width, u32 height, u32 version, u32 bpp
+  and ends             u32 clutPacketOff, u32 pixelPacketOff
+  (offsets relative to the end of the record table).
+  CLUT payload  = base + clutPacketOff  + 0xC0, 1024 or 64 bytes, and here
+                  the order is R,G,B,A - the OPPOSITE of an RSB palette
+                  (with B,G,R,A a beach level's sand and grass come out
+                  blue; with R,G,B,A they are sand and grass).
+                  Alpha here does look like the PS2 0..128 convention:
+                  0x80 is by far the commonest value (501473 of ~870000
+                  entries sampled) - but values above 128 do occur, so
+                  treat the 2x scale as probable, not proven.
+  Pixel payload = base + pixelPacketOff + 0x80, w*h or w*h/2 bytes,
+                  **PS2 PSMT8-swizzled** - the standard 16x8 block/column
+                  de-swizzle is required or you get salt-and-pepper noise.
+  546 of the 639 .BMZ/.BMB files in the two games satisfy the invariant
+  rec[i+1].clutPacketOff == rec[i].pixelPacketOff + 0x80 + pixelBytes.
+  .BMB is a different thing again and is NOT this container.
 
 --------------------------------------------------------------------------
 TRAILER
@@ -84,10 +134,17 @@ CLI
   python rsb.py <input.rsb> <output.png>
   python rsb.py --img <archive.img> --extract '<regex>' --out <dir>
   python rsb.py --img <archive.img> --census
+  ...  --bg 1e222a      flatten onto an opaque background instead of
+                        writing straight alpha (a lot of this art is white
+                        or pale on a fully transparent field and is
+                        invisible in a viewer that mattes onto white)
+
+A version-3 RSB is written as <name>.jpg, everything else as <name>.png.
+Note for git-bash users: a --extract pattern starting with '/' is mangled
+by MSYS path conversion.  Prefix the command with MSYS_NO_PATHCONV=1.
 """
 
 import argparse
-import io
 import os
 import re
 import struct
@@ -271,7 +328,19 @@ def parse(data):
                 mask=mask, bpp=bpp, rgba=bytes(out))
 
 
-def decode_to_file(data, out_base):
+def flatten(rgba, bg):
+    """Alpha-composite straight-alpha RGBA onto an opaque (r,g,b)."""
+    out = bytearray(len(rgba))
+    for i in range(0, len(rgba), 4):
+        r, g, b, a = rgba[i:i + 4]
+        out[i + 0] = (r * a + bg[0] * (255 - a)) // 255
+        out[i + 1] = (g * a + bg[1] * (255 - a)) // 255
+        out[i + 2] = (b * a + bg[2] * (255 - a)) // 255
+        out[i + 3] = 255
+    return bytes(out)
+
+
+def decode_to_file(data, out_base, bg=None):
     """Write <out_base>.png or <out_base>.jpg.  Returns the path written."""
     info = parse(data)
     if info['kind'] == 'jpeg':
@@ -280,7 +349,8 @@ def decode_to_file(data, out_base):
             f.write(info['jpeg'])
         return p
     p = out_base + '.png'
-    write_png(p, info['width'], info['height'], info['rgba'])
+    px = info['rgba'] if bg is None else flatten(info['rgba'], bg)
+    write_png(p, info['width'], info['height'], px)
     return p
 
 
@@ -297,7 +367,17 @@ def main(argv=None):
     ap.add_argument('--out', help='output directory for --extract')
     ap.add_argument('--census', action='store_true',
                     help='tabulate RSB variants in --img')
+    ap.add_argument('--bg', metavar='RRGGBB',
+                    help='flatten onto this opaque colour instead of '
+                         'writing straight alpha')
     a = ap.parse_args(argv)
+
+    bg = None
+    if a.bg:
+        s = a.bg.lstrip('#')
+        if len(s) != 6:
+            ap.error('--bg wants six hex digits, e.g. 1e222a')
+        bg = tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
 
     if a.img and a.census:
         import collections
@@ -330,7 +410,7 @@ def main(argv=None):
             base = os.path.join(a.out,
                                 os.path.splitext(os.path.basename(p))[0])
             try:
-                w = decode_to_file(arc.get(p), base)
+                w = decode_to_file(arc.get(p), base, bg)
             except Exception as e:
                 print('FAIL %s: %s' % (p, e), file=sys.stderr)
                 bad += 1
@@ -350,10 +430,11 @@ def main(argv=None):
             with open(a.output, 'wb') as f:
                 f.write(info['jpeg'])
         else:
-            write_png(a.output, info['width'], info['height'], info['rgba'])
+            px = info['rgba'] if bg is None else flatten(info['rgba'], bg)
+            write_png(a.output, info['width'], info['height'], px)
         print(a.output)
     else:
-        print(decode_to_file(data, os.path.splitext(a.input)[0]))
+        print(decode_to_file(data, os.path.splitext(a.input)[0], bg))
     return 0
 
 

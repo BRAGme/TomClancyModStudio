@@ -97,6 +97,14 @@ BANNER_PREFERENCE = {
                        r"/NTSC_CD/LE/MCARD/1_01_ENG\.FBZ$"],
 }
 
+#: the game's own menu art, by name, inside its archives
+ARCHIVE_BANNERS = {
+    "ghost_recon_slus20613": ["/MAIN_MENU_PS2.RSB", "/SHELL_BGD_PS2.RSB",
+                              "/LOAD-SCREEN.RSB"],
+    "jungle_storm_slus20820": ["/SHELL_BGD_PS2.RSB", "/LOAD_NEW_1.RSB",
+                               "/LOAD_NEW_2.RSB"],
+}
+
 
 def banner_image(detection, cache_dir=None):
     """A PIL image to head the window with, or None.
@@ -144,24 +152,40 @@ def banner_image(detection, cache_dir=None):
 
 
 def _archive_banner(iso, profile):
-    """Largest plausible UI texture from the game's own vokes archives."""
+    """The game's own menu art, out of its own archive."""
     try:
         from . import rsb
     except ImportError:
         return None
     from .vokes import open_archives
-    best = None
-    for arc in open_archives(iso):
-        for key, ent in arc.files.items():
-            if not key.endswith(".RSB") or ent.size < 16384:
+
+    arcs = open_archives(iso, profile.archive_pattern or
+                         r"/(VOKES\d|GR|MENU)\.IMG$")
+    wanted = ARCHIVE_BANNERS.get(profile.id, [])
+    for name in wanted:
+        for arc in arcs:
+            ent = arc.files.get(name.upper())
+            if ent is None:
                 continue
             try:
                 img = rsb.to_image(arc.read_entry(ent))
-            except Exception:
+            except Exception:                     # noqa: BLE001
                 continue
-            if img is None:
+            if img is not None and img.size[0] >= 256:
+                return img
+
+    best = None
+    for arc in arcs:
+        for key, ent in arc.files.items():
+            if not key.endswith(".RSB") or ent.size < 60000:
+                continue
+            try:
+                img = rsb.to_image(arc.read_entry(ent))
+            except Exception:                     # noqa: BLE001
+                continue
+            if img is None or img.size[0] < 256:
                 continue
             score = img.size[0] * img.size[1]
-            if img.size[0] >= 256 and (best is None or score > best[0]):
+            if best is None or score > best[0]:
                 best = (score, img)
     return best[1] if best else None

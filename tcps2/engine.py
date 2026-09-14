@@ -1,33 +1,36 @@
 """Applying a settings dict to a disc image, and undoing it again.
 
-Two rules make this safe to run repeatedly:
+Three rules make this safe to run over and over:
 
-  1. Every write rebuilds the overlay from its PRISTINE image, never from
-     whatever is on the disc now. Applying twice gives the same disc as
-     applying once, and turning an option off really removes it.
+  1. Every write starts from the PRISTINE image, never from whatever is on the
+     disc now. Applying twice gives the same disc as applying once, and turning
+     an option off really removes it.
 
-  2. Nothing is written until the pristine image has been positively
-     identified -- by hash, by a sidecar backup, or by showing that every
-     byte that differs from stock is one this tool put there.
+  2. Nothing is written until the pristine state has been positively
+     identified -- by hash for the compressed overlay, and by a recorded
+     original for every individual word in an uncompressed executable.
 
-The pristine image is cached next to the ISO in a `.tcms-backup` folder the
-first time an untouched disc is seen, so a user who patches, plays, and comes
-back a month later can still get their disc back.
+  3. Everything replaced is copied into a `.tcms-backup` folder beside the ISO
+     first, so a disc can still be put back a month later.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from . import dataedit
 from .iso import Iso
-from .soz import SozImage, store_to_iso
+from .overlay import OverlayError, open_overlay
+from .soz import SozImage
 
 BACKUP_DIR = ".tcms-backup"
+WORD_STORE = "code-words.json"
 
 
 class EngineError(Exception):
@@ -38,27 +41,76 @@ class EngineError(Exception):
 class Plan:
     """What a settings dict would do, before anything is written."""
     game_title: str
-    edits: list            # list[WordEdit] baked into the disc
-    pnach: list            # list[WordEdit] delivered as an emulator cheat
-    warnings: list
-    pristine_source: str   # "hash", "backup" or "repaired"
+    edits: list = field(default_factory=list)     # words baked into the disc
+    pnach: list = field(default_factory=list)     # words for the emulator
+    data: list = field(default_factory=list)      # archive data-file edits
+    warnings: list = field(default_factory=list)
+    pristine_source: str = ""
 
     @property
-    def clean(self) -> bool:
+    def clean(self):
         return not self.warnings
 
+    @property
+    def total(self):
+        return len(self.edits) + len(self.data)
+
+
+# ---------------------------------------------------------------------------
+# where backups live
+# ---------------------------------------------------------------------------
 
 def backup_dir_for(iso_path) -> str:
-    return os.path.join(os.path.dirname(os.path.abspath(str(iso_path))), BACKUP_DIR)
-
-
-def _backup_path(iso_path, overlay_name) -> str:
+    root = os.path.join(os.path.dirname(os.path.abspath(str(iso_path))), BACKUP_DIR)
     stem = os.path.splitext(os.path.basename(str(iso_path)))[0]
-    return os.path.join(backup_dir_for(iso_path), "%s.%s.orig" % (stem, overlay_name))
+    return os.path.join(root, stem)
 
+
+def _overlay_backup(iso_path, overlay_name) -> str:
+    return os.path.join(backup_dir_for(iso_path), "%s.orig" % overlay_name)
+
+
+def _sha1(data) -> str:
+    return hashlib.sha1(bytes(data)).hexdigest()
+
+
+class WordStore:
+    """Original values of the individual words we patch in an uncompressed
+    executable. Hashing and copying a 37 MB ELF for the sake of a dozen words
+    would be silly; recording the words is the same guarantee for 400 bytes."""
+
+    def __init__(self, folder):
+        self.path = os.path.join(folder, WORD_STORE)
+        self.words = {}
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, encoding="utf-8") as fh:
+                    self.words = {int(k, 16): v for k, v in json.load(fh).items()}
+            except (OSError, ValueError):
+                self.words = {}
+
+    def remember(self, va, value):
+        self.words.setdefault(va, value)
+
+    def original(self, va):
+        return self.words.get(va)
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w", encoding="utf-8") as fh:
+            json.dump({"%08x" % k: v for k, v in self.words.items()}, fh, indent=1)
+
+    def clear(self):
+        self.words = {}
+        self.save()
+
+
+# ---------------------------------------------------------------------------
+# PCSX2's cheat-file CRC
+# ---------------------------------------------------------------------------
 
 def pcsx2_crc(data: bytes) -> str:
-    """The CRC PCSX2 puts in a cheat filename: every 32-bit word XORed."""
+    """Every 32-bit word of the boot executable, XORed."""
     n = len(data) // 4
     crc = 0
     for value in struct.unpack_from("<%dI" % n, data, 0):
@@ -74,60 +126,60 @@ def iso_crc(iso: Iso, boot_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# pristine overlay recovery
+# recovering the pristine overlay
 # ---------------------------------------------------------------------------
 
-def load_pristine(iso: Iso, iso_path, profile, overlay, stock_words) -> tuple:
-    """Return (SozImage, how) for the untouched overlay.
+def load_pristine(iso, iso_path, profile, spec, store=None):
+    """(overlay, how) with every word this tool owns back at its stock value."""
+    ov = open_overlay(iso, spec)
+    stock = profile.stock_words or {}
 
-    `how` is one of "hash" (the disc is stock), "backup" (recovered from the
-    sidecar) or "repaired" (the disc was patched by this tool and every changed
-    word was put back).
-    """
-    ent = iso.find(overlay.iso_pattern)
-    if ent is None:
-        raise EngineError("%s is not on this disc" % overlay.name)
+    if spec.kind == "raw":
+        unknown = []
+        for va, want in stock.items():
+            cur = ov.read_word(va)
+            if cur == want:
+                continue
+            if store is not None and store.original(va) == want:
+                ov.write_word(va, want)       # ours from a previous run
+                continue
+            unknown.append(va)
+        if unknown:
+            raise EngineError(
+                "%s has %d word%s this tool did not write and does not "
+                "recognise (first at 0x%08x). Use a clean copy of the disc."
+                % (spec.name, len(unknown), "" if len(unknown) == 1 else "s",
+                   unknown[0]))
+        return ov, "words"
 
-    bak = _backup_path(iso_path, overlay.name)
+    bak = _overlay_backup(iso_path, spec.name)
+    ent = iso.find(spec.iso_pattern)
     if os.path.exists(bak):
         with open(bak, "rb") as fh:
             container = fh.read()
         if len(container) == ent.size:
-            img = SozImage.unpack(container, overlay.base_va)
-            if not overlay.image_sha1 or _sha1(img.image) == overlay.image_sha1:
-                return img, "backup"
+            img = SozImage.unpack(container, spec.base_va)
+            if not spec.image_sha1 or _sha1(img.image) == spec.image_sha1:
+                ov.img = img
+                return ov, "backup"
 
-    img = SozImage.unpack(iso.read(ent.lba, ent.size), overlay.base_va)
-    if overlay.image_size and len(img.image) != overlay.image_size:
-        raise EngineError("%s decompresses to %d bytes, expected %d -- this is "
-                          "not the disc revision this profile was built for"
-                          % (overlay.name, len(img.image), overlay.image_size))
-
-    if not overlay.image_sha1 or _sha1(img.image) == overlay.image_sha1:
+    if not spec.image_sha1 or ov.sha1() == spec.image_sha1:
         _save_backup(bak, iso.read(ent.lba, ent.size))
-        return img, "hash"
+        return ov, "hash"
 
-    # Not stock. Only proceed if every difference is at an address this tool
-    # owns -- then putting the stock words back restores the pristine image.
-    changed = []
-    for va, stock in (stock_words or {}).items():
-        cur = img.read_word(va)
-        if cur != stock:
-            changed.append(va)
-            img.write_word(va, stock)
-    if overlay.image_sha1 and _sha1(img.image) == overlay.image_sha1:
-        _save_backup(bak, SozImage(img.image, overlay.base_va, ent.size).pack())
-        return img, "repaired"
+    changed = 0
+    for va, want in stock.items():
+        if ov.read_word(va) != want:
+            ov.write_word(va, want)
+            changed += 1
+    if spec.image_sha1 and ov.sha1() == spec.image_sha1:
+        _save_backup(bak, ov.container())
+        return ov, "repaired"
 
     raise EngineError(
-        "%s has been modified by something other than this tool (%d known "
-        "words differed and the image still does not match the stock hash). "
-        "Restore the disc from a clean copy before patching."
-        % (overlay.name, len(changed)))
-
-
-def _sha1(data) -> str:
-    return hashlib.sha1(bytes(data)).hexdigest()
+        "%s has been changed by something other than this tool (%d known words "
+        "differed and the image still does not match the stock hash). Restore "
+        "the disc from a clean copy before patching." % (spec.name, changed))
 
 
 def _save_backup(path, container):
@@ -138,7 +190,7 @@ def _save_backup(path, container):
 
 
 # ---------------------------------------------------------------------------
-# plan / apply
+# plan
 # ---------------------------------------------------------------------------
 
 def plan(iso_path, profile, values) -> Plan:
@@ -146,103 +198,161 @@ def plan(iso_path, profile, values) -> Plan:
     warnings = []
     edits = profile.build_edits(values) if profile.build_edits else []
     pn = profile.build_pnach(values) if profile.build_pnach else []
+    data = profile.build_data(values) if profile.build_data else []
 
     for s in profile.settings:
         if not s.enabled and values.get(s.key):
             warnings.append("%s is disabled in this build: %s"
                             % (s.label, s.disabled_reason))
-        missing = profile.unmet(s.key, values)
-        if missing and values.get(s.key) not in (None, False, s.default):
+        # Only complain about a gated setting when it is actually asking for
+        # something. "stock", False and 0 all mean "leave this alone", so they
+        # are never worth a warning even when their master switch is off.
+        value = values.get(s.key)
+        asking = value not in (None, False, 0, "stock", s.default)
+        if asking and profile.unmet(s.key, values):
             warnings.append("%s does nothing without: %s"
-                            % (s.label, ", ".join(missing)))
+                            % (s.label, ", ".join(profile.unmet(s.key, values))))
 
-    overlay = profile.overlays[0]
-    with Iso(iso_path) as iso:
-        stock = _profile_stock(profile)
-        img, how = load_pristine(iso, iso_path, profile, overlay, stock)
-        for e in edits:
-            cur = img.read_word(e.va)
-            if cur != e.stock:
-                warnings.append("0x%08x reads %08x, expected the stock %08x"
-                                % (e.va, cur, e.stock))
-    return Plan(profile.title, edits, pn, warnings, how)
+    how = ""
+    if profile.overlays:
+        spec = profile.overlays[0]
+        store = WordStore(backup_dir_for(iso_path))
+        with Iso(iso_path) as iso:
+            try:
+                ov, how = load_pristine(iso, iso_path, profile, spec, store)
+            except (EngineError, OverlayError) as exc:
+                warnings.append(str(exc))
+                ov = None
+            if ov is not None:
+                for e in edits:
+                    cur = ov.read_word(e.va)
+                    if cur != e.stock:
+                        warnings.append("0x%08x reads %08x, expected the stock "
+                                        "%08x" % (e.va, cur, e.stock))
+    return Plan(profile.title, edits, pn, data, warnings, how)
 
 
-def _profile_stock(profile):
-    return profile.stock_words or {}
-
+# ---------------------------------------------------------------------------
+# apply
+# ---------------------------------------------------------------------------
 
 def apply(iso_path, profile, values, progress=None) -> dict:
-    """Write the settings to the disc. Returns a small report dict."""
     values = profile.normalise(values)
-    overlay = profile.overlays[0]
-    stock = _profile_stock(profile)
     edits = profile.build_edits(values) if profile.build_edits else []
+    data = profile.build_data(values) if profile.build_data else []
+    folder = backup_dir_for(iso_path)
+    store = WordStore(folder)
 
     def say(msg):
         if progress:
             progress(msg)
 
+    report = {"applied": 0, "verified": 0, "failed": [], "data": {},
+              "pristine_source": "", "backup": folder,
+              "when": time.strftime("%Y-%m-%d %H:%M:%S")}
+
     say("Opening %s" % os.path.basename(str(iso_path)))
     with Iso(iso_path, writable=True) as iso:
-        ent = iso.find(overlay.iso_pattern)
-        say("Recovering the untouched %s" % overlay.name)
-        img, how = load_pristine(iso, iso_path, profile, overlay, stock)
+        if profile.overlays:
+            spec = profile.overlays[0]
+            say("Recovering the untouched %s" % spec.name)
+            ov, how = load_pristine(iso, iso_path, profile, spec, store)
+            report["pristine_source"] = how
+            for e in edits:
+                cur = ov.read_word(e.va)
+                if cur != e.stock:
+                    raise EngineError("refusing to patch: 0x%08x reads %08x but "
+                                      "the stock word is %08x"
+                                      % (e.va, cur, e.stock))
+                store.remember(e.va, e.stock)
+                ov.write_word(e.va, e.value)
+            report["applied"] = len(edits)
+            if edits or spec.kind == "soz":
+                say("Writing %d word%s into %s"
+                    % (len(edits), "" if len(edits) == 1 else "s", spec.name))
+                ov.store()
+            store.save()
 
-        for e in edits:
-            cur = img.read_word(e.va)
-            if cur != e.stock:
-                raise EngineError("refusing to patch: 0x%08x reads %08x but the "
-                                  "stock word is %08x" % (e.va, cur, e.stock))
-            img.write_word(e.va, e.value)
-        say("Applied %d word%s" % (len(edits), "" if len(edits) == 1 else "s"))
+        if data:
+            say("Editing the game's own data files")
+            dstore = dataedit.Store(folder)
+            report["data"] = dataedit.apply_data(iso, profile, data, dstore,
+                                                 progress=progress)
 
-        say("Re-compressing %s" % overlay.name)
-        store_to_iso(iso, ent, img)
-
-    # read it straight back out of the disc and count what actually landed
     say("Verifying against the disc")
     with Iso(iso_path) as iso:
-        ent = iso.find(overlay.iso_pattern)
-        live = SozImage.unpack(iso.read(ent.lba, ent.size), overlay.base_va)
-        ok = sum(1 for e in edits if live.read_word(e.va) == e.value)
-        bad = [e for e in edits if live.read_word(e.va) != e.value]
+        if profile.overlays:
+            ov = open_overlay(iso, profile.overlays[0])
+            ok = sum(1 for e in edits if ov.read_word(e.va) == e.value)
+            report["verified"] = ok
+            report["failed"] = [e for e in edits if ov.read_word(e.va) != e.value]
+        if data:
+            good, bad = dataedit.verify_data(iso, profile,
+                                             dataedit.Store(folder))
+            report["data"]["verified"] = good
+            report["data"]["broken"] = bad
+    return report
 
-    return {
-        "applied": len(edits),
-        "verified": ok,
-        "failed": bad,
-        "pristine_source": how,
-        "backup": _backup_path(iso_path, overlay.name),
-        "when": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
 
+# ---------------------------------------------------------------------------
+# revert
+# ---------------------------------------------------------------------------
 
 def revert(iso_path, profile, progress=None) -> dict:
-    """Put the disc back to stock."""
-    overlay = profile.overlays[0]
-    bak = _backup_path(iso_path, overlay.name)
-    if not os.path.exists(bak):
-        raise EngineError("no backup of %s next to this ISO -- nothing to "
-                          "restore from" % overlay.name)
-    with open(bak, "rb") as fh:
-        container = fh.read()
-    with Iso(iso_path, writable=True) as iso:
-        ent = iso.find(overlay.iso_pattern)
-        if ent is None:
-            raise EngineError("%s is not on this disc" % overlay.name)
-        if len(container) != ent.size:
-            raise EngineError("backup is %d bytes, the disc reserves %d"
-                              % (len(container), ent.size))
+    folder = backup_dir_for(iso_path)
+    out = {"restored": False, "hash_ok": True, "data": 0}
+
+    def say(msg):
         if progress:
-            progress("Restoring %s from backup" % overlay.name)
-        iso.write(ent.lba, container)
-        iso.flush()
+            progress(msg)
+
+    with Iso(iso_path, writable=True) as iso:
+        dstore = dataedit.Store(folder)
+        if dstore.entries():
+            say("Restoring %d data file(s)" % len(dstore.entries()))
+            out["data"] = dataedit.revert_data(iso, profile, dstore,
+                                               progress=progress)["files"]
+
+        if profile.overlays:
+            spec = profile.overlays[0]
+            if spec.kind == "raw":
+                store = WordStore(folder)
+                if not store.words:
+                    if not out["data"]:
+                        raise EngineError("nothing recorded for this disc -- "
+                                          "there is nothing to undo")
+                else:
+                    say("Restoring %d word(s) in %s" % (len(store.words), spec.name))
+                    ov = open_overlay(iso, spec)
+                    for va, word in store.words.items():
+                        ov.write_word(va, word)
+                    ov.store()
+                    store.clear()
+                out["restored"] = True
+            else:
+                bak = _overlay_backup(iso_path, spec.name)
+                if not os.path.exists(bak):
+                    raise EngineError("no backup of %s beside this ISO -- there "
+                                      "is nothing to restore from" % spec.name)
+                with open(bak, "rb") as fh:
+                    container = fh.read()
+                ent = iso.find(spec.iso_pattern)
+                if ent is None or len(container) != ent.size:
+                    raise EngineError("the backup does not match this disc")
+                say("Restoring %s" % spec.name)
+                iso.write(ent.lba, container)
+                iso.flush()
+                out["restored"] = True
+
     with Iso(iso_path) as iso:
-        ent = iso.find(overlay.iso_pattern)
-        img = SozImage.unpack(iso.read(ent.lba, ent.size), overlay.base_va)
-        ok = (not overlay.image_sha1) or _sha1(img.image) == overlay.image_sha1
-    return {"restored": True, "hash_ok": ok}
+        spec = profile.overlays[0] if profile.overlays else None
+        if spec and spec.kind == "soz" and spec.image_sha1:
+            out["hash_ok"] = open_overlay(iso, spec).sha1() == spec.image_sha1
+        elif spec and spec.kind == "raw":
+            ov = open_overlay(iso, spec)
+            out["hash_ok"] = all(ov.read_word(va) == w
+                                 for va, w in (profile.stock_words or {}).items())
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -258,11 +368,11 @@ def pnach_text(profile, words, crc) -> str:
 
     Deliberately unlabelled: a named `[section]` added to a cheat file while the
     game is already running never enters the emulator's enabled set, and there
-    is nothing to tick in the UI to notice. Lines with no section above them
+    is nothing in the interface to tell you. Lines with no section above them
     apply whenever cheats are on for the game.
     """
-    lines = ["gametitle=%s (%s) [%s]" % (profile.title, profile.serial, crc), ""]
-    lines.append(BEGIN)
+    lines = ["gametitle=%s (%s) [%s]" % (profile.title, profile.serial, crc), "",
+             BEGIN]
     for w in words:
         note = ("   // " + w.note) if w.note else ""
         lines.append("patch=1,EE,%08x,word,%08x%s" % (w.va, w.value, note))
@@ -304,8 +414,7 @@ def find_pcsx2_cheat_dirs() -> list:
             seen.add(p)
             out.append(p)
 
-    docs = os.path.join(os.path.expanduser("~"), "Documents", "PCSX2")
-    add(os.path.join(docs, "cheats"))
+    add(os.path.join(os.path.expanduser("~"), "Documents", "PCSX2", "cheats"))
     for root in ("C:\\", "D:\\", "E:\\", "F:\\"):
         base = os.path.join(root, "Emulators")
         if not os.path.isdir(base):

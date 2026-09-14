@@ -11,8 +11,13 @@ TRANSPORT: an "A..P" nibble encoding, NOT base64.
   The encoding is fixed-width, so an edit that keeps the payload byte length
   keeps the XML text length too.
 
-VARIABLE TABLE: the payload opens with the script's variable table, which is
-where the designer-named tuning numbers live.
+VARIABLE TABLE (<ScriptSource> only): a ScriptSource payload opens with the
+script's variable table, which is where the designer-named tuning numbers live.
+Applying this layout to a <ScriptCompiled> payload is wrong -- that one opens
+with the string table instead (see below). Verified on every script blob in
+both games: 57/57 GR and 59/59 JS ScriptSource payloads parse with the declared
+variable count; 57/57 and 59/59 ScriptCompiled payloads parse with the declared
+string count.
 
       u32   variableCount
       u32   (1 on every file seen)
@@ -44,9 +49,14 @@ where the designer-named tuning numbers live.
 
   The same file in (COOP) DEFEND.GTF carries 30 / 40 / 50 instead.
 
-WHAT COMES AFTER the variable table is the compiled node graph. This module
-does NOT decode the node graph; it only reads the variable table and harvests
-printable strings (which include every designer node comment, e.g.
+STRING TABLE: <ScriptCompiled> is a DIFFERENT structure from <ScriptSource>.
+It opens with the script's string table (u32 count, then id/length/text
+records), and those ids are exactly what ScriptSource's "*_Text" variables hold
+as their value. See `strings()`.
+
+WHAT COMES AFTER each table is the compiled node graph. This module does NOT
+decode the node graph; it only reads the two tables and harvests printable
+strings (which include every designer node comment, e.g.
 "01a: Spawn enemies (recruit)"). See FORMATS.md for what is and is not known.
 """
 
@@ -110,6 +120,43 @@ def pretty(value):
     return str(value)
 
 
+def strings(payload):
+    """Parse the string table that a <ScriptCompiled> payload opens with.
+
+    <ScriptCompiled> and <ScriptSource> are DIFFERENT structures. ScriptSource
+    starts with the variable table (see `variables`); ScriptCompiled starts with
+    the string table:
+
+        u32 stringCount
+        repeat stringCount times:
+            u32   id
+            u32   length
+            char  text[length]      (no NUL)
+
+    The ids are exactly what ScriptSource's "*_Text" variables hold as their
+    `value`. In Jungle Storm's (SP) DEFEND.GTF, ScriptSource has
+    `Lose Text = 8`, and ScriptCompiled string id 8 is
+    "?Your base has been captured...  Defeat!".
+
+    Returns [(id, text), ...], or [] if it does not parse cleanly.
+    """
+    if len(payload) < 4:
+        return []
+    (count,) = struct.unpack_from("<I", payload, 0)
+    if not (0 < count < 65536):
+        return []
+    out, o = [], 4
+    for _ in range(count):
+        if o + 8 > len(payload):
+            return out
+        sid, ln = struct.unpack_from("<II", payload, o); o += 8
+        if ln > 65536 or o + ln > len(payload):
+            return out
+        out.append((sid, payload[o:o + ln].decode("latin1")))
+        o += ln
+    return out
+
+
 def comments(payload, minlen=5):
     """Every printable run in the payload. These are the designer's node names
     and comments; they are the fastest way to find the spawn/wave logic."""
@@ -120,7 +167,13 @@ def comments(payload, minlen=5):
 if __name__ == "__main__":
     import sys
     txt = open(sys.argv[1], encoding="latin1").read()
-    for tag, pay in scripts(txt):
+    blobs = dict(scripts(txt))
+    table = dict(strings(blobs.get("ScriptCompiled", b"")))
+    for tag, pay in blobs.items():
         print("== %s (%d bytes)" % (tag, len(pay)))
         for name, val, vid in variables(pay):
-            print("   %-42s = %-14s (id %d)" % (name, pretty(val), vid))
+            resolved = table.get(val)
+            note = "  -> %r" % resolved[:70] if resolved and "Text" in name else ""
+            print("   %-30s = %-14s (id %d)%s" % (name, pretty(val), vid, note))
+        for sid, text in strings(pay):
+            print("   [str %3d] %r" % (sid, text[:90]))

@@ -5,4 +5,8 @@ dist/
 *.spec
 stock_sp.bin
 .tcms-backup/
-research/**/*.iso
+research/__pycache__/
+research/code/__pycache__/
+research/code/symbols_gr.txt
+research/filelist_*.txt
+research/ui_textures/

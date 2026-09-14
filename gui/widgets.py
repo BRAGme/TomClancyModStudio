@@ -101,8 +101,9 @@ class SettingCard(tk.Frame):
         tags = tk.Frame(head, bg=theme.PANEL)
         tags.pack(side="right")
         badge(tags, "broken" if not s.enabled else s.confidence).pack(side="right")
-        if s.pnach_only:
-            tk.Label(tags, text=" CHEAT FILE ", bg=theme.PANEL, fg=theme.WARN,
+        touch = theme.TOUCH.get("cheat" if s.pnach_only else s.touches)
+        if touch:
+            tk.Label(tags, text=touch[1], bg=theme.PANEL, fg=touch[0],
                      font=theme.FONT_SMALL).pack(side="right", padx=(0, theme.px(6)))
 
         if s.kind == BOOL:

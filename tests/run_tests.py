@@ -53,8 +53,11 @@ def stock_container(args):
         for va, word in STOCK.items():
             img.write_word(va, word)
         if hashlib.sha1(bytes(img.image)).hexdigest() != PROFILE.overlays[0].image_sha1:
-            raise SystemExit("that ISO carries changes this tool does not know "
-                             "about; pass --soz with a stock container instead")
+            raise SystemExit(
+                "that ISO carries changes this tool does not recognise, so it "
+                "cannot be used as a source of stock data. Pass --soz with a "
+                "known-stock SP.SOZ container instead (the .tcms-backup folder "
+                "beside a disc this tool has already seen holds one).")
         return SozImage(img.image, PROFILE.overlays[0].base_va, len(raw)).pack()
     raise SystemExit("need --soz or --iso")
 
@@ -73,18 +76,139 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--soz")
     ap.add_argument("--iso")
+    ap.add_argument("--gr", help="Ghost Recon ISO, to test the raw-ELF path")
+    ap.add_argument("--js", help="Jungle Storm ISO, same")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
     work = tempfile.mkdtemp(prefix="tcms-test-")
     try:
         run(args, work)
+        run_raw_and_data(args, work)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
+
+
+def run_raw_and_data(args, work):
+    """Ghost Recon / Jungle Storm: the uncompressed-ELF word path on a fixture,
+    and the archive data path against the real discs through a write shadow, so
+    no retail file is ever opened for writing."""
+    import re
+    from tcps2 import dataedit, rselzo, transforms
+    from tcps2.games import BY_ID
+    from tcps2.overlay import open_overlay
+    from tcps2.vokes import Region, Vokes, open_archives
+
+    class Shadow(Region):
+        """Reads through to the real archive, keeps writes in memory."""
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0-off:e0-off] = b[s0-o:e0-o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    for iso_path, pid, boot in ((args.gr, "ghost_recon_slus20613", "SLUS_206.13"),
+                                (args.js, "jungle_storm_slus20820", "SLUS_208.20")):
+        if not iso_path:
+            continue
+        profile = BY_ID[pid]
+        print("\n[%s -- code words]" % profile.short)
+        with Iso(iso_path) as iso:
+            ent = iso.find(profile.overlays[0].iso_pattern)
+            elf = iso.read(ent.lba, ent.size)
+        fx = os.path.join(work, pid + ".iso")
+        build(fx, [(boot, elf)])
+        det = identify(fx)
+        check("fixture is recognised as %s" % profile.short,
+              det.ok and det.profile is profile, det.message)
+
+        vals = profile.defaults()
+        for s in profile.settings:
+            if not s.enabled:
+                continue
+            if s.kind == "bool":
+                vals[s.key] = True
+            elif s.kind == "int" and s.key.endswith("_skill"):
+                vals[s.key] = 2
+        vals = profile.normalise(vals)
+        code_only = {k: v for k, v in vals.items()}
+        edits = profile.build_edits(code_only)
+        check("%s emits code words" % profile.short, len(edits) > 0)
+        r = engine.apply(fx, profile, code_only)
+        check("every word verifies from the fixture",
+              r["applied"] == r["verified"] and r["applied"] > 0,
+              "%d of %d" % (r["verified"], r["applied"]))
+        rv = engine.revert(fx, profile)
+        check("revert puts every stock word back", rv["hash_ok"])
+        with Iso(fx) as iso:
+            ov = open_overlay(iso, profile.overlays[0])
+            bad = [va for va, w in profile.stock_words.items() if ov.read_word(va) != w]
+        check("no stock word left changed", not bad, str(bad[:3]))
+
+        print("[%s -- data files, against the real disc through a shadow]"
+              % profile.short)
+        data_edits = profile.build_data(vals)
+        check("%s emits data edits" % profile.short, len(data_edits) > 0)
+        with Iso(iso_path) as iso:
+            arc = Vokes(Shadow(open_archives(iso, profile.archive_pattern)[0].r))
+            scopes = {}
+            allow = {id(ed): dataedit._scope_filter(arc, ed, scopes)
+                     for ed in data_edits}
+            scoped = [ed for ed in data_edits if ed.scope]
+            if scoped:
+                check("the skill edit is scoped to hostile templates only",
+                      all(allow[id(ed)] is not None for ed in scoped))
+            built, lengths_ok = [], True
+            for key, e in sorted(arc.files.items()):
+                applies = [ed for ed in data_edits if ed.matches(key)
+                           and (allow[id(ed)] is None or allow[id(ed)](key))]
+                if not applies:
+                    continue
+                original = arc.read_entry(e)
+                plain = rselzo.unpack(original)
+                new = plain
+                for ed in applies:
+                    new, _n = dataedit.OPS[ed.op](new, ed.params)
+                if new == plain:
+                    continue
+                if len(new) != len(plain):
+                    lengths_ok = False
+                    break
+                packed = (rselzo.repack(original, new)
+                          if rselzo.is_compressed(original) else new)
+                built.append((len(packed), e, packed, new))
+            check("every transform preserves the file length", lengths_ok)
+            # biggest first: the one large file must get the 64 KB pad before
+            # smaller ones start nibbling at it
+            built.sort(key=lambda r: -r[0])
+            touched = ok = 0
+            for _size, e, packed, new in built:
+                try:
+                    arc.write(e.path, packed)
+                except Exception as exc:
+                    check("could place %s (%d bytes)" % (e.path, len(packed)),
+                          False, str(exc))
+                    break
+                touched += 1
+                back = arc.read_file(e.path)
+                if back == packed and rselzo.unpack(back) == new:
+                    ok += 1
+            check("every edited data file reads back correctly (%d files)" % touched,
+                  touched > 0 and ok == touched, "%d of %d" % (ok, touched))
+            ext = sorted((x.offset, x.offset + x.size) for x in arc.files.values())
+            overlap = [a for a, b in zip(ext, ext[1:]) if b[0] < a[1]]
+            check("no two files overlap after relocation", not overlap)
 
 
 def run(args, work):
