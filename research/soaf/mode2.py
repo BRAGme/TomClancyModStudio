@@ -1,12 +1,18 @@
 """Present a raw CD image (MODE1/2352 or MODE2/2352) as a plain 2048-byte ISO.
 
 The Sum of All Fears (PS2, SLES-511.80) ships as a .bin/.cue pair whose track is
-2352 bytes per sector, not 2048.  `tcps2.iso.Iso` assumes 2048-byte sectors and
-seeks with `lba * 2048`, so it cannot open the .bin directly.
+2352 bytes per sector, not 2048.
 
-This module is a *file-like shim*: it wraps the raw .bin and re-presents it as
-the stream of 2048-byte user-data areas, so `Iso` -- and `vokes.Region`, which
-also seeks by absolute byte offset into `iso.fh` -- work unmodified.
+`tcps2.iso.Iso` now detects that geometry itself, so it reads this disc's
+directory unaided. What it does not do is flatten the underlying file object,
+and that is the part that bites: `tcps2.vokes.Region.from_iso` (and `SoafImg`
+with it) takes `iso.fh` and seeks to `lba * 2048 + n` directly, which on a
+2352-byte image lands inside a sync header and reads garbage without erroring.
+
+This module is the *file-like shim* that closes that gap. `Mode2File` wraps the
+raw .bin and re-presents it as the flat stream of 2048-byte user-data areas, and
+`open_iso` hands back an `Iso` backed by it, so every consumer that reaches past
+the Iso into `fh` sees an ordinary ISO.
 
 Sector layout actually measured on this disc (not assumed):
 
@@ -172,7 +178,18 @@ class Mode2File(io.RawIOBase):
 
 
 def open_iso(path):
-    """Open any PS2 image as a `tcps2.iso.Iso`, cooking 2352 images on the fly."""
+    """Open any PS2 image as a `tcps2.iso.Iso` whose `fh` is a FLAT 2048 stream.
+
+    `tcps2.iso.Iso` learned to read 2,352-byte images on its own, so it parses
+    this disc's directory unaided. What it does not do is flatten the file
+    object, and that matters: `tcps2.vokes.Region.from_iso` -- and `SoafImg`
+    with it -- take `iso.fh` and seek to `lba * 2048 + n` directly, which lands
+    in the middle of a sync header on a 2,352-byte image and reads garbage.
+
+    So this returns an `Iso` backed by `Mode2File`, with the geometry reset to
+    (2048, 0). The directory parse is then a plain seek, and every consumer that
+    reaches past the Iso into `fh` sees an ordinary ISO.
+    """
     from tcps2.iso import Iso
 
     raw, off = detect_layout(path)
@@ -184,13 +201,17 @@ def open_iso(path):
     iso.writable = False
     iso.fh = Mode2File(path, raw, off)
     iso._entries = None
+    iso.raw_sector, iso.data_off = USER, 0    # already cooked by Mode2File
     iso._check_pvd()
+    iso.source_geometry = (raw, off)
     return iso
 
 
 if __name__ == "__main__":
     import sys
 
+    sys.path.insert(0, os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
     p = sys.argv[1]
     raw, off = detect_layout(p)
     print("layout: %d-byte sectors, user data at +%d" % (raw, off))

@@ -287,3 +287,67 @@ def enemy_templates(plain: bytes):
         for f in FILE_RX.findall(m.group(2)):
             names.add(f.decode("latin1").lower())
     return names
+
+
+# ---------------------------------------------------------------------------
+# plain-text INI settings (Rainbow Six 3)
+# ---------------------------------------------------------------------------
+#
+# Rainbow Six 3 keeps a surprising amount in `R6GAMESETTINGS.INI` as named,
+# commented values -- AI skill multipliers, the distance at which an NPC shoots
+# perfectly, how long it waits before throwing a grenade, the look-sensitivity
+# curve. Those files are plain text and are NOT inside the chunked compressor,
+# so unlike the mission XML these edits do not have to preserve length: the
+# archive writer relocates the file if it grows.
+
+def _ini_pattern(key):
+    return re.compile(rb"^([ \t]*" + re.escape(key.encode()) + rb"[ \t]*=[ \t]*)"
+                      rb"([^\r\n;]*)", re.M | re.I)
+
+
+def read_ini_values(plain: bytes, keys):
+    out = {}
+    for key in keys:
+        m = _ini_pattern(key).search(plain)
+        if m:
+            out[key] = m.group(2).strip().decode("latin1")
+    return out
+
+
+def set_ini_values(plain: bytes, updates: dict):
+    """Rewrite `key = value` lines in place. Returns (bytes, changed)."""
+    changed = [0]
+    out = plain
+    for key, value in updates.items():
+        text = ("%s" % value).encode("latin1")
+
+        def sub(m, text=text):
+            if m.group(2).strip() == text:
+                return m.group(0)
+            changed[0] += 1
+            return m.group(1) + text
+        out, n = _ini_pattern(key).subn(sub, out)
+    return out, changed[0]
+
+
+#: `WS[n]=(bUsing=...,weaponname="...")` is a per-map table saying which weapon
+#: sound banks that level loads. Slot 43 is the molotov, and it ships `true`
+#: only on the Alcatraz maps.
+WS_SLOT = re.compile(rb'(WS\[(\d+)\]\s*=\s*\(\s*bUsing\s*=\s*)(true|false)', re.I)
+
+
+def set_ws_slot(plain: bytes, slot: int, using: bool):
+    want = b"true" if using else b"false"
+    changed = [0]
+
+    def sub(m):
+        if int(m.group(2)) != slot or m.group(3).lower() == want:
+            return m.group(0)
+        changed[0] += 1
+        return m.group(1) + want
+    return WS_SLOT.sub(sub, plain), changed[0]
+
+
+def read_ws_slots(plain: bytes):
+    return {int(m.group(2)): m.group(3).lower() == b"true"
+            for m in WS_SLOT.finditer(plain)}

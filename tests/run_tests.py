@@ -78,6 +78,7 @@ def main():
     ap.add_argument("--iso")
     ap.add_argument("--gr", help="Ghost Recon ISO, to test the raw-ELF path")
     ap.add_argument("--js", help="Jungle Storm ISO, same")
+    ap.add_argument("--rs3data", help="Rainbow Six 3 ISO, for its INI data path")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -119,10 +120,14 @@ def run_raw_and_data(args, work):
             self.w.append((off, bytes(data)))
 
     for iso_path, pid, boot in ((args.gr, "ghost_recon_slus20613", "SLUS_206.13"),
-                                (args.js, "jungle_storm_slus20820", "SLUS_208.20")):
+                                (args.js, "jungle_storm_slus20820", "SLUS_208.20"),
+                                (args.rs3data, "r6_3_slus20883", None)):
         if not iso_path:
             continue
         profile = BY_ID[pid]
+        if boot is None:
+            _data_only(args, profile, iso_path, Shadow)
+            continue
         print("\n[%s -- code words]" % profile.short)
         with Iso(iso_path) as iso:
             ent = iso.find(profile.overlays[0].iso_pattern)
@@ -209,6 +214,71 @@ def run_raw_and_data(args, work):
             ext = sorted((x.offset, x.offset + x.size) for x in arc.files.values())
             overlap = [a for a, b in zip(ext, ext[1:]) if b[0] < a[1]]
             check("no two files overlap after relocation", not overlap)
+
+
+def _data_only(args, profile, iso_path, Shadow):
+    """The archive path for a game whose code patches are covered elsewhere.
+
+    Rainbow Six 3 keeps its AI tuning and control curve in plain-text INI files
+    that live in all three vokes archives, so the thing worth checking is that
+    every copy is rewritten and that nothing lands on top of anything else.
+    """
+    from tcps2 import dataedit, rselzo, transforms
+    from tcps2.vokes import Vokes, open_archives
+
+    print("\n[%s -- data files, against the real disc through a shadow]"
+          % profile.short)
+    vals = profile.normalise(dict(profile.defaults(), grenade_dist=80,
+                                  grenade_delay="quick", molotov_everywhere=True,
+                                  terro_skill="up", perfect_dist=900,
+                                  sens_steps=20, sens_boost=200))
+    edits = profile.build_data(vals)
+    check("%s emits data edits" % profile.short, len(edits) >= 2)
+
+    copies = molotov = 0
+    with Iso(iso_path) as iso:
+        for real in open_archives(iso, profile.archive_pattern):
+            arc = Vokes(Shadow(real.r))
+            stock_ext = sorted((e.offset, e.offset + e.size)
+                               for e in arc.files.values()
+                               if e.offset >= arc.data_start)
+            stock_ov = sum(1 for a, b in zip(stock_ext, stock_ext[1:])
+                           if b[0] < a[1])
+            built = []
+            for key, e in sorted(arc.files.items()):
+                applies = [ed for ed in edits if ed.matches(key)]
+                if not applies or e.offset < arc.data_start:
+                    continue
+                plain = rselzo.unpack(arc.read_entry(e))
+                new = plain
+                for ed in applies:
+                    new, _n = dataedit.OPS[ed.op](new, ed.params)
+                if new != plain:
+                    built.append((len(new), e, new))
+            built.sort(key=lambda r: -r[0])
+            for _s, e, new in built:
+                arc.write(e.path, new)
+                if arc.read_file(e.path) != new:
+                    check("%s reads back" % e.path, False)
+                if "/MAPS/" in e.path and transforms.read_ws_slots(
+                        arc.read_file(e.path)).get(43):
+                    molotov += 1
+            g = arc.files.get("/R6GAMESETTINGS.INI")
+            if g:
+                got = transforms.read_ini_values(
+                    arc.read_entry(g),
+                    ["m_fMinDistToThrowGrenade", "m_iXSensitivityMaxSteps"])
+                if got.get("m_fMinDistToThrowGrenade") == "80" and                         got.get("m_iXSensitivityMaxSteps") == "20":
+                    copies += 1
+            ext = sorted((e.offset, e.offset + e.size)
+                         for e in arc.files.values()
+                         if e.offset >= arc.data_start)
+            ov = sum(1 for a, b in zip(ext, ext[1:]) if b[0] < a[1])
+            check("%s gains no overlap (%d before, %d after)"
+                  % (real.r.name, stock_ov, ov), ov <= stock_ov)
+    check("all three copies of R6GAMESETTINGS.INI were rewritten", copies == 3,
+          "%d of 3" % copies)
+    check("the molotov is enabled on every map INI (%d)" % molotov, molotov > 100)
 
 
 def run(args, work):

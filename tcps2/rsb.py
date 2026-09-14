@@ -99,6 +99,56 @@ def write_png(path, w, h, rgba):
 # the decoder
 # --------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# version 8 -- The Sum of All Fears
+# ---------------------------------------------------------------------------
+#
+# The version 6 header with seven bytes inserted after `height`, which pushes
+# the channel depths to +19/+23/+27/+31 and the pixels to **+35** -- an odd
+# offset, which is unusual enough to be worth stating. It was measured rather
+# than guessed: scanning candidate bases 28..43 and scoring each by mean
+# horizontal colour difference gives about 88 for every even base and about 16
+# for every odd one, and `35 + w*h*bpp/8 + 66 == filesize` then closes exactly
+# on every file. 16-bit pixels are RGB565 with red in the high bits, confirmed
+# by a US flag coming out red, white and blue rather than blue, white and red.
+
+V8_HDR = 35
+V8_TRAILER = 66
+
+
+def is_v8(data):
+    return len(data) >= 36 and struct.unpack_from("<I", data, 0)[0] == 8
+
+
+def parse_v8(data):
+    w, h = struct.unpack_from("<II", data, 4)
+    rb, gb, bb, ab = data[19], data[23], data[27], data[31]
+    bpp = rb + gb + bb + ab
+    if bpp not in (16, 32):
+        raise RsbError("v8 bpp %d (%d,%d,%d,%d) not handled"
+                       % (bpp, rb, gb, bb, ab))
+    need = V8_HDR + w * h * bpp // 8 + V8_TRAILER
+    if need != len(data):
+        raise RsbError("v8 size mismatch: %dx%d bpp%d wants %d, file is %d"
+                       % (w, h, bpp, need, len(data)))
+    npx = w * h
+    out = bytearray(npx * 4)
+    if bpp == 16:
+        for i, v in enumerate(struct.unpack_from("<%dH" % npx, data, V8_HDR)):
+            r, g, b = (v >> 11) & 31, (v >> 5) & 63, v & 31
+            out[i * 4 + 0] = (r << 3) | (r >> 2)
+            out[i * 4 + 1] = (g << 2) | (g >> 4)
+            out[i * 4 + 2] = (b << 3) | (b >> 2)
+            out[i * 4 + 3] = 255
+    else:
+        px = data[V8_HDR:V8_HDR + npx * 4]
+        for i in range(npx):
+            r, g, b, a = px[i * 4:i * 4 + 4]
+            out[i * 4:i * 4 + 4] = bytes((r, g, b, min(255, a * 2)))
+    return dict(kind="raster", version=8, width=w, height=h,
+                mask=(rb, gb, bb, ab), bpp=bpp, rgba=bytes(out))
+
+
 def parse(data):
     """Return a dict describing an RSB.
 
@@ -110,6 +160,9 @@ def parse(data):
         raise RsbError('too short (%d bytes)' % len(data))
 
     version, flag = struct.unpack_from('<HH', data, 0)
+
+    if is_v8(data):
+        return parse_v8(data)
 
     if version == 3:
         nlen, = struct.unpack_from('<I', data, 4)

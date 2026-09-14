@@ -25,8 +25,8 @@ Provenance of the wave numbers, briefly, because they are not obvious:
 
 from __future__ import annotations
 
-from ..model import (BOOL, CHOICE, INT, Choice, GameProfile, Overlay, Setting,
-                     WordEdit, li, S0, V0, V1)
+from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
+                     Overlay, Setting, WordEdit, li, S0, V0, V1)
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -191,6 +191,78 @@ def _settings():
                         "survive a level load.",
                 requires={"wave_enable": True}, confidence="verified"),
 
+
+        # ---- enemy behaviour, straight out of R6GAMESETTINGS.INI ---------
+        Setting("grenade_dist", "How close enemies will throw grenades", INT,
+                200, "Enemy Behaviour", minimum=25, maximum=600,
+                unit="units", confidence="applied", touches="data",
+                help="The game will not let an NPC throw a grenade at anything "
+                     "nearer than this. It ships at 200. Lower it and they use "
+                     "grenades in close quarters instead of only lobbing them "
+                     "across a room; raise it and grenades become a long-range "
+                     "answer only.",
+                caution="This is a minimum distance, not a probability -- the "
+                        "shipped settings expose no throw chance anywhere."),
+        Setting("grenade_delay", "How long they think about it first", CHOICE,
+                "stock", "Enemy Behaviour", confidence="applied", touches="data",
+                choices=[
+                    Choice("stock", "Stock (1.0s recruit, 0.5s veteran)", ""),
+                    Choice("quick", "Quicker (0.5s / 0.25s)",
+                           "Roughly twice as many grenades in the same fight."),
+                    Choice("instant", "Barely any (0.1s / 0.05s)",
+                           "They throw the moment they have a reason to."),
+                ],
+                help="The reaction delay before an NPC commits to a throw. "
+                     "Shortening it is the closest thing this game has to a "
+                     "throw-chance dial."),
+        Setting("molotov_everywhere", "Molotovs on every level", BOOL, False,
+                "Enemy Behaviour", confidence="applied", touches="data",
+                help="Every level carries a weapon table, and slot 43 is the "
+                     "molotov. It ships enabled on the Alcatraz maps only. "
+                     "This switches it on across all of them.",
+                caution="This is the per-map weapon entry, which is what gates "
+                        "the molotov for a level. Whether a given terrorist "
+                        "then carries one is decided by his template, and that "
+                        "part is still being worked out -- so treat this as "
+                        "necessary but possibly not sufficient on its own."),
+        Setting("terro_skill", "Enemy skill", CHOICE, "stock",
+                "Enemy Behaviour", confidence="applied", touches="data",
+                choices=[
+                    Choice("stock", "Stock (0.20 / 0.70 / 1.25)", ""),
+                    Choice("up", "Sharper (+40%)", ""),
+                    Choice("elite", "Everyone near-elite",
+                           "All three tiers at 1.25, so recruits shoot like "
+                           "elites do."),
+                    Choice("down", "Softer (-40%)", ""),
+                ],
+                help="The per-difficulty multiplier the AI scales its aim and "
+                     "its reactions by."),
+        Setting("perfect_dist", "Range at which enemies never miss", INT, 500,
+                "Enemy Behaviour", minimum=50, maximum=3000, unit="units",
+                confidence="applied", touches="data",
+                help="Inside this distance an NPC's shots have no dispersion at "
+                     "all. It ships at 500. Lowering it is the most direct way "
+                     "to make enemies less lethal up close; raising it does the "
+                     "opposite."),
+
+        # ---- controls ----------------------------------------------------
+        Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
+                minimum=10, maximum=30, unit="steps", confidence="applied",
+                touches="data",
+                help="The in-game sensitivity slider stops at 10. This raises "
+                     "how far it goes, so there are faster settings to pick "
+                     "than the game normally offers.",
+                caution="This lifts the ceiling for BOTH players. It does not "
+                        "by itself make player 2 match player 1 -- why player 2 "
+                        "is slower at the same number is a separate question, "
+                        "and it is still being investigated."),
+        Setting("sens_boost", "Look speed at each step", INT, 100, "Controls",
+                minimum=50, maximum=400, unit="%", confidence="applied",
+                touches="data",
+                help="Scales the sensitivity multiplier and the per-step "
+                     "increment together, so every notch on the slider moves "
+                     "the camera further. 100% is stock."),
+
         # ---- split screen ----------------------------------------------
         Setting("viewmodel", "Show your weapon in split screen", BOOL, True,
                 "Split Screen",
@@ -310,6 +382,68 @@ def build_edits(v: dict) -> list:
     return e
 
 
+SKILL_SETS = {
+    "stock": ("0.20", "0.70", "1.25"),
+    "up":    ("0.28", "0.98", "1.75"),
+    "elite": ("1.25", "1.25", "1.25"),
+    "down":  ("0.12", "0.42", "0.75"),
+}
+GRENADE_DELAYS = {
+    "stock":   ("1.0", "0.5"),
+    "quick":   ("0.5", "0.25"),
+    "instant": ("0.1", "0.05"),
+}
+#: shipped values the percentage dial scales
+SENS_BASE = {"x_mult": 0.70, "y_mult": 0.60, "x_step": 0.15, "y_step": 0.15}
+
+
+def build_data(v: dict) -> list:
+    """Rainbow Six 3 keeps its AI tuning and its control curve in plain text.
+
+    `R6GAMESETTINGS.INI` ships three identical copies, one per vokes archive,
+    and all three are rewritten -- the game reads whichever answers first.
+    Unlike the Ghost Recon mission files these are not inside the chunked
+    compressor, so the edits do not have to preserve length.
+    """
+    out = []
+    ini = {}
+
+    if int(v.get("grenade_dist", 200)) != 200:
+        ini["m_fMinDistToThrowGrenade"] = int(v["grenade_dist"])
+    delay = v.get("grenade_delay", "stock")
+    if delay != "stock":
+        rec, vet = GRENADE_DELAYS[delay]
+        ini["m_fGrenadeReactionDelayRecruit"] = rec
+        ini["m_fGrenadeReactionDelayVeteran"] = vet
+    skill = v.get("terro_skill", "stock")
+    if skill != "stock":
+        rec, vet, eli = SKILL_SETS[skill]
+        ini["m_fTerroristSkillMultiplierRecruit"] = rec
+        ini["m_fTerroristSkillMultiplierVeteran"] = vet
+        ini["m_fTerroristSkillMultiplierElite"] = eli
+    if int(v.get("perfect_dist", 500)) != 500:
+        ini["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v["perfect_dist"])
+    steps = int(v.get("sens_steps", 10))
+    if steps != 10:
+        ini["m_iXSensitivityMaxSteps"] = steps
+        ini["m_iYSensitivityMaxSteps"] = steps
+    boost = int(v.get("sens_boost", 100)) / 100.0
+    if abs(boost - 1.0) > 0.001:
+        ini["m_fXSensitivityMultiplier"] = "%.3f" % (SENS_BASE["x_mult"] * boost)
+        ini["m_fYSensitivityMultiplier"] = "%.3f" % (SENS_BASE["y_mult"] * boost)
+        ini["m_fXSensitivityStepIncrement"] = "%.3f" % (SENS_BASE["x_step"] * boost)
+        ini["m_fYSensitivityStepIncrement"] = "%.3f" % (SENS_BASE["y_step"] * boost)
+
+    if ini:
+        out.append(FileEdit("ini_values", r"/R6GAMESETTINGS\.INI$", "",
+                            {"values": ini}, "AI and control settings"))
+    if v.get("molotov_everywhere"):
+        out.append(FileEdit("ws_slot", r"/MAPS/.*\.INI$", "",
+                            {"slot": 43, "using": True},
+                            "molotov enabled on every level"))
+    return out
+
+
 def build_pnach(v: dict) -> list:
     if not (v.get("wave_enable") and v.get("wave_mapwide")):
         return []
@@ -333,6 +467,8 @@ PROFILE = GameProfile(
     settings=_settings(),
     build_edits=build_edits,
     build_pnach=build_pnach,
+    build_data=build_data,
+    archive_pattern=r"/VOKES\d\.IMG$",
     notes=WAVE_MAPS,
     ui_art={
         "archive": "iso",

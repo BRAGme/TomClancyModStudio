@@ -155,8 +155,24 @@ JUNGLE_STORM = [
 
 PRESETS = {
     "r6_3_slus20883": R6_3,
-    "graw_slus21422": [],
-    "soaf_sles51180": [],
+    "graw_slus21422": [
+        ("Stock — nothing patched",
+         dict(graw_interval="stock", graw_per_release=1)),
+        ("Survival — twice the rate",
+         dict(graw_interval="0.5", graw_per_release=1)),
+        ("Survival — four times the rate",
+         dict(graw_interval="0.25", graw_per_release=1)),
+        ("Survival — relentless",
+         dict(graw_interval="0.25", graw_per_release=2)),
+    ],
+    "soaf_sles51180": [
+        ("Stock — nothing patched",
+         dict(soaf_all_difficulties=False, soaf_reveal_hidden=False, soaf_skill=0)),
+        ("Full count on every difficulty",
+         dict(soaf_all_difficulties=True, soaf_reveal_hidden=False, soaf_skill=0)),
+        ("Brutal — full count, skilled",
+         dict(soaf_all_difficulties=True, soaf_reveal_hidden=True, soaf_skill=2)),
+    ],
     "ghost_recon_slus20613": GHOST_RECON,
     "jungle_storm_slus20820": JUNGLE_STORM,
 }

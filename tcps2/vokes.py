@@ -266,6 +266,13 @@ class Vokes:
         reversible and puts that run back in the pool for the next file.
         """
         e = self.files[path.upper()]
+        if e.offset < self.data_start:
+            # A handful of records point at offset 0 with a byte or two of
+            # length -- stubs for files the tree lists but the archive does not
+            # actually store. They own no slot, so there is nothing to replace.
+            raise VokesError("%s: %s is a stub record (offset 0x%x is before "
+                             "the data area) and cannot be replaced"
+                             % (self.r.name, e.path, e.offset))
         if len(data) <= e.size:
             self.r.write(e.offset, data)
             if len(data) < e.size:

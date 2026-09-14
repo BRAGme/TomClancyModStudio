@@ -71,8 +71,9 @@ class Entry:
 
 
 class SoafImg:
-    def __init__(self, fh, base=0, name="?", owns=False):
+    def __init__(self, fh, base=0, name="?", owns=False, _iso=None):
         self.fh, self.base, self.name, self._owns = fh, base, name, owns
+        self._iso = _iso
         h = struct.unpack("<16I", self._read(0, 64))
         self.filesize = h[0]
         self.ent_off, self.ent_end, self.name_off, self.data_start = h[2], h[3], h[4], h[5]
@@ -97,9 +98,25 @@ class SoafImg:
 
     @classmethod
     def from_iso(cls, iso, entry):
-        return cls(iso.fh, entry.lba * 2048, entry.path.lstrip("/"))
+        """Open an archive in place inside a disc image.
+
+        Goes through `iso.read_logical` when the image is interleaved (a
+        2352-byte .bin), because a raw `iso.fh.seek(lba * 2048 + n)` lands
+        inside a sync header there and returns plausible-looking garbage
+        rather than raising.
+        """
+        self = cls.__new__(cls)
+        self._iso = iso if getattr(iso, "interleaved", False) else None
+        self.fh, self.base, self.name, self._owns = (
+            iso.fh, entry.lba * 2048, entry.path.lstrip("/"), False)
+        cls.__init__(self, iso.fh, entry.lba * 2048,
+                     entry.path.lstrip("/"), _iso=self._iso)
+        return self
 
     def _read(self, off, n):
+        iso = getattr(self, "_iso", None)
+        if iso is not None:
+            return iso.read_logical(self.base + off, n)
         self.fh.seek(self.base + off)
         return self.fh.read(n)
 

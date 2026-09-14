@@ -36,13 +36,11 @@ def decode_fbz(blob: bytes):
     pixels = pixels[:raw_size]
 
     stride = raw_size // height
-    if bpp == 24 or stride >= width * 3:
-        rgb = bytearray(width * height * 3)
-        for y in range(height):
-            row = pixels[y * stride:y * stride + width * 3]
-            rgb[y * width * 3:y * width * 3 + len(row)] = row
-        return width, height, bytes(rgb)
-    if bpp == 32 or stride >= width * 4:
+
+    # Test the declared depth FIRST. A 32-bit image also satisfies
+    # `stride >= width * 3`, so checking the 24-bit case first silently decodes
+    # every 32-bit screen as 24-bit and shears it.
+    if bpp == 32 or (bpp != 24 and stride >= width * 4):
         rgb = bytearray(width * height * 3)
         for y in range(height):
             src = y * stride
@@ -50,6 +48,12 @@ def decode_fbz(blob: bytes):
                 o = src + x * 4
                 d = (y * width + x) * 3
                 rgb[d:d + 3] = pixels[o:o + 3]
+        return width, height, bytes(rgb)
+    if bpp == 24 or stride >= width * 3:
+        rgb = bytearray(width * height * 3)
+        for y in range(height):
+            row = pixels[y * stride:y * stride + width * 3]
+            rgb[y * width * 3:y * width * 3 + len(row)] = row
         return width, height, bytes(rgb)
     raise ArtError("unsupported FBZ bpp %d (stride %d for width %d)" % (bpp, stride, width))
 
@@ -96,6 +100,8 @@ BANNER_PREFERENCE = {
     # The loading screen carries the game's own menu chrome -- the angled metal
     # bands and the Rainbow emblem -- over a dark scene, which is exactly the
     # backdrop the in-game menus sit on.
+    "graw_slus21422": [r"/CD/LE/GR3_2\.FBZ$", r"/CD/LE/GR3_1\.FBZ$",
+                       r"/CD/LE/LANG_BG\.FBZ$"],
     "r6_3_slus20883": [r"/NTSC_DI/LE/LOADING/LVL/SHIPYARD_A\.FBZ$",
                        r"/NTSC_DI/LE/LOADING/LVL/ALCATRAZ_A\.FBZ$",
                        r"/NTSC_DI/LE/LOADING/LVL/MENU\.FBZ$",
@@ -105,12 +111,14 @@ BANNER_PREFERENCE = {
 #: where each game keeps the mark that sits in the corner of its menus, and the
 #: fraction of that image the mark occupies (left, top, right, bottom)
 EMBLEM = {
+    "graw_slus21422": ([r"/CD/LE/GR3_2\.FBZ$"], (0.560, 0.050, 1.000, 0.355)),
     "r6_3_slus20883": ([r"/NTSC_DI/LE/LOADING/LVL/MENU\.FBZ$",
                         r"/NTSC_CD/LE/LANG_BG\.FBZ$"],
                        (0.355, 0.775, 0.645, 0.965)),
 }
 EMBLEM_ARCHIVE = {
     "ghost_recon_slus20613": ("/MAIN_MENU_PS2.RSB", (0.02, 0.035, 0.80, 0.255)),
+    "soaf_sles51180": ("/MAIN_MENU_PS2.RSB", (0.0375, 0.0896, 0.7047, 0.2208)),
     # Jungle Storm ships no wordmark anywhere on the disc -- its own menus have
     # no corner mark either -- so it borrows the reticle ring its shell is built
     # around, which is the closest thing it has to a badge.
@@ -127,6 +135,8 @@ EMBLEM_MODE = {
     "r6_3_slus20883": ("lift", 62, 2.6),
     "ghost_recon_slus20613": ("key", 118, 3.2),
     "jungle_storm_slus20820": ("key", 46, 3.0),
+    "graw_slus21422": ("key", 96, 3.0),
+    "soaf_sles51180": ("key", 96, 3.0),
 }
 
 #: the game's own menu art, by name, inside its archives
@@ -135,6 +145,7 @@ ARCHIVE_BANNERS = {
                               "/LOAD-SCREEN.RSB"],
     "jungle_storm_slus20820": ["/SHELL_BGD_PS2.RSB", "/LOAD_NEW_1.RSB",
                                "/LOAD_NEW_2.RSB"],
+    "soaf_sles51180": ["/MAIN_MENU_PS2.RSB"],
 }
 
 

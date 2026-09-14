@@ -53,12 +53,23 @@ def _op_gtf_variables(plain, params):
     return transforms.set_gtf_variables(plain, params.get("values", {}))
 
 
+def _op_ini_values(plain, params):
+    return transforms.set_ini_values(plain, params.get("values", {}))
+
+
+def _op_ws_slot(plain, params):
+    return transforms.set_ws_slot(plain, int(params["slot"]),
+                                  bool(params.get("using", True)))
+
+
 OPS = {
     "strip_difficulty": _op_strip_difficulty,
     "reveal_hidden": _op_reveal_hidden,
     "bump_tier": _op_bump_tier,
     "bump_stats": _op_bump_stats,
     "gtf_variables": _op_gtf_variables,
+    "ini_values": _op_ini_values,
+    "ws_slot": _op_ws_slot,
 }
 
 
@@ -210,7 +221,12 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                     store.remember(arc_name, ent.path, original, ent.offset)
                     plain = rselzo.unpack(original)
                 new, n = op(plain, edit.params)
-                if len(new) != len(plain):
+                # Only compressed files have to keep their length: their chunk
+                # boundaries are fixed at 0x4000 of plain data, so a change in
+                # size would shift every one. A plain-text INI can grow or
+                # shrink freely -- the archive writer relocates it.
+                if len(new) != len(plain) and rselzo.is_compressed(
+                        arc.read_entry(ent)):
                     raise DataEditError(
                         "%s: %s changed the file length, which would move every "
                         "chunk boundary" % (ent.path, edit.op))
