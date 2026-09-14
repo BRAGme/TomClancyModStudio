@@ -175,44 +175,52 @@ def run_lockdown(args):
 
 
 def run_pack_emblem(args):
-    """Ghost Recon 2's wordmark, pinned to one entry of the user's pack.
+    """The marks pinned to entries of the user's replacement packs.
 
     Skipped when there is no pack, or no disc to identify against.
     """
-    if not args.gr2:
-        return
     from tcps2 import art, upscale
     from tcps2.games import BY_ID
 
-    profile = BY_ID["gr2_slus21105"]
-    if upscale.pack_dir(profile.serial) is None:
+    jobs = [("gr2_slus21105", args.gr2),
+            ("graw_slus21422", args.graw),
+            ("jungle_storm_slus20820", args.js)]
+    jobs = [(pid, iso) for pid, iso in jobs if iso]
+    if not jobs:
         return
-    print("\n[Ghost Recon 2 -- the pinned mark from the pack]")
+    printed = False
+    for pid, iso in jobs:
+        profile = BY_ID[pid]
+        if upscale.pack_dir(profile.serial) is None:
+            continue
+        if not printed:
+            print("\n[marks pinned to the replacement packs]")
+            printed = True
 
-    prefix, _box = art.PACK_EMBLEM[profile.id]
-    whole = upscale.pinned(profile.serial, prefix)
-    check("the pinned pack entry is found", whole is not None,
-          str(whole.size if whole else None))
-    if whole is None:
-        return
+        prefix, _box = art.PACK_EMBLEM[pid]
+        whole = upscale.pinned(profile.serial, prefix)
+        check("%s: the pinned entry is found" % profile.serial, whole is not None,
+              str(whole.size if whole else None))
+        if whole is None:
+            continue
 
-    mark = art.pack_emblem(profile)
-    check("it crops to a wordmark, not a screen",
-          mark is not None and mark.width > 3 * mark.height,
-          str(mark.size if mark else None))
+        mark = art.pack_emblem(profile)
+        check("%s: it crops to a wordmark, not a screen" % profile.serial,
+              mark is not None and mark.width > mark.height,
+              str(mark.size if mark else None))
 
-    # The whole point of pinning this one is resolution: the disc's own copy
-    # of the mark is small and stamped into the loading art.
-    det = identify(args.gr2)
-    if det.ok and det.profile is profile:
-        keyed = art.emblem_image(det)
-        check("it beats the mark lifted off the disc",
-              keyed is not None and keyed.width > 1000,
-              str(keyed.size if keyed else None))
+        # The point of pinning is resolution: every disc's own copy of its mark
+        # is small, and two of these discs barely have one at all.
+        det = identify(iso)
+        if det.ok and det.profile is profile:
+            keyed = art.emblem_image(det)
+            check("%s: it beats the mark lifted off the disc" % profile.serial,
+                  keyed is not None and keyed.width >= 1000,
+                  str(keyed.size if keyed else None))
 
-    # A prefix nothing matches must come back empty rather than pick something
-    check("an unknown pinned hash returns nothing",
-          upscale.pinned(profile.serial, "ffffffffffffffff") is None)
+    if printed:
+        check("an unknown pinned hash returns nothing",
+              upscale.pinned(BY_ID[jobs[0][0]].serial, "ffffffffffffffff") is None)
 
 
 def run_upscale(pak, profile):

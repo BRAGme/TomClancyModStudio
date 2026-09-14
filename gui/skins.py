@@ -643,6 +643,18 @@ def draw_tracked(draw, xy, text, font, fill, track=0, anchor_right=False,
     return x
 
 
+#: How much taller than a plain fit the header mark is drawn. A wordmark that
+#: only fills the box's width looks undersized in a header it does not fill.
+EMBLEM_VSTRETCH = 1.12
+
+#: Where the page title sits in the header, per chrome family.
+#: Measured rather than guessed: on the Lockdown header the plate runs 6..122,
+#: and the title and the disc line were each pinned 14px off their own edge
+#: with a 57px void between them, so the title read as floating at the very
+#: top. Dropping it closes most of that gap and makes the two read as a pair.
+TITLE_TOP = {"lock": 28, "angular": 20, "plain": 16}
+
+
 def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     """The header band: chrome, the game's emblem, and the page title."""
     try:
@@ -698,9 +710,15 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         # box, and the shelf looked inconsistent. Scale to fit in both
         # directions instead.
         scale = min(box_w / float(em.width), box_h / float(em.height))
-        if abs(scale - 1.0) > 0.01:
+        # Most of these marks are wide wordmarks, so a plain fit is limited by
+        # the box WIDTH and leaves vertical headroom unused -- they end up
+        # reading small in a header they do not fill. Give them a little more
+        # height than the fit, never past the box, so a mark that is already
+        # height-limited (Lockdown's stacked logo) is left exactly as it was.
+        vscale = min(scale * EMBLEM_VSTRETCH, box_h / float(em.height))
+        if abs(scale - 1.0) > 0.01 or abs(vscale - scale) > 0.01:
             em = em.resize((max(1, int(em.width * scale)),
-                            max(1, int(em.height * scale))), Image.LANCZOS)
+                            max(1, int(em.height * vscale))), Image.LANCZOS)
         # Lockdown's plate does not fill the band -- it starts at px(6) and
         # stops short of the bottom -- so centring on the band puts the logo
         # visibly low inside it.
@@ -724,7 +742,7 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         # ranged to the LEFT of where the diagonal starts, so the cut falls
         # away to the right of the word rather than through it
         tx = lock_shear_x - px(18)
-        draw_tracked(d, (tx, px(16)), label, big, ink,
+        draw_tracked(d, (tx, px(TITLE_TOP["lock"])), label, big, ink,
                      track=px(p.title_track), anchor_right=True,
                      shadow=p.title_shadow)
         if subtitle:
@@ -738,7 +756,7 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         cut = px(14)
         d.line([(pad, y), (width - px(26) - cut, y), (width - px(26), y - cut)],
                fill=p.edge_dim, width=px(2))
-        draw_tracked(d, (tx, px(10)), label, big, ink,
+        draw_tracked(d, (tx, px(TITLE_TOP["angular"])), label, big, ink,
                      track=px(p.title_track), anchor_right=right,
                      shadow=p.title_shadow)
         if subtitle:
@@ -749,12 +767,13 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
         sx = tx - d.textlength(label, font=big) if right else tx
-        sd.text((sx + px(2), px(8)), label, font=big, fill=(0, 0, 0, 210))
+        top = px(TITLE_TOP["plain"])
+        sd.text((sx + px(2), top + px(2)), label, font=big, fill=(0, 0, 0, 210))
         shadow = shadow.filter(ImageFilter.GaussianBlur(px(3)))
         img.alpha_composite(shadow)
         if p.title_shadow:
-            d.text((sx + px(2), px(8)), label, font=big, fill=p.title_shadow)
-        d.text((sx, px(6)), label, font=big, fill=ink)
+            d.text((sx + px(2), top + px(2)), label, font=big, fill=p.title_shadow)
+        d.text((sx, top), label, font=big, fill=ink)
         if subtitle:
             ux = tx - d.textlength(subtitle, font=small) if right else tx + px(3)
             d.text((ux, height - px(34)), subtitle, font=small, fill=p.dim)

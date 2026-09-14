@@ -220,6 +220,24 @@ PSX_CHROME = {
 #: (leading hash of the pack filename, crop as fractions of the texture)
 PACK_EMBLEM = {
     "gr2_slus21105": ("b895175da311ea2e", (0.1040, 0.0366, 0.8955, 0.1738)),
+    # Advanced Warfighter's title card, wordmark and skull and all
+    "graw_slus21422": ("92dc602e4861b480", (0.1138, 0.1865, 0.9014, 0.7344)),
+    # Jungle Storm's title screen. Worth noting against the older comment
+    # below: the disc archives really do carry no wordmark, but the pack does,
+    # so its header no longer has to make do with a reticle ring and lettering
+    # set by hand.
+    "jungle_storm_slus20820": ("e3a917d2330a5ba7",
+                               (0.0337, 0.0732, 0.5430, 0.2222)),
+}
+
+#: How to key a mark that came out of the pack. It sits on a different ground
+#: from the disc's own copy -- Jungle Storm's is light lettering over mid-green
+#: rather than a dim ring on near-black -- so the floors that work on the disc
+#: art would keep the background here. Chosen by keying each at several floors
+#: and looking, not by reusing the disc's numbers.
+PACK_EMBLEM_MODE = {
+    "graw_slus21422": ("key", 130, 3.0),
+    "jungle_storm_slus20820": ("key", 125, 3.0),
 }
 
 
@@ -446,6 +464,7 @@ def emblem_image(detection, cache_dir=None):
         return None
 
     img = None
+    from_pack = False
     # a mark decoded from a .PSX arrives with the game's own alpha, so it must
     # not go through the luminance key -- that would throw the real cutout away
     # and rebuild a worse one from brightness
@@ -458,6 +477,7 @@ def emblem_image(detection, cache_dir=None):
                 # a pinned mark out of the user's pack, when they have one;
                 # it is opaque, so it still goes through the key below
                 img = pack_emblem(profile)
+                from_pack = img is not None
             raw = None if img is not None else raw_image(iso, profile.id)
             if raw is not None and profile.id in RAW_EMBLEM:
                 img = _crop_frac(raw, RAW_EMBLEM[profile.id])
@@ -504,7 +524,8 @@ def emblem_image(detection, cache_dir=None):
                 pass
         return rgba
 
-    mode, floor, gain = EMBLEM_MODE.get(profile.id, ("key", 118, 3.2))
+    mode, floor, gain = (PACK_EMBLEM_MODE.get(profile.id) if from_pack else
+                         None) or EMBLEM_MODE.get(profile.id, ("key", 118, 3.2))
     img = img.convert("RGB")
     if mode == "lift":
         # stamped dark into dark art: raise it before keying or nothing survives
@@ -524,7 +545,10 @@ def emblem_image(detection, cache_dir=None):
             r, g, b, _a = px[x, y]
             lum = (r * 3 + g * 6 + b) // 10
             px[x, y] = (r, g, b, max(0, min(255, int((lum - floor) * gain))))
-    mark = EMBLEM_WORDMARK.get(profile.id)
+    # Lettering set by hand is a stand-in for a wordmark the disc does not
+    # carry. Once the pack supplies the real one, stamping it again would
+    # print the game's name twice.
+    mark = None if from_pack else EMBLEM_WORDMARK.get(profile.id)
     if mark:
         rgba = _stamp_wordmark(rgba, mark[0], mark[1],
                                mark[2] if len(mark) > 2 else None)
