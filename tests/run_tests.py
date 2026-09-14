@@ -91,6 +91,7 @@ def main():
         run_raw_and_data(args, work)
         run_lockdown(args)
         run_pack_emblem(args)
+        run_level_packages(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -172,6 +173,65 @@ def run_lockdown(args):
 
     check("an all-default config writes nothing",
           profile.build_data(dict(profile.defaults())) == [])
+
+
+def run_level_packages(args):
+    """Rainbow Six 3's cooked level packages, read-only.
+
+    The point of these is that the tables are found by WALKING from the name
+    table rather than by the summary's offsets, which the PS2 cooker relaid --
+    so the checks are that the walk lands exactly where it should.
+    """
+    if not args.rs3data:
+        return
+    from tcps2 import lin, upackage
+    from tcps2.vokes import open_archives
+
+    print("\n[Rainbow Six 3 -- cooked level packages]")
+    with Iso(args.rs3data) as iso:
+        data = None
+        for arc in open_archives(iso, r"\.IMG$"):
+            ent = arc.files.get("/SHIPYARD_AOFF.LIN")
+            if ent:
+                data = lin.decompress(arc.read_entry(ent))
+                break
+        check("Shipyard A decompresses", data is not None)
+        if data is None:
+            return
+
+        found = upackage.packages(data)
+        check("the level holds about a hundred packages",
+              100 <= len(found) <= 115, str(len(found)))
+
+        names, imports, exports = upackage.tables(data, 19)
+        check("the level package's name table reads whole",
+              len(names) == 3989, str(len(names)))
+        # Walking the names has to land on the imports, and those on the
+        # exports: if either is off by a byte nothing downstream parses.
+        check("309 imports and 3145 exports parse from the walk",
+              len(imports) == 309 and len(exports) == 3145,
+              "%d / %d" % (len(imports), len(exports)))
+        check("every export names a class and an object",
+              all(c and n for c, n, _s, _o in exports))
+
+        waves = [e for e in exports if e[0] == "R6DZoneWave"]
+        points = [e for e in exports if e[0] == "R6DZonePoint"]
+        # the export table and the name table are independent routes to the
+        # same count, so they have to agree
+        instances = len([n for n in names
+                         if n.startswith("R6DZoneWave") and n != "R6DZoneWave"])
+        check("Shipyard A places two wave zones", len(waves) == 2, str(len(waves)))
+        check("the export table agrees with the name table",
+              len(waves) == instances, "%d vs %d" % (len(waves), instances))
+        check("and eighteen spawn points", len(points) == 18, str(len(points)))
+
+        # the authored counts this is all groundwork for
+        sites = upackage.actor_properties(data, names, "m_iMaxTerrorist")
+        check("authored terrorist maxima are found and validated",
+              len(sites) == 8, str(len(sites)))
+        check("they are plausible squad sizes",
+              all(0 <= v <= 32 for _a, v, _s in sites),
+              str(sorted(v for _a, v, _s in sites)))
 
 
 def run_pack_emblem(args):

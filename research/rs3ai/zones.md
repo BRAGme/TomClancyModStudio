@@ -59,18 +59,31 @@ to rewrite, and inserting one would move every byte after it. This is why the
 counts differ per level — on Shipyard A eight actors author a max but only five
 author a min.
 
-## The open problem
+## What is still open
 
-`m_eTerroristHunt` is **not** exclusive to `R6DZoneWave`. Airport A has one wave
-instance but three hunt-gated spawners, and only 7 of 30 levels have the
-hunt-actor count match the wave-instance count. Other spawner classes are gated
-on game mode too, so the sibling-property test tells hunt-mode from story-mode
-but does not identify the class.
+The export table names the classes, but it does **not** say where an object's
+property bytes are. Its recorded serial offsets describe the layout *before*
+cooking -- data sitting between the name table and the imports -- and that is
+not where the data ended up:
 
-A small number of false positives also survive the property walk — implausible
-values such as `1660731008` on Trieste A and Parade B — so a plausibility bound
-is needed regardless.
+* The offsets are perfectly contiguous, 80490..1070234 across 3144 boundaries
+  with no gaps, and 1070234 is exactly the summary's `importOffset`. So they
+  are internally consistent, just describing a layout that no longer exists.
+* Summing every package's export sizes gives 18.8 MB inside an 11.8 MB file,
+  and the packages sit back to back with no gaps, so the data cannot simply
+  follow the tables.
+* Searching 159000..200000 for a single base that makes blocks end exactly on
+  their recorded sizes found nothing -- 0 of 60 probes at every offset.
 
-Both want the same missing piece: a way to tie a property block to its export.
-The obvious route is recovering the export table by scanning rather than by its
-relaid offset, since the summary's export *count* is still trustworthy.
+So `export -> property bytes` is unsolved, and with it the last of the actor
+attribution.
+
+**The next thing to try** does not need offsets at all: the export table gives
+each wave actor's serial SIZE (Shipyard A: 221 and 226). Property blocks can be
+walked to their terminators wherever they are, and a block whose length matches
+a wave export's size, in a level with that many wave exports, is very likely
+that actor. Length-matching rather than offset-following.
+
+A plausibility bound is needed regardless -- a few false positives survive the
+property walk, giving values like `1660731008` on Trieste A and Parade B. Real
+squad sizes on this disc are 1..15.

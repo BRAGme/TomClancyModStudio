@@ -105,6 +105,60 @@ class Package:
         return out
 
 
+def tables(data, base):
+    """(names, imports, exports) for one package, found by walking not seeking.
+
+    The summary's `importOffset` and `exportOffset` are relaid by the PS2
+    cooker and point into float data. The tables are still there, though --
+    immediately after the name table, in that order -- so walking the names to
+    their end lands on the imports, and the imports on the exports. Checked on
+    Shipyard A: 309 imports and 3145 exports parse with no out-of-range index,
+    and the export table ends exactly where the next package's signature
+    begins.
+
+    `imports` is a list of object-name strings; `exports` is
+    [(className, objectName, serialSize, recordedOffset)].
+    """
+    pkg = Package(data, base)
+    names, pos = [], base + pkg.o_names
+    for _ in range(pkg.n_names):
+        ln, pos = compact_index(data, pos)
+        names.append(data[pos:pos + ln - 1].decode("latin-1"))
+        pos += ln + 4
+
+    imports = []
+    for _ in range(pkg.n_imports):
+        _cp, pos = compact_index(data, pos)
+        _cn, pos = compact_index(data, pos)
+        pos += 4                                  # outer package reference
+        nm, pos = compact_index(data, pos)
+        if not 0 <= nm < len(names):
+            raise PackageError("import name %d out of range at %d" % (nm, pos))
+        imports.append(names[nm])
+
+    exports = []
+    for _ in range(pkg.n_exports):
+        cls, pos = compact_index(data, pos)
+        _sup, pos = compact_index(data, pos)
+        pos += 4                                  # group reference
+        nm, pos = compact_index(data, pos)
+        pos += 4                                  # object flags
+        size, pos = compact_index(data, pos)
+        off = 0
+        if size > 0:
+            off, pos = compact_index(data, pos)
+        if not 0 <= nm < len(names):
+            raise PackageError("export name %d out of range at %d" % (nm, pos))
+        if cls < 0:
+            cname = imports[-cls - 1]             # class came from an import
+        elif cls > 0:
+            cname = "(export %d)" % cls
+        else:
+            cname = "Class"
+        exports.append((cname, names[nm], size, off))
+    return names, imports, exports
+
+
 def packages(data):
     """Every package in a decompressed level, as (offset, Package).
 
