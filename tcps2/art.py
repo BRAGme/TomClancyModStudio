@@ -337,9 +337,15 @@ ARCHIVE_BANNERS = {
 #: Keyed by the art's own base name, not by (stem, part): Rainbow Six 3's
 #: training levels are single packages with no A/B suffix, so a two-part
 #: pattern cannot name them.
+#: Which discs ship a picture per level, and where. Ghost Recon 2's live under
+#: a language folder with a `.EN` extension rather than `.FBZ`, but the
+#: container is the same one `fbz_to_image` already reads. Advanced Warfighter
+#: is deliberately absent: it ships no still art per mission at all -- its
+#: briefing is a 3D map with video -- so its cards carry no picture.
 MISSION_ART = {
     "r6_3_slus20883": ("fbz", "/NTSC_DI/LE/LOADING/LVL/%s.FBZ"),
     "lockdown_slus21144": ("psx", "/PS2DATA/SHELL/ART/%s_SNAPSHOT.PSX"),
+    "gr2_slus21105": ("fbz", "/DI/EN/LOADING%s.EN"),
 }
 
 

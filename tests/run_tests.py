@@ -93,6 +93,8 @@ def main():
         run_lockdown(args)
         run_pack_emblem(args)
         run_level_packages(args)
+        run_gr2_missions(args)
+        run_graw_missions(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1032,6 +1034,159 @@ def run(args, work):
     print("\n[crc]")
     check("the PCSX2 CRC is an XOR of every word",
           engine.pcsx2_crc(b"\x01\x00\x00\x00\x02\x00\x00\x00") == "00000003")
+
+
+
+
+def run_gr2_missions(args):
+    """Ghost Recon 2's mission page: the disc's own order, names and art.
+
+    The order here is the one thing that cannot be taken on trust -- the level
+    names are not in campaign sequence -- so it is checked against the dates
+    the disc itself prints.
+    """
+    if not args.gr2:
+        return
+    import re
+    from tcps2 import art, localise, r6zones, lin
+    from tcps2.detect import identify
+    from tcps2.games.ghost_recon2 import (GAME_TYPES, MENUS, MISSIONS, PROFILE,
+                                          mission_key, mission_select)
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    print("\n[Ghost Recon 2 -- the mission page]")
+    cards = [s for s in PROFILE.settings if s.group == "Missions"]
+    check("there is a card per campaign mission",
+          len(cards) == len(MISSIONS) == 14, str(len(cards)))
+    check("every card is switched off with a reason",
+          all(not s.enabled and s.disabled_reason for s in cards))
+    check("and none of them writes anything",
+          PROFILE.build_data({mission_key(m[0]): 300 for m in MISSIONS}) == [])
+
+    det = identify(args.gr2)
+    with Iso(args.gr2) as iso:
+        arcs = open_archives(iso, PROFILE.archive_pattern)
+        menus = None
+        lins = set()
+        for arc in arcs:
+            for name, e in arc.files.items():
+                if name.upper().endswith(".LIN"):
+                    lins.add(name.upper())
+                if name.upper() == MENUS:
+                    menus = arc.read_entry(e)
+        check("the menu text is where the profile says", menus is not None)
+        page = localise.sections(menus)["P_MissionMap"]
+
+        # the disc prints a date, a time and a weather word per mission
+        rows = []
+        for stem, _t, date, time, weather, objectives in MISSIONS:
+            line = page.get("%s_SUB" % stem, "")
+            rows.append((stem, line.split(), date, time, weather, objectives,
+                         sum(1 for i in range(1, 5)
+                             if page.get("%s_OBJ_%d" % (stem, i), ""))))
+        wrong = [r[0] for r in rows if r[1] != [r[2], r[3], r[4].capitalize()]]
+        check("every card's date, time and weather are the disc's",
+              not wrong, str(wrong))
+        off = [r[0] for r in rows if r[5] != r[6]]
+        check("and so are the objective counts", not off, str(off))
+
+        def when(row):
+            return (row[2], row[3])
+
+        order = [when(r) for r in rows]
+        check("the table runs in date order, which the level names do not",
+              order == sorted(order),
+              "%s -> %s" % (order[0], order[-1]))
+        check("that order really is not the alphabetical one",
+              [m[0] for m in MISSIONS] != sorted(m[0] for m in MISSIONS))
+
+        # every package the cards name is on the disc, all three game types
+        missing = []
+        for stem, *_rest in MISSIONS:
+            rx = re.compile(mission_select(stem), re.I)
+            if sum(1 for n in lins if rx.search(n)) != len(GAME_TYPES):
+                missing.append(stem)
+        check("each mission ships all three game types", not missing,
+              str(missing))
+
+        # and the claim the cards make about why they cannot edit
+        sites = 0
+        for stem in (MISSIONS[0][0], MISSIONS[-1][0]):
+            for arc in arcs:
+                key = "/%sOFF.LIN" % stem
+                if key in arc.files:
+                    sites += len(r6zones.sites(
+                        lin.decompress(arc.read_entry(arc.files[key]))))
+        check("the levels really author no enemy counts, as the cards say",
+              sites == 0, str(sites))
+
+    shown = [m[0] for m in MISSIONS
+             if art.mission_art(det, m[0], None) is not None]
+    check("every mission shows its own loading screen",
+          len(shown) == len(MISSIONS), str(len(shown)))
+
+
+def run_graw_missions(args):
+    """Advanced Warfighter's mission page, against its own menu text."""
+    if not args.graw:
+        return
+    from tcps2 import localise
+    from tcps2.games.graw import (EXTRA_MAPS, MENUS, MISSIONS, PROFILE,
+                                  mission_key)
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    print("\n[Advanced Warfighter -- the mission page]")
+    cards = [s for s in PROFILE.settings if s.group == "Missions"]
+    check("there is a card per map",
+          len(cards) == len(MISSIONS) + len(EXTRA_MAPS) == 32, str(len(cards)))
+    check("every card is switched off with a reason",
+          all(not s.enabled and s.disabled_reason for s in cards))
+    keys = {mission_key(m[0]) for m in MISSIONS}
+    keys |= {mission_key(m[0]) for m in EXTRA_MAPS}
+    check("and none of them writes anything",
+          PROFILE.build_data({k: 300 for k in keys}) == [])
+
+    with Iso(args.graw) as iso:
+        arcs = open_archives(iso, PROFILE.archive_pattern)
+        menus, dmps = None, set()
+        for arc in arcs:
+            for name, e in arc.files.items():
+                if name.upper() == MENUS:
+                    menus = arc.read_entry(e)
+                if name.upper().endswith(".DMP"):
+                    dmps.add(name.upper())
+        check("the menu text is where the profile says", menus is not None)
+        s = localise.sections(menus)
+
+        names = localise.numbered(s["MissionName"])
+        levels = localise.numbered(s["MissionNameIntel"])
+        check("the disc lists as many campaign entries as the table has",
+              len(names) == len(levels) == len(MISSIONS), str(len(names)))
+        wrong = [m[0] for m, n, k in zip(MISSIONS, names, levels)
+                 if n.upper() != "%s %s" % (m[1], m[2].upper())
+                 or k.upper() != m[0]]
+        check("every campaign card's time, district and level are the disc's",
+              not wrong, str(wrong))
+        check("the table is in the disc's order, which is the clock's",
+              [m[1] for m in MISSIONS] == [n.split(" ", 1)[0] for n in names])
+
+        rows = []
+        for mode, sec in (("Survival", "Survival"), ("Enemy Hunt", "Hunt")):
+            for place, lvl in zip(localise.numbered(s["%sMissionName" % sec]),
+                                  localise.numbered(s["%sMissionNameIntel" % sec])):
+                rows.append((lvl.upper(), place, mode))
+        check("and the survival and hunt maps match too",
+              rows == list(EXTRA_MAPS), str(rows[:2]))
+
+        missing = [m[0] for m in list(MISSIONS) + list(EXTRA_MAPS)
+                   if "/%s.DMP" % m[0] not in dmps]
+        check("every map the page names is on the disc", not missing,
+              str(missing))
+        check("there is no S07, on the disc or in the table",
+              not any("S07" in n for n in dmps)
+              and not any(m[0].startswith("S07") for m in MISSIONS))
 
 
 if __name__ == "__main__":

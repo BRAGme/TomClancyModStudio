@@ -97,7 +97,22 @@ NOTES = (
     "timings, the look curve and the grenade loadout. All plain text, all "
     "reversible.\n\n"
     "Mission S07 is cut. The executable's level table jumps from s06_b straight "
-    "to s08_a, and the briefing list does the same."
+    "to s08_a, and the briefing list does the same.\n\n"
+    "The Missions page reads rather than edits, and the reason is the level "
+    "format. Rainbow Six 3 runs this same engine and its Missions page does "
+    "edit, because its levels are serialised Unreal packages: the authored "
+    "counts sit in them as int properties that can be found by name and "
+    "rewritten in place. Advanced Warfighter cooks its levels the other way. A "
+    ".DMP is a memory image -- 21 MB with not one package signature in it, a "
+    "flat name pool where m_iNbOfTerroristToSpawn appears exactly once with no "
+    "value beside it, and live objects carrying raw pointers. Reaching a count "
+    "in there needs the class layout out of SP.IMG and then object "
+    "identification inside a heap dump, so the page shows the missions and "
+    "says so.\n\n"
+    "What the page does show is the disc's own table. PREGAMEMENUS.INT holds "
+    "the mission-selection screen's list -- a time and a district per entry, "
+    "and the level each one loads -- plus the Survival and Enemy Hunt maps, "
+    "which is where all 32 cards and their order come from."
 )
 
 
@@ -130,6 +145,107 @@ def _settings():
         "graw_", "Enemies",
     ) + r6tuning.cards(["sens_steps", "sens_boost"], "graw_", "Controls") \
       + r6tuning.cards(["player_grenades"], "graw_", "Loadout")
+
+
+
+#: The campaign as the mission-selection screen lists it, straight off the disc.
+#:
+#: `PREGAMEMENUS.INT` carries two parallel blocks: `[MissionName]`, which is
+#: what the player reads -- a time of day and a district -- and
+#: `[MissionNameIntel]`, which names the level each entry loads. Advanced
+#: Warfighter's campaign is one continuous day, so the times are the order, and
+#: the two blocks together are the whole table. There is no `S07`: the disc
+#: jumps from `S06` to `S08`, in the level files and in the menu list alike.
+#:
+#: (level, time, district, mission number, objectives that mission authors)
+MISSIONS = (
+    ("S01_A", "06:30", "Industrial District", 1, 7),
+    ("S01_B", "07:00", "Industrial District", 1, 7),
+    ("S02_A", "11:05", "Suburbs", 2, 12),
+    ("S02_B", "11:30", "Suburbs", 2, 12),
+    ("S03_A", "13:00", "Downtown", 3, 8),
+    ("S03_B", "16:00", "Downtown", 3, 8),
+    ("S04_A", "21:00", "Santa Fe Hills", 4, 7),
+    ("S04_B", "22:00", "Santa Fe Hills", 4, 7),
+    ("S05_A", "04:00", "Chapultepec Park", 5, 7),
+    ("S05_B", "04:30", "Chapultepec Park", 5, 7),
+    ("S06_A", "06:30", "Chapultepec Palace", 6, 9),
+    ("S06_B", "07:00", "Chapultepec Palace", 6, 9),
+    ("S08_A", "08:00", "Shanty Town", 8, 8),
+    ("S08_B", "08:30", "Shanty Town", 8, 8),
+    ("S09_A", "14:00", "Industrial District", 9, 6),
+    ("S09_B", "14:30", "Industrial District", 9, 6),
+    ("S10_A", "17:06", "Suburbs", 10, 7),
+    ("S10_B", "18:23", "Suburbs", 10, 7),
+    ("S11_A", "03:00", "Zocalo Plaza", 11, 12),
+    ("S11_B", "04:00", "Zocalo Plaza", 11, 12),
+    ("S12_A", "06:00", "Downtown", 12, 4),
+    ("S12_B", "08:00", "Downtown", 12, 4),
+)
+
+#: the two standalone modes, from the same file's own blocks
+EXTRA_MAPS = (
+    ("SURVIVAL_03B", "Embassy", "Survival"),
+    ("SURVIVAL_05B", "Chapultepec Park", "Survival"),
+    ("SURVIVAL_09A", "Train Yard", "Survival"),
+    ("SURVIVAL_S11B", "Zocalo Plaza", "Survival"),
+    ("SURVIVAL_S12A", "Angel Plaza", "Survival"),
+    ("ENEMYHUNT_01B", "Tequila Factory", "Enemy Hunt"),
+    ("ENEMYHUNT_02A", "City Centre", "Enemy Hunt"),
+    ("ENEMYHUNT_04B", "Sante Fe Hills", "Enemy Hunt"),
+    ("ENEMYHUNT_06B", "Barracks", "Enemy Hunt"),
+    ("ENEMYHUNT_10A", "Rooftops", "Enemy Hunt"),
+)
+
+MISSION_GROUP = "Missions"
+
+#: where the menu text lives, for the tests that check the tables against it
+MENUS = "/PREGAMEMENUS.INT"
+
+
+def mission_key(level):
+    return "mission_" + level.lower()
+
+
+def _mission_settings():
+    """One card per map: what the disc calls it, and a dial that is off.
+
+    Rainbow Six 3 runs this same engine and its Missions page edits for real,
+    because its levels are serialised Unreal packages -- the authored counts
+    sit in them as int properties that can be found by name and rewritten in
+    place. Advanced Warfighter cooks its levels the other way. A `.DMP` is a
+    **memory image**: 21 MB with not one package signature in it, a flat name
+    pool where `m_iNbOfTerroristToSpawn` appears exactly once with no value
+    beside it, and live objects carrying raw pointers. Reaching a count in
+    there means knowing the class layout out of `SP.IMG` and then identifying
+    objects in a heap dump, which is not something to guess at, so the page
+    reads rather than writes.
+    """
+    out = []
+    for level, time, district, number, objectives in MISSIONS:
+        part = level[-1]
+        out.append(Setting(
+            mission_key(level),
+            "%s  %s  %s" % (level.replace("_", "-"), time, district),
+            INT, 100, MISSION_GROUP, minimum=25, maximum=400, unit="%",
+            help="Mission %d, part %s -- %s at %s. Mission %d authors %d "
+                 "objectives across its parts."
+                 % (number, part, district, time, number, objectives),
+            touches="data", enabled=False,
+            disabled_reason=DMP_REASON, confidence="broken"))
+    for level, place, mode in EXTRA_MAPS:
+        out.append(Setting(
+            mission_key(level), "%s  %s" % (mode, place), INT, 100,
+            MISSION_GROUP, minimum=25, maximum=400, unit="%",
+            help="%s, played in %s. Chosen from the main menu rather than "
+                 "from the campaign." % (mode, place),
+            touches="data", enabled=False,
+            disabled_reason=DMP_REASON, confidence="broken"))
+    return out
+
+
+DMP_REASON = ("Reading only -- this disc cooks its levels as memory images, "
+              "so there is no authored count to change. See About this disc.")
 
 
 def build_edits(v: dict) -> list:
@@ -170,7 +286,7 @@ PROFILE = GameProfile(
     volume_hint="GR3",
     pcsx2_crc="433B0342",
     overlays=[SP],
-    settings=_settings(),
+    settings=_settings() + _mission_settings(),
     build_edits=build_edits,
     build_pnach=lambda v: [],
     build_data=build_data,

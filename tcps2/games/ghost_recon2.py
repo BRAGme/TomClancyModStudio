@@ -112,8 +112,23 @@ NOTES = (
     "patches are addresses inside ITS overlay; this is a different build and "
     "those offsets mean something else in it. This disc's overlay has not been "
     "mapped, so there is nothing honest to put on a Waves page yet.\n\n"
-    "Everything on the two pages here is a plain-text edit to a file inside the "
-    "archives, backed up before it is written and reversible from Restore disc."
+    "Everything on the two editing pages here is a plain-text edit to a file "
+    "inside the archives, backed up before it is written and reversible from "
+    "Restore disc.\n\n"
+    "The Missions page reads rather than edits. Rainbow Six 3's equivalent "
+    "works because that disc authors m_iMinTerrorist and m_iMaxTerrorist into "
+    "its levels; Ghost Recon 2 runs the same engine and authors neither. That "
+    "was searched rather than assumed: the locator that finds 458 counts "
+    "across Rainbow Six 3's campaign finds ZERO across all fourteen campaign "
+    "levels and the training level, and none of those packages exports an "
+    "enemy actor either. They spawn from mission script instead -- "
+    "Action_SpawnTerrorist is a registered script name in them -- so there is "
+    "no number to scale.\n\n"
+    "The order on that page is worth a note, because it is not the one the "
+    "file names suggest: S02_02 is the second mission and S01_02 the sixth. "
+    "R6MENUS.INT gives every mission a date, time and weather line, and those "
+    "dates run from 2007-07-06 to 2007-12-22 without going backwards. The "
+    "titles come off the levels' own loading screens."
 )
 
 
@@ -224,6 +239,92 @@ def _settings():
     ]
 
 
+
+#: The campaign in the order the game plays it, which is **not** the order the
+#: level names suggest: `S02_02` is the second mission and `S01_02` the sixth.
+#:
+#: The disc settles it. `R6MENUS.INT` gives every mission a date, time and
+#: weather line, and its keys run in an order whose dates never go backwards --
+#: 2007-07-06 through 2007-12-22. The titles are the game's own too: each
+#: mission's loading screen, `/DI/EN/LOADING<stem>.EN`, prints its name across
+#: the top, and those are the names below. A test re-reads the dates off the
+#: disc and checks this table against them.
+#:
+#: (stem, title, date, time, weather, objectives)
+MISSIONS = (
+    ("S01_01", "Tank Ambush", "2007-07-06", "11:15", "clear", 2),
+    ("S02_02", "Broken Wings", "2007-07-07", "07:00", "stormy", 3),
+    ("S01_03", "Village Hunt", "2007-07-07", "20:00", "clear", 1),
+    ("S01_04", "Convoy Strike", "2007-07-07", "23:30", "rain", 4),
+    ("S02_01", "Refinery Assault", "2007-07-08", "19:45", "clear", 3),
+    ("S01_02", "Caged Tiger", "2007-07-08", "20:30", "clear", 3),
+    ("S02_03", "Bird Down", "2007-07-09", "19:30", "clear", 3),
+    ("S02_04", "Holding On", "2007-07-09", "20:30", "clear", 1),
+    ("S02_05", "Tides of War", "2007-07-10", "15:45", "clear", 2),
+    ("S03_01", "Command Siege", "2007-11-14", "17:30", "clear", 3),
+    ("S03_02", "Cargo Raid", "2007-11-27", "02:00", "clear", 2),
+    ("S03_03", "Medusa", "2007-12-01", "15:15", "clear", 3),
+    ("S03_04", "Death Train", "2007-12-20", "10:30", "snow", 3),
+    ("S03_05", "Paik's Revenge", "2007-12-22", "06:30", "blizzard", 2),
+)
+
+#: every campaign level ships three times, one per game type the menu offers
+GAME_TYPES = (("Mission", "OFF"), ("Fire Fight", "_FFOFF"),
+              ("Lone Wolf", "_LWOLF"))
+
+MISSION_GROUP = "Missions"
+
+#: where the menu text lives, for the tests that check the table against it
+MENUS = "/LOCALIZE/R6MENUS.INT"
+
+
+def mission_key(stem):
+    return "mission_" + stem.lower()
+
+
+def mission_art_for(key):
+    """The art base name for a mission card -- the level's own loading screen."""
+    for stem, *_rest in MISSIONS:
+        if key == mission_key(stem):
+            return [stem]
+    return []
+
+
+def mission_select(stem):
+    """A regex matching every package this mission ships -- all three types."""
+    return r"/%s(OFF|_FFOFF|_LWOLF)\.LIN$" % stem
+
+
+def _mission_settings():
+    """One card per mission: the level's own loading screen, what the disc says
+    about it, and a dial that is switched off because there is nothing to turn.
+
+    Rainbow Six 3's Missions page edits for real because that disc authors
+    `m_iMinTerrorist` and `m_iMaxTerrorist` into its levels. Ghost Recon 2 runs
+    the same engine and authors neither: across all fourteen campaign levels
+    and the training level, the count locator finds **zero** sites, and no
+    enemy actor class is exported by any of them. The enemies come from mission
+    script instead -- `Action_SpawnTerrorist` is a registered script name in
+    these packages -- so there is no authored number to scale.
+    """
+    out = []
+    for stem, title, date, time, weather, objectives in MISSIONS:
+        out.append(Setting(
+            mission_key(stem), "%s  %s" % (stem.replace("_", "-"), title),
+            INT, 100, MISSION_GROUP, minimum=25, maximum=400, unit="%",
+            help="%s %s, %s. %d objective%s. Ships three times, one per game "
+                 "type: Mission, Fire Fight and Lone Wolf."
+                 % (date, time, weather, objectives,
+                    "" if objectives == 1 else "s"),
+            touches="data", enabled=False,
+            disabled_reason=(
+                "Reading only -- these levels author no enemy counts at all, "
+                "so there is nothing for a dial to change. See About this "
+                "disc."),
+            confidence="broken"))
+    return out
+
+
 def build_data(v: dict) -> list:
     """Ghost Recon 2 keeps its AI tuning and its control curve in plain text."""
     out = []
@@ -285,12 +386,13 @@ PROFILE = GameProfile(
     volume_hint="GHOSTRECON2",
     pcsx2_crc="82E1D0EA",
     overlays=[ELF],
-    settings=_settings(),
+    settings=_settings() + _mission_settings(),
     build_edits=lambda v: [],
     build_pnach=lambda v: [],
     build_data=build_data,
     archive_pattern=r"/(VOKES\d|GR2)\.IMG$",
     stock_words=STOCK,
     notes=NOTES,
+    mission_art_for=mission_art_for,
     ui_art={"archive": "iso", "fbz": [r"/DI/LE/LOADING/EN/.*\.FBZ$"]},
 )
