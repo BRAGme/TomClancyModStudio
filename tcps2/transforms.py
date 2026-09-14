@@ -435,8 +435,43 @@ def _same_width(value: float, width: int) -> bytes:
     raise ValueError("%r does not fit %d characters" % (value, width))
 
 
+def set_xml_values(plain: bytes, updates: dict):
+    """Write named tags to new values, each in the width the old one occupied.
+
+    `updates` maps a tag name to the text to put in it. The text is used
+    verbatim when it already fits, and padded with LEADING ZEROS when it is
+    short -- which is safe here for a reason that was checked rather than
+    assumed: every one of these files is parsed with `atof`/`atoi`, and the
+    engine's `atoi` is a thunk to `strtol(s, NULL, 10)` with base 10 set
+    explicitly, so "075" is seventy-five and never octal. Both skip leading
+    whitespace and stop at the first character they cannot use.
+    """
+    changed = [0]
+
+    def sub(m):
+        tag = m.group(2).decode("latin1")
+        if tag not in updates:
+            return m.group(0)
+        old = m.group(3)
+        new = str(updates[tag]).encode("latin1")
+        if len(new) > len(old):
+            return m.group(0)                     # will not fit; leave it
+        if len(new) < len(old):
+            sign = b""
+            if new[:1] in (b"-", b"+"):
+                sign, new = new[:1], new[1:]
+            new = sign + b"0" * (len(old) - len(sign) - len(new)) + new
+        if new == old:
+            return m.group(0)
+        changed[0] += 1
+        return m.group(1) + new + m.group(4)
+
+    return XML_FLOAT.sub(sub, plain), changed[0]
+
+
 def scale_xml_floats(plain: bytes, factor: float, prefix: bytes = b"Ballistic",
-                     lo: float = 0.0, hi: float = 100000.0):
+                     lo: float = 0.0, hi: float = 100000.0,
+                     keep_width: bool = True):
     """Multiply every `<prefix...>` float by `factor`, preserving byte length.
 
     Returns (bytes, changed). A tag whose new value will not fit the width the
@@ -451,10 +486,22 @@ def scale_xml_floats(plain: bytes, factor: float, prefix: bytes = b"Ballistic",
             return m.group(0)
         old = m.group(3)
         want = max(lo, min(hi, float(old) * factor))
-        try:
-            new = _same_width(want, len(old))
-        except ValueError:
-            return m.group(0)
+        if keep_width:
+            # A value with no decimal point has no precision to trade away, so
+            # `75` cannot become `120` -- there is nowhere to put the third
+            # digit. Clamp to what the field can hold rather than skip the file
+            # or grow it: not every .ENV is stored uncompressed, and the ones
+            # that are not cannot move by a single byte.
+            if b"." not in old and want >= 10 ** len(old):
+                want = float(10 ** len(old) - 1)
+            try:
+                new = _same_width(want, len(old))
+            except ValueError:
+                return m.group(0)
+        elif b"." in old:
+            new = ("%.*f" % (len(old.split(b".")[1]), want)).encode("latin1")
+        else:
+            new = b"%d" % int(round(want))
         if new == old:
             return m.group(0)
         changed[0] += 1
@@ -463,7 +510,7 @@ def scale_xml_floats(plain: bytes, factor: float, prefix: bytes = b"Ballistic",
     return XML_FLOAT.sub(sub, plain), changed[0]
 
 
-def read_xml_floats(plain: bytes, prefix: bytes = b"Ballistic"):
+def read_xml_floats(plain: bytes, prefix: bytes = b""):
     return {m.group(2).decode("latin1"): float(m.group(3))
             for m in XML_FLOAT.finditer(plain)
             if m.group(2).startswith(prefix)}

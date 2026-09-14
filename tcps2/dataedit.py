@@ -53,6 +53,17 @@ def _op_scale_ballistics(plain, params):
     return transforms.scale_xml_floats(plain, float(params.get("factor", 1.0)))
 
 
+def _op_scale_xml(plain, params):
+    return transforms.scale_xml_floats(
+        plain, float(params.get("factor", 1.0)),
+        prefix=params.get("prefix", "").encode("latin1"),
+        keep_width=bool(params.get("keep_width", True)))
+
+
+def _op_xml_values(plain, params):
+    return transforms.set_xml_values(plain, params.get("values", {}))
+
+
 def _op_gtf_variables(plain, params):
     return transforms.set_gtf_variables(plain, params.get("values", {}))
 
@@ -80,6 +91,8 @@ OPS = {
     "ws_slot": _op_ws_slot,
     "grenade_carry": _op_grenade_carry,
     "scale_ballistics": _op_scale_ballistics,
+    "scale_xml": _op_scale_xml,
+    "xml_values": _op_xml_values,
 }
 
 

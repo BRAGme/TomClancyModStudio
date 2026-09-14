@@ -154,6 +154,12 @@ def run_raw_and_data(args, work):
                 vals[s.key] = 3
             elif s.kind == "choice" and s.key.endswith("_lethality"):
                 vals[s.key] = "deadlier"
+            elif s.kind == "int" and s.key.endswith("_spot"):
+                vals[s.key] = 160
+            elif s.kind == "choice" and s.key.startswith("soaf_enemy_"):
+                vals[s.key] = {"soaf_enemy_aim": "deadly",
+                               "soaf_enemy_delay": "quick",
+                               "soaf_enemy_skill_adj": "max"}[s.key]
         vals = profile.normalise(vals)
         code_only = {k: v for k, v in vals.items()}
         edits = profile.build_edits(code_only)
@@ -195,13 +201,18 @@ def run_raw_and_data(args, work):
                     new, _n = dataedit.OPS[ed.op](new, ed.params)
                 if new == plain:
                     continue
-                if len(new) != len(plain):
+                # Only a COMPRESSED file has to keep its length: its chunk
+                # boundaries are fixed. A plain-text file inside the archive --
+                # .ATR, .ENV, and Ghost Recon's own CMBTMODL.XML -- may grow or
+                # shrink, and the archive writer relocates it. That is the same
+                # rule dataedit enforces, so the test asks for the same thing.
+                if len(new) != len(plain) and rselzo.is_compressed(original):
                     lengths_ok = False
                     break
                 packed = (rselzo.repack(original, new)
                           if rselzo.is_compressed(original) else new)
                 built.append((len(packed), e, packed, new))
-            check("every transform preserves the file length", lengths_ok)
+            check("every compressed file keeps its length", lengths_ok)
             # biggest first: the one large file must get the 64 KB pad before
             # smaller ones start nibbling at it
             built.sort(key=lambda r: -r[0])

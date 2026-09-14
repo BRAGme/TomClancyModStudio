@@ -80,7 +80,7 @@ def _settings():
                      "leadership in every hostile template. Only templates used "
                      "by non-allied companies are touched, so your own side is "
                      "left alone."),
-    ] + rstuning.cards("soaf_")
+    ] + rstuning.cards("soaf_") + rstuning.soaf_cards()
 
 
 def build_data(v: dict) -> list:
@@ -98,6 +98,7 @@ def build_data(v: dict) -> list:
                             "+%d to every hostile template's skills" % skill,
                             scope="enemy_templates"))
     out += rstuning.edits("soaf_", v, "SOAF.IMG")
+    out += rstuning.soaf_edits(v)
     return out
 
 
