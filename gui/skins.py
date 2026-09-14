@@ -553,6 +553,25 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
+    lock_rule_y = None
+    if p.chrome == "lock":
+        # The backdrop for this disc is its own loading frame, which carries
+        # the same logo -- so without a ground under the header the emblem sits
+        # on top of a blurred copy of itself. The game's menus have a solid
+        # plate here too.
+        d.rectangle([0, 0, width, height], fill=_hex(p.veil) + (244,))
+        # The plate has to be painted BEFORE the emblem or it covers it: the
+        # emblem is composited further down, and this plate spans the whole
+        # header so it would erase the logo entirely.
+        _top = px(6)
+        _plate_h = height - px(30)
+        _drop = px(170)                      # how far the diagonal leans
+        d.polygon([0, _top, width - _drop, _top, width, _top + _plate_h,
+                   0, _top + _plate_h], fill=_hex(p.panel2) + (238,))
+        lock_rule_y = _top + _plate_h
+        d.line([(0, lock_rule_y), (width, lock_rule_y)], fill=p.edge,
+               width=px(2))
+
     label = text.upper() if p.title_upper else text
     big = _font(p.title_font, px(30))
     small = _font(p.body_font, px(11))
@@ -567,7 +586,14 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     box_w, box_h = px(258), height - px(16)
     if emblem is not None:
         em = emblem.convert("RGBA")
-        em.thumbnail((box_w, box_h), Image.LANCZOS)
+        # `thumbnail` only ever SHRINKS, so a small mark -- Rainbow Six 3's
+        # laurel is 185x85 -- stayed small while the wide wordmarks filled the
+        # box, and the shelf looked inconsistent. Scale to fit in both
+        # directions instead.
+        scale = min(box_w / float(em.width), box_h / float(em.height))
+        if abs(scale - 1.0) > 0.01:
+            em = em.resize((max(1, int(em.width * scale)),
+                            max(1, int(em.height * scale))), Image.LANCZOS)
         img.alpha_composite(em, (left + (box_w - em.width) // 2,
                                  (height - em.height) // 2))
     pad = left + box_w + px(22)
@@ -576,20 +602,18 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     tx = width - px(30) if right else pad
 
     if p.chrome == "lock":
-        # the game's signature: a dark plate with a sheared right end carrying
-        # the title, and a bright rule crossing the entire width through it
-        plate_h = px(46)
-        top = px(14)
-        pts = [0, top, width - px(150), top, width - px(150) + plate_h // 2,
-               top + plate_h, 0, top + plate_h]
-        d.polygon(pts, fill=_hex(p.panel2) + (235,))
-        rule_y = top + plate_h + px(3)
-        d.line([(0, rule_y), (width, rule_y)], fill=p.edge, width=px(2))
-        tx = width - px(30)
-        draw_tracked(d, (tx, top + px(6)), label, big, p.title,
+        # The game's signature plate: it carries the title and its right end is
+        # a LONG diagonal that falls away past the lettering, with a bright
+        # rule crossing the entire width at its foot.
+        # the plate and its rule are already down; only the lettering is left.
+        # Keep it clear of the diagonal -- by the title's own baseline the
+        # plate's right edge has already pulled in.
+        rule_y = lock_rule_y
+        tx = width - px(96)
+        draw_tracked(d, (tx, px(16)), label, big, p.title,
                      track=px(p.title_track), anchor_right=True)
         if subtitle:
-            draw_tracked(d, (tx, height - px(30)), subtitle, small, p.dim,
+            draw_tracked(d, (tx, rule_y - px(24)), subtitle, small, p.dim,
                          track=px(1), anchor_right=True)
         return ImageTk.PhotoImage(img)
 

@@ -199,7 +199,10 @@ class App(tk.Tk):
         self.update_idletasks()
         y += max(px(52), self.disc.winfo_reqheight()) + px(4)
 
-        self.status.place(x=x + px(6), y=y, width=width, height=px(20))
+        # line the serial up with the disc path above it, which sits inside the
+        # panel's own padding plus the entry's gutter
+        self.status.place(x=x + px(22), y=y, width=width - px(22),
+                          height=px(20))
         y += px(26)
 
         bottom = h - px(GUTTER)
