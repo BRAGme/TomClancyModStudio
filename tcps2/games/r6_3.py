@@ -1,0 +1,342 @@
+"""Rainbow Six 3 (PS2, SLUS-20883) -- profile.
+
+Every address below is a virtual address in the decompressed `SP.SOZ` overlay,
+which the EE loads at a fixed base of 0x00100000. All stock words are asserted
+before anything is written, so a mismatched disc revision fails loudly instead
+of corrupting the image.
+
+Provenance of the wave numbers, briefly, because they are not obvious:
+
+  * `m_iNbToSpawn` is computed at zone init as `min + rand % (max - min + 1)`;
+    replacing the `addu` that forms it with a `li` gives every deployment zone
+    the same budget.
+  * The wave advance returns early unless `liveCount <= m_iNextWaveTrigger`, so
+    the trigger -- not the wave size -- is the real population cap. Steady state
+    per zone is roughly `trigger + release`.
+  * The advance is gated on `bStasis == 0`, and UE2 clears stasis for actors
+    whose zone contains a player. So the shipped rule is literally "feed the
+    zone the player is standing in". Inverting that test (`beq` -> `bne`) makes
+    the zones the player has left do the feeding instead.
+  * A wave draws only from its own `m_aSpawningPoint` array, and those points
+    sit next to the zone. Widening the pool to every `R6DZonePoint` in the level
+    takes a code cave, which is the one thing here that cannot be baked into the
+    disc -- see `build_pnach`.
+"""
+
+from __future__ import annotations
+
+from ..model import (BOOL, CHOICE, INT, Choice, GameProfile, Overlay, Setting,
+                     WordEdit, li, S0, V0, V1)
+
+BASE = 0x00100000
+NOP = 0x00000000
+
+SP = Overlay(
+    name="SP.SOZ",
+    iso_pattern=r"/SP\.SOZ$",
+    base_va=BASE,
+    kind="soz",
+    image_size=5585280,
+    image_sha1="e9bb12138a1e69d551ac9f6b958114e5b2e830da",
+)
+
+# -- stock words, all read back out of a pristine SP.SOZ -------------------
+STOCK = {
+    0x0040AF58: 0x02221021,   # addu v0, s1, v0      m_iNbToSpawn
+    0x0040A8A8: 0x02028021,   # addu s0, s0, v0      released per wave
+    0x0040AFDC: 0x02231821,   # addu v1, s1, v1      m_iNextWaveTrigger seed
+    0x0040A874: 0x02021021,   # addu v0, s0, v0      m_iNextWaveTrigger rearm
+    0x0040AF4C: 0x00000000,   # pad nop
+    0x0040AF50: 0x00000000,   # pad nop
+    0x0040AF54: 0x00001010,   # mfhi v0  (dead once 0x40af58 is a constant)
+    0x0040A790: 0x10400003,   # beq v0, zero, +3     the bStasis gate
+    0x003F1934: 0x1440004F,   # bne v0, zero, skip   static-world impact decal
+    0x003F1BB4: 0x14400084,   # bne v0, zero, skip   actor-attached impact decal
+    0x003F250C: 0x14400014,   # bne v0, zero, skip   impact emitter spawn
+    0x003531D0: 0x14400053,   # bne v0, zero, skip   rain/snow weather
+    0x003A14B8: 0x14400015,   # bne v0, zero, skip   blood-effect update
+    0x002375E0: 0xA2420065,   # sb v0, 0x65(s2)      Disabled = m_bHideInSplitScreen
+    0x00302DA8: 0xAF8080CC,   # sw zero, -0x7f34(gp) g_bDrawFirstPersonWeapon = 0
+    0x00317570: 0x1460001D,   # bne v1, zero, +29    body despawn path 1
+    0x003175F4: 0x1460000B,   # bne v1, zero, +11    body despawn path 2
+    0x00317600: 0x3C034040,   # lui v1, 0x4040       3.0f despawn window
+    0x00379B30: 0x24060020,   # addiu a2, zero, 32   R6DecalGroup m_MaxSize
+    0x0040ACA0: 0x0C051B7C,   # jal rand             SpawnATerrorist point pick
+}
+
+# Scaffolding from the research build that produced this profile: a tracing stub
+# in the function-end padding at 0x0011d8c4 and the two-word hijack that reached
+# it. This tool never writes them, but knowing their stock values means it can
+# clean a disc that still carries them instead of refusing to touch it.
+RESEARCH_LEFTOVERS = dict(
+    [(va, 0x00000000) for va in range(0x0011D8C4, 0x0011D900, 4)]
+    + [(0x0017F530, 0x27BDFCF0), (0x0017F534, 0xFFBF0090)]
+)
+STOCK.update(RESEARCH_LEFTOVERS)
+
+BODY_TIMERS = {
+    "stock": None,
+    "15": 0x3C034170,     # lui v1, 0x4170 = 15.0f
+    "30": 0x3C0341F0,     # lui v1, 0x41f0 = 30.0f
+    "60": 0x3C034270,     # lui v1, 0x4270 = 60.0f
+}
+
+WAVE_GATES = {
+    "stock": 0x10400003,  # beq  -- feed only the zone the player is in
+    "always": 0x10000003, # b    -- every zone feeds, all the time
+    "away": 0x14400003,   # bne  -- feed only the zones the player has left
+}
+
+# The map-wide spawn-point picker: 67 words of cave plus one hijack. Assembled
+# and verified as a PCSX2 cheat; it cannot be baked into the disc because the
+# 0x005ba488 zero run is not preserved through a level load, while a cheat file
+# rewrites it every frame.
+CAVE_HIJACK = (0x0040ACA0, 0x0816E922)   # j 0x005ba488, replacing `jal rand`
+CAVE_WORDS = [
+    (0x005BA488, 0x3C01005C), (0x005BA48C, 0xAC3FA5F8), (0x005BA490, 0x0C051B7C),
+    (0x005BA494, 0x00000000), (0x005BA498, 0x30517FFF), (0x005BA49C, 0x3C01005C),
+    (0x005BA4A0, 0x8C3FA5F8), (0x005BA4A4, 0x8EA802E4), (0x005BA4A8, 0x1100002E),
+    (0x005BA4AC, 0x00000000), (0x005BA4B0, 0x8D09002C), (0x005BA4B4, 0x8D0A0030),
+    (0x005BA4B8, 0x1120002A), (0x005BA4BC, 0x00000000), (0x005BA4C0, 0x19400028),
+    (0x005BA4C4, 0x00000000), (0x005BA4C8, 0x3C0B0061), (0x005BA4CC, 0x356BE2F0),
+    (0x005BA4D0, 0x00006021), (0x005BA4D4, 0x00006821), (0x005BA4D8, 0x000C7080),
+    (0x005BA4DC, 0x012E7021), (0x005BA4E0, 0x8DCF0000), (0x005BA4E4, 0x11E00005),
+    (0x005BA4E8, 0x00000000), (0x005BA4EC, 0x8DF80000), (0x005BA4F0, 0x170B0002),
+    (0x005BA4F4, 0x00000000), (0x005BA4F8, 0x25AD0001), (0x005BA4FC, 0x258C0001),
+    (0x005BA500, 0x018A082A), (0x005BA504, 0x1420FFF4), (0x005BA508, 0x00000000),
+    (0x005BA50C, 0x11A00015), (0x005BA510, 0x00000000), (0x005BA514, 0x022D001A),
+    (0x005BA518, 0x00000000), (0x005BA51C, 0x00000000), (0x005BA520, 0x00007010),
+    (0x005BA524, 0x00006021), (0x005BA528, 0x000C7880), (0x005BA52C, 0x012F7821),
+    (0x005BA530, 0x8DF80000), (0x005BA534, 0x13000007), (0x005BA538, 0x00000000),
+    (0x005BA53C, 0x8F190000), (0x005BA540, 0x172B0004), (0x005BA544, 0x00000000),
+    (0x005BA548, 0x11C0000F), (0x005BA54C, 0x00000000), (0x005BA550, 0x25CEFFFF),
+    (0x005BA554, 0x258C0001), (0x005BA558, 0x018A082A), (0x005BA55C, 0x1420FFF2),
+    (0x005BA560, 0x00000000), (0x005BA564, 0x8EA80484), (0x005BA568, 0x11000004),
+    (0x005BA56C, 0x00000000), (0x005BA570, 0x8D040000), (0x005BA574, 0x10000005),
+    (0x005BA578, 0x00000000), (0x005BA57C, 0x00008021), (0x005BA580, 0x08102B6E),
+    (0x005BA584, 0x00000000), (0x005BA588, 0x03002021), (0x005BA58C, 0x08102B31),
+    (0x005BA590, 0x00000000),
+]
+
+WAVE_MAPS = (
+    "Maps with deployment zones, best host first:\n"
+    "  SHIPYARD   2 zones, 27 points in a 111 x 114 m box that wraps the "
+    "insertion point -- the only level with fighting from the first minute.\n"
+    "  ALCATRAZ   2 zones 19 m apart but 6 spawn points and authored 8/8 and "
+    "4/4; indoors, so it holds framerate.\n"
+    "  TRIESTE    3 zones 54-83 m apart, the widest spread, but the heaviest "
+    "level in the game.\n"
+    "  ISLAND     2 zones, and every zone sits past the halfway point.\n"
+    "  OIL REFINERY  3 zones but only 4 spawn points between them.\n"
+    "No zones at all: Alpine Village A, Import/Export A, Penthouse, Training."
+)
+
+
+def _settings():
+    return [
+        # ---- wave mode -------------------------------------------------
+        Setting("wave_enable", "Enable wave mode", BOOL, True, "Enemy Waves",
+                help="Rainbow Six 3 already ships a terrorist deployment-zone "
+                     "system that the campaign uses and Terrorist Hunt never "
+                     "triggers. This switches it on and hands you its dials.",
+                confidence="verified"),
+        Setting("wave_gate", "Where waves feed", CHOICE, "always", "Enemy Waves",
+                choices=[
+                    Choice("always", "Every zone, all the time",
+                           "Loudest option. Every deployment zone runs from the "
+                           "moment the level starts."),
+                    Choice("away", "Only zones you have left",
+                           "The far zone feeds and pushes you back, and the zone "
+                           "you walk out of starts up behind you. Needs a map "
+                           "whose zones are far enough apart to be in different "
+                           "engine zones -- Trieste shows it, Alcatraz cannot."),
+                    Choice("stock", "Only where you are standing (stock rule)",
+                           "The shipped behaviour. Enemies appear on top of you."),
+                ],
+                help="The engine gates the wave advance on the zone's stasis "
+                     "flag, and it clears that flag for the zone containing a "
+                     "player. This picks which way the test runs.",
+                requires={"wave_enable": True}, confidence="verified"),
+        Setting("wave_total", "Enemies each zone owes", INT, 30, "Enemy Waves",
+                minimum=1, maximum=250, unit="enemies",
+                help="Total a single deployment zone will release before it is "
+                     "spent. A map with three zones triples this.",
+                requires={"wave_enable": True}, confidence="verified"),
+        Setting("wave_size", "Released per wave", INT, 1, "Enemy Waves",
+                minimum=1, maximum=8, unit="enemies",
+                help="How many come out each time a wave fires. Capped by the "
+                     "number of spawn points the zone can reach, so on most maps "
+                     "anything above 2-4 does nothing.",
+                requires={"wave_enable": True}, confidence="verified"),
+        Setting("wave_trigger", "Alive before the next wave", INT, 2, "Enemy Waves",
+                minimum=0, maximum=12, unit="enemies",
+                help="THE VOLUME DIAL. A zone tops itself up until more than "
+                     "this many of its enemies are alive, so steady state per "
+                     "zone is about this number plus the release size. Set this "
+                     "first, then the wave size, then the total.",
+                requires={"wave_enable": True}, confidence="verified"),
+        Setting("wave_hunt", "Waves hunt you from the start", BOOL, True,
+                "Enemy Waves",
+                help="Without this a zone waits to be triggered by the level's "
+                     "own script, which in Terrorist Hunt never happens.",
+                requires={"wave_enable": True}, confidence="verified"),
+        Setting("wave_mapwide", "Spawn across the whole map", BOOL, True,
+                "Enemy Waves", pnach_only=True,
+                help="Stock, a wave can only use the two or three spawn points "
+                     "sitting next to it, so every enemy walks out of one corner. "
+                     "This redirects the picker at every deployment point in the "
+                     "level, which also brings a real spread of enemy types.",
+                caution="Delivered as a PCSX2 cheat file, not written to the "
+                        "disc. A code cave baked into the overlay does not "
+                        "survive a level load.",
+                requires={"wave_enable": True}, confidence="verified"),
+
+        # ---- split screen ----------------------------------------------
+        Setting("viewmodel", "Show your weapon in split screen", BOOL, True,
+                "Split Screen",
+                help="The engine switches the first-person weapon off the moment "
+                     "it detects split screen, through a global with exactly one "
+                     "writer in the whole overlay. This removes that write.",
+                confidence="verified"),
+        Setting("fx_impact", "Bullet impact decals", BOOL, True, "Split Screen",
+                help="Two branches skip the bullet-hole decal in split screen: "
+                     "one for hits on the static world, one for hits on actors.",
+                confidence="applied"),
+        Setting("fx_emitters", "Bullet impact puffs and sparks", BOOL, True,
+                "Split Screen",
+                help="The dust/spark emitter that goes with an impact is skipped "
+                     "in split screen by a third branch.",
+                confidence="applied"),
+        Setting("fx_blood", "Blood effects", BOOL, True, "Split Screen",
+                confidence="applied",
+                help="Restores the blood-effect position update."),
+        Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
+                confidence="applied",
+                help="Weather is gated off in split screen by a single branch."),
+        Setting("fx_hidden_emitters", "Fire, water and scenery emitters", BOOL,
+                True, "Split Screen",
+                help="Levels flag a handful of emitters `HideInSplitScreen` and "
+                     "the engine disables exactly those -- six per level, and "
+                     "they are always the fire and water next to the players.",
+                confidence="verified"),
+        Setting("teammates", "AI teammates in split screen", BOOL, False,
+                "Split Screen", enabled=False, confidence="broken",
+                disabled_reason=(
+                    "Not shipped: four separate attempts all hang the level "
+                    "load, and the four hang states are byte-identical, so the "
+                    "cause is upstream of every edit tried. Re-enabling the "
+                    "script call is provably not sufficient."),
+                help="Split screen deliberately builds a one-man team."),
+
+        # ---- world ------------------------------------------------------
+        Setting("decal_ring", "Bullet holes kept on screen", INT, 32, "World",
+                minimum=32, maximum=160, unit="decals",
+                help="Footprints and wall hits share a fixed-size ring buffer, "
+                     "32 each by default. Raising it is the only way to keep "
+                     "more bullet holes visible -- it cannot be made unlimited.",
+                caution="Each extra decal is a real actor. 96 was measured as "
+                        "128 extra actors and was backed out again on the "
+                        "heaviest level, so raise this one step at a time.",
+                confidence="applied"),
+        Setting("bodies", "How long bodies stay", CHOICE, "stock", "World",
+                choices=[
+                    Choice("stock", "Stock (about 3 seconds)", ""),
+                    Choice("15", "15 seconds", ""),
+                    Choice("30", "30 seconds", ""),
+                    Choice("60", "60 seconds", ""),
+                    Choice("never", "Never disappear",
+                           "Unbounded. Measured to collapse the framerate far "
+                           "enough that world geometry stopped drawing at some "
+                           "angles."),
+                ],
+                help="Two separate paths hide and destroy a corpse. The timed "
+                     "options skip the first and widen the second's window.",
+                confidence="verified"),
+    ]
+
+
+def build_edits(v: dict) -> list:
+    """Turn a settings dict into the words to bake into SP.SOZ."""
+    e = []
+
+    def w(va, value, note):
+        e.append(WordEdit(va, value, STOCK[va], note))
+
+    if v.get("wave_enable"):
+        w(0x0040AF58, li(V0, int(v["wave_total"])),
+          "wave: each zone owes %d" % v["wave_total"])
+        w(0x0040A8A8, li(S0, int(v["wave_size"])),
+          "wave: %d released per wave" % v["wave_size"])
+        w(0x0040AFDC, li(V1, int(v["wave_trigger"])),
+          "wave: next-wave trigger = %d (seed)" % v["wave_trigger"])
+        w(0x0040A874, li(V0, int(v["wave_trigger"])),
+          "wave: next-wave trigger = %d (rearm)" % v["wave_trigger"])
+        if v.get("wave_hunt"):
+            # Three instructions that the m_iNbToSpawn constant above makes
+            # dead: two pad nops and the mfhi whose result it overwrites.
+            w(0x0040AF4C, 0x8E010388, "wave: m_bHuntFromStart |= 0x40 (lw)")
+            w(0x0040AF50, 0x34210040, "wave: m_bHuntFromStart |= 0x40 (ori)")
+            w(0x0040AF54, 0xAE010388, "wave: m_bHuntFromStart |= 0x40 (sw)")
+        gate = v.get("wave_gate", "always")
+        if gate != "stock":
+            w(0x0040A790, WAVE_GATES[gate], "wave: stasis gate = %s" % gate)
+
+    if v.get("viewmodel"):
+        w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
+    if v.get("fx_impact"):
+        w(0x003F1934, NOP, "split screen: static-world impact decal")
+        w(0x003F1BB4, NOP, "split screen: actor-attached impact decal")
+    if v.get("fx_emitters"):
+        w(0x003F250C, NOP, "split screen: impact emitter")
+    if v.get("fx_blood"):
+        w(0x003A14B8, NOP, "split screen: blood effect")
+    if v.get("fx_weather"):
+        w(0x003531D0, NOP, "split screen: rain and snow")
+    if v.get("fx_hidden_emitters"):
+        w(0x002375E0, NOP, "split screen: stop disabling flagged emitters")
+
+    ring = int(v.get("decal_ring", 32))
+    if ring != 32:
+        w(0x00379B30, 0x24060000 | (ring & 0xFFFF), "decal ring = %d" % ring)
+
+    bodies = v.get("bodies", "stock")
+    if bodies == "never":
+        w(0x00317570, 0x1000001D, "bodies: skip despawn path 1")
+        w(0x003175F4, 0x1000001D, "bodies: skip despawn path 2")
+    elif bodies in BODY_TIMERS and BODY_TIMERS[bodies]:
+        w(0x00317570, 0x1000001D, "bodies: skip despawn path 1")
+        w(0x00317600, BODY_TIMERS[bodies], "bodies: despawn after %ss" % bodies)
+
+    return e
+
+
+def build_pnach(v: dict) -> list:
+    if not (v.get("wave_enable") and v.get("wave_mapwide")):
+        return []
+    out = [WordEdit(CAVE_HIJACK[0], CAVE_HIJACK[1], STOCK[CAVE_HIJACK[0]],
+                    "map-wide spawn points: hijack the point picker")]
+    out += [WordEdit(va, word, 0, "map-wide spawn points: cave")
+            for va, word in CAVE_WORDS]
+    return out
+
+
+PROFILE = GameProfile(
+    id="r6_3_slus20883",
+    title="Tom Clancy's Rainbow Six 3",
+    short="Rainbow Six 3",
+    serial="SLUS-20883",
+    boot="SLUS_208.83",
+    volume_hint="SLUS_20883",
+    pcsx2_crc="21CC1EC3",
+    stock_words=STOCK,
+    overlays=[SP],
+    settings=_settings(),
+    build_edits=build_edits,
+    build_pnach=build_pnach,
+    notes=WAVE_MAPS,
+    ui_art={
+        "archive": "iso",
+        "fbz": [r"/NTSC_CD/LE/SC\.FBZ$", r"/NTSC_CD/LE/LANG_BG\.FBZ$",
+                r"/NTSC_CD/LE/PAD_ENG\.FBZ$", r"/NTSC_CD/LE/MCARD/.*\.FBZ$"],
+    },
+)

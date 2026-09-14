@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+stock_sp.bin
+.tcms-backup/
+research/**/*.iso
