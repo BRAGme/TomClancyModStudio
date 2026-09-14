@@ -14,9 +14,15 @@ Six 3's. Everything here is **data**, not code:
     the AI tuning and the control curve in plain text. Same keys, same stock
     numbers, so Rainbow Six 3's transforms run on it unmodified.
 
-  * `COMMON.LIN` holds the enemy templates. Eight of them roll a grenade against
-    nothing at spawn, at 20, 15, 25 and 30 percent, in the same three-digit
-    weighted table Rainbow Six 3 uses -- so the same digit-for-digit edit works.
+  * `COMMON.LIN` holds the enemy templates, and the grenade picture in it was
+    counted rather than assumed. Of the 73 `NbOfGrenade` tables: 43 always come
+    up empty, **18 always spawn a frag grenade**, 8 roll one against nothing at
+    20/15/25/30 percent, 2 always carry a molotov, 1 a smoke, and 1 rolls 10
+    percent frag against 10 percent tear gas. So yes -- enemies throw grenades
+    in this game, and 21 of the 73 templates are holding one every time.
+    The 8 rolled tables are the ones with a number in them to change, and they
+    use the same three-digit weighted form Rainbow Six 3 uses, so the same
+    digit-for-digit edit works.
 
 What is **not** here is the wave system, the render switches and the split-screen
 fixes. Those are virtual addresses inside Rainbow Six 3's `SP.SOZ`, and this is
@@ -90,9 +96,12 @@ def _settings():
                 20, "Enemies", minimum=0, maximum=100, unit="%",
                 confidence="applied", touches="data",
                 help="What an enemy spawns holding is a weighted roll made "
-                     "once, at spawn, over a small table in his template. Eight "
-                     "of this disc's templates roll a grenade against nothing "
-                     "at between 15 and 30 percent. This sets that share.",
+                     "once, at spawn, over a small table in his template. "
+                     "Eight of this disc's 73 tables roll a frag grenade "
+                     "against nothing, at 20, 15, 25 and 30 percent. This sets "
+                     "that share. A further 21 templates always carry "
+                     "something -- 18 a frag, 2 a molotov, 1 smoke -- and are "
+                     "not affected by this.",
                 caution="There is no separate throw chance. Once he is holding "
                         "one, whether he uses it is decided by the two settings "
                         "below."),
@@ -152,6 +161,17 @@ def _settings():
                         "apply on top of it, so the practical distance is "
                         "shorter when you are still and longer when you run."),
 
+        # ---- your loadout ------------------------------------------------
+        Setting("gr2_player_grenades", "Grenades you carry", INT, 1, "Loadout",
+                minimum=1, maximum=10, unit="x", confidence="applied",
+                touches="data",
+                help="The AMMO MULTIPLIERS block scales what you start a "
+                     "mission holding. Grenades ship at 1x on all three "
+                     "difficulties -- the loadout you picked and nothing more. "
+                     "Raising it multiplies every grenade in that loadout.",
+                caution="This multiplies the loadout, so it does nothing for a "
+                        "kit you sent out with no grenades in it."),
+
         # ---- controls ----------------------------------------------------
         Setting("gr2_sens_steps", "Look sensitivity ceiling", INT, 10,
                 "Controls", minimum=10, maximum=30, unit="steps",
@@ -195,6 +215,10 @@ def build_data(v: dict) -> list:
         ini["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v["gr2_perfect_dist"])
     if int(v.get("gr2_sight", 5000)) != 5000:
         ini["m_fSightRadius"] = "%.1f" % float(v["gr2_sight"])
+    mult = int(v.get("gr2_player_grenades", 1))
+    if mult != 1:
+        for tier in ("Recruit", "Veteran", "Elite"):
+            ini["m_PlayerGrenadeMultiplier" + tier] = mult
     steps = int(v.get("gr2_sens_steps", 10))
     if steps != 10:
         ini["m_iXSensitivityMaxSteps"] = steps

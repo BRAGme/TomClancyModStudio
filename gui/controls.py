@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
-from . import theme
+from . import skins, theme
 from .skins import mix, round_points
 
 
@@ -93,15 +93,15 @@ class Toggle(tk.Frame):
         if not self._enabled:
             track, knob, edge = p.panel2, p.faint, p.edge_dim
         elif on:
-            track = p.tab if p.chrome == "rs3" else p.sel_fill
-            knob = "#f4f8fa" if p.chrome == "rs3" else "#fffaf0"
+            track = p.tab if skins.angular(p) else p.sel_fill
+            knob = "#f4f8fa" if skins.angular(p) else "#fffaf0"
             edge = mix(track, "#ffffff", 0.3)
         else:
             track = mix(p.panel, p.bg, 0.6 if not c.hovered else 0.2)
             knob = p.dim
             edge = p.edge_dim
 
-        if p.chrome == "rs3":
+        if skins.angular(p):
             from .skins import panel_points
             cut = theme.px(5)
             c.create_polygon(panel_points(1, 1, w - 1, h - 1, cut),
@@ -174,10 +174,10 @@ class RadioRow(tk.Frame):
         d = int(c["width"])
         on = self.var.get() == self.value
         live = self._enabled
-        mark = p.tab if p.chrome == "rs3" else p.sel_fill
+        mark = p.tab if skins.angular(p) else p.sel_fill
         ring = p.faint if not live else (mark if on else
                                          (p.edge if c.hovered else p.edge_dim))
-        if p.chrome == "rs3":
+        if skins.angular(p):
             from .skins import panel_points
             c.create_polygon(panel_points(1, 1, d - 1, d - 1, theme.px(4)),
                              fill="", outline=ring, width=theme.px(2))
@@ -283,7 +283,7 @@ class Slider(tk.Frame):
         if x > pad + 1:
             c.create_rectangle(pad + 1, mid - th // 2 + 1, x, mid + th // 2 - 1,
                                fill=fill, outline="")
-        if p.chrome == "rs3":
+        if skins.angular(p):
             from .skins import panel_points
             k = theme.px(7)
             c.create_polygon(panel_points(x - k, mid - k, x + k, mid + k,

@@ -1,12 +1,18 @@
 """One skin per disc, so the tool looks like the menu you would be standing in.
 
-Two chrome families cover the shelf, in six colourways:
+Three chrome families cover the shelf, in six colourways:
 
   ``rs3``  Rainbow Six 3's gunmetal HUD -- translucent slate panels with a
            hairline light edge, corners cut at 45 degrees, wide letterspaced
-           uppercase titles, and a red tab on the selected row. Advanced
-           Warfighter is the same chrome in its own near-black and teal, which
-           is what its menus and loading screens actually are.
+           uppercase titles, and a red tab on the selected row.
+
+  ``graw`` Advanced Warfighter's tactical display. Not Rainbow Six 3's chrome
+           in another colour -- a different shape: every frame is a rounded
+           rectangle drawn twice, an outer bright cyan stroke and a second one
+           inset a few pixels inside it, over near-black. Menu rows are bars
+           with the top-right corner sheared off, each one led by a small solid
+           triangle, and the selected row inverts to a pale fill with dark
+           lettering. Read off the language, profile and difficulty screens.
 
   ``gr``   The console shell the Red Storm games use -- flat translucent panels
            inside a bright rule, rounded buttons that fill solid when selected,
@@ -134,23 +140,25 @@ JS = Palette(
 #: gets the gunmetal chrome in teal rather than Rainbow's slate.
 GRAW = replace(
     RS3,
-    bg="#070b0b",
-    veil="#050808",
-    panel="#0f1717",
-    panel2="#162323",
-    edge="#5fcfcf",
-    edge_dim="#2b4d4d",
-    text="#c2dede",
-    dim="#84a9a9",
-    faint="#517070",
-    title="#e8f8f8",
-    accent="#45bcbc",
-    accent_dim="#256a6a",
-    sel_fill="#15302f",
-    sel_text="#dffafa",
-    tab="#2f9090",
+    chrome="graw",
+    bg="#04090a",
+    veil="#030607",
+    panel="#08181a",
+    panel2="#0d2427",
+    edge="#3ee0e0",
+    edge_dim="#1d5c5f",
+    text="#cdeced",
+    dim="#8fb9ba",
+    faint="#54797b",
+    title="#e8fbfb",
+    accent="#3ee0e0",
+    accent_dim="#227e80",
+    # the game inverts the selected row: pale plate, dark lettering
+    sel_fill="#9fc9c9",
+    sel_text="#062022",
+    tab="#3ee0e0",
     good="#5fcf9a",
-    glyph_triangle="#45bcbc",
+    glyph_triangle="#3ee0e0",
 )
 
 #: Ghost Recon 2's shell is the Red Storm frame again, drab olive ruled in the
@@ -202,6 +210,19 @@ def for_profile(profile) -> Palette:
 # chrome
 # ---------------------------------------------------------------------------
 
+def angular(p: Palette) -> bool:
+    """True for the skins whose controls are cut and sharp rather than rounded.
+
+    Rainbow Six 3 and Advanced Warfighter both draw square marks, cut corners
+    and letterspaced uppercase; the Red Storm shell the other four wear draws
+    rounded plates and sentence case. Everything that has to choose between
+    those two idioms asks this rather than testing for one chrome by name --
+    which is how Advanced Warfighter ended up with gold-shell toggles when it
+    stopped being an alias of Rainbow Six 3.
+    """
+    return p.chrome in ("rs3", "graw")
+
+
 def _hex(c):
     c = c.lstrip("#")
     return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
@@ -232,11 +253,35 @@ def round_points(x0, y0, x1, y1, r):
             x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
 
 
+def shear_points(x0, y0, x1, y1, cut):
+    """A bar with the top-right corner sheared off, the way GRAW draws a row."""
+    return [x0, y0, x1 - cut, y0, x1, y0 + cut, x1, y1, x0, y1]
+
+
+def _graw_frame(canvas, p: Palette, x0, y0, x1, y1, px, tag, fill, stroke,
+                inner=True):
+    """The double-stroked rounded rectangle every GRAW panel is built from."""
+    r = px(9)
+    canvas.create_polygon(round_points(x0, y0, x1, y1, r), smooth=True,
+                          fill=fill, outline=stroke, width=px(2), tags=tag)
+    if inner and (x1 - x0) > px(30) and (y1 - y0) > px(30):
+        d = px(6)
+        canvas.create_polygon(round_points(x0 + d, y0 + d, x1 - d, y1 - d,
+                                           max(px(3), r - px(3))),
+                              smooth=True, fill="",
+                              outline=mix(fill, stroke, 0.55), width=px(1),
+                              tags=tag)
+
+
 def paint_panel(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome", raised=False):
     """Draw one content panel in the active game's style."""
     if x1 - x0 < 4 or y1 - y0 < 4:
         return
     fill = p.panel2 if raised else p.panel
+    if p.chrome == "graw":
+        _graw_frame(canvas, p, x0, y0, x1, y1, px, tag, fill,
+                    mix(p.edge_dim, p.edge, 0.55), inner=False)
+        return
     if p.chrome == "rs3":
         cut = px(11)
         canvas.create_polygon(panel_points(x0, y0, x1, y1, cut),
@@ -261,6 +306,9 @@ def paint_group(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome"):
     """The outer box that wraps a whole page. Ghost Recon rules it in gold."""
     if x1 - x0 < 4 or y1 - y0 < 4:
         return
+    if p.chrome == "graw":
+        _graw_frame(canvas, p, x0, y0, x1, y1, px, tag, p.panel, p.edge)
+        return
     if p.chrome == "rs3":
         cut = px(15)
         canvas.create_polygon(panel_points(x0, y0, x1, y1, cut, "tl,tr,br,bl"),
@@ -275,6 +323,21 @@ def paint_group(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome"):
 def paint_button(canvas, p: Palette, x0, y0, x1, y1, px, selected, hover=False,
                  tag="chrome"):
     """One navigation row."""
+    if p.chrome == "graw":
+        cut = int((y1 - y0) * 0.55)
+        base = p.sel_fill if selected else (p.panel2 if hover else p.panel)
+        stroke = p.edge if selected else mix(p.edge_dim, p.edge,
+                                             0.5 if hover else 0.2)
+        canvas.create_polygon(shear_points(x0, y0, x1, y1, cut), fill=base,
+                              outline=stroke, width=px(1), tags=tag)
+        # the solid wedge the game puts at the head of every row
+        m = px(7)
+        cy = (y0 + y1) // 2
+        mx = x0 + px(8)
+        canvas.create_polygon(mx, cy - m, mx + m * 1.5, cy, mx, cy + m,
+                              fill=p.sel_text if selected else p.accent,
+                              outline="", tags=tag)
+        return
     if p.chrome == "rs3":
         cut = px(7)
         base = p.sel_fill if selected else (p.panel2 if hover else p.panel)
@@ -371,7 +434,7 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     right = p.title_align != "left"
     tx = width - px(30) if right else pad
 
-    if p.chrome == "rs3":
+    if angular(p):
         # the angled rule the game runs under its title
         y = height - px(15)
         cut = px(14)

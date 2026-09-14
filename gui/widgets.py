@@ -153,7 +153,14 @@ class NavItem(tk.Canvas):
             return
         skins.paint_button(self, p, 1, 1, w - 2, h - 2, theme.px,
                            self.selected, self.hovered)
-        if p.chrome == "rs3":
+        if p.chrome == "graw":
+            # ranged left behind the wedge, letterspaced, like the game's rows
+            fg = p.sel_text if self.selected else (p.text if self.hovered
+                                                   else p.dim)
+            self.create_text(theme.px(30), h // 2,
+                             text=" ".join(self.text.upper()), anchor="w",
+                             fill=fg, font=theme.F("title", 11))
+        elif p.chrome == "rs3":
             fg = p.sel_text if self.selected else (p.text if self.hovered else p.dim)
             font = theme.F("title", 12)
             x = theme.px(20)
@@ -259,10 +266,11 @@ class SettingCard(Chrome):
             tog.pack(side="left", fill="x", expand=True)
             self._controls.append(tog)
         else:
-            tk.Label(head, text=s.label.upper() if p.chrome == "rs3" else s.label,
+            sharp = skins.angular(p)
+            tk.Label(head, text=s.label.upper() if sharp else s.label,
                      bg=p.panel, fg=p.title, anchor="w",
-                     font=theme.F("title" if p.chrome == "rs3" else "bold",
-                                  13 if p.chrome == "rs3" else 12)
+                     font=theme.F("title" if sharp else "bold",
+                                  13 if sharp else 12)
                      ).pack(side="left")
 
         if s.kind == INT:

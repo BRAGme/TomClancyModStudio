@@ -264,6 +264,18 @@ def _settings():
                      "to make enemies less lethal up close; raising it does the "
                      "opposite."),
 
+        # ---- your loadout ------------------------------------------------
+        Setting("player_grenades", "Grenades you carry", INT, 1, "Loadout",
+                minimum=1, maximum=10, unit="x", confidence="applied",
+                touches="data",
+                help="The AMMO MULTIPLIERS block scales what you start a "
+                     "mission holding. Magazines already ship multiplied -- 3x "
+                     "on Recruit, 2x above it -- but grenades ship at 1x on all "
+                     "three, meaning the loadout you picked and nothing more. "
+                     "This multiplies them the same way.",
+                caution="This multiplies the loadout, so it does nothing for a "
+                        "kit you sent out with no grenades in it."),
+
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
                 minimum=10, maximum=30, unit="steps", confidence="applied",
@@ -490,6 +502,10 @@ def build_data(v: dict) -> list:
         ini["m_fTerroristSkillMultiplierElite"] = eli
     if int(v.get("perfect_dist", 500)) != 500:
         ini["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v["perfect_dist"])
+    mult = int(v.get("player_grenades", 1))
+    if mult != 1:
+        for tier in ("Recruit", "Veteran", "Elite"):
+            ini["m_PlayerGrenadeMultiplier" + tier] = mult
     steps = int(v.get("sens_steps", 10))
     if steps != 10:
         ini["m_iXSensitivityMaxSteps"] = steps

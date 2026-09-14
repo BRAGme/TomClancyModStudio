@@ -227,13 +227,13 @@ DATA_CASES = {
     "r6_3_slus20883": (
         dict(grenade_dist=80, grenade_delay="quick", grenade_carry=80,
              terro_skill="up", perfect_dist=900, sens_steps=20,
-             sens_boost=200),
+             sens_boost=200, player_grenades=4),
         3, 9),
     "gr2_slus21105": (
         dict(gr2_grenade_dist=80, gr2_grenade_delay="quick",
              gr2_grenade_carry=80, gr2_fire_delay="snap", gr2_skill="up",
              gr2_perfect_dist=900, gr2_sight=9000, gr2_sens_steps=20,
-             gr2_sens_boost=200),
+             gr2_sens_boost=200, gr2_player_grenades=4),
         3, 2),
 }
 
@@ -255,7 +255,7 @@ def _data_only(args, profile, iso_path, Shadow):
     edits = profile.build_data(vals)
     check("%s emits data edits" % profile.short, len(edits) >= 2)
 
-    copies = commons = 0
+    copies = commons = loadout = 0
     with Iso(iso_path) as iso:
         for real in open_archives(iso, profile.archive_pattern):
             arc = Vokes(Shadow(real.r))
@@ -297,7 +297,10 @@ def _data_only(args, profile, iso_path, Shadow):
             if g:
                 got = transforms.read_ini_values(
                     arc.read_entry(g),
-                    ["m_fMinDistToThrowGrenade", "m_iXSensitivityMaxSteps"])
+                    ["m_fMinDistToThrowGrenade", "m_iXSensitivityMaxSteps",
+                     "m_PlayerGrenadeMultiplierElite"])
+                if got.get("m_PlayerGrenadeMultiplierElite") == "4":
+                    loadout += 1
                 if got.get("m_fMinDistToThrowGrenade") == "80" and                         got.get("m_iXSensitivityMaxSteps") == "20":
                     copies += 1
             ext = sorted((e.offset, e.offset + e.size)
@@ -310,6 +313,8 @@ def _data_only(args, profile, iso_path, Shadow):
           "%d of %d" % (copies, want_ini))
     check("every COMMON package that has grenade tables carries the new weight",
           commons == want_common, "%d of %d" % (commons, want_common))
+    check("the grenade loadout multiplier landed in every copy",
+          loadout == want_ini, "%d of %d" % (loadout, want_ini))
 
 
 def run(args, work):
