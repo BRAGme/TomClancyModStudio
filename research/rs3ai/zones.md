@@ -107,14 +107,36 @@ What that would tune is every authored spawner count in a mission, wave and
 story alike -- which is arguably the more useful knob, but it should be
 labelled as what it is.
 
-### What still gates writing
+### The 148, explained
 
-The locator is not clean enough to write to someone's disc yet. Across the 27
-campaign parts it finds 498 candidate sites; requiring `m_TerroristAITag` among
-the following properties rejects 40, and a 1..20 plausibility bound then
-rejects **148 more**. Those 148 have the right structure around them but a
-nonsense value, so the search is still landing a few bytes off in cases the
-property walk does not catch -- most likely a size code other than the `0x22`
-the search assumes.
+They were not misreads. **Every one of them is exactly `0`**, and zero occurs
+nowhere else in the distribution:
 
-Reading is solid; writing needs that last third explained, not filtered away.
+| value | 0 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 10 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sites | 148 | 36 | 83 | 89 | 57 | 32 | 5 | 4 | 2 | 2 |
+
+The bound was the bug, not the locator. A count of zero sits beside
+`m_bDontHearPlayer`, `m_bNotSurrender` and `m_aActionSpot` -- an individual
+terrorist rather than a group spawner -- so it is authored, meaningful, and no
+business of a numeric filter.
+
+The real misreads are all rejected by structure alone. Of 498 candidates across
+the campaign the `m_TerroristAITag` test keeps 458 and drops 40, and **all
+eight implausible values are among the 40**. The 458 it keeps run 0..15. So no
+plausibility bound is needed at all, and adding one would have thrown away 148
+real values to catch eight that were already gone.
+
+### Editing works end to end
+
+Shipyard A, in memory, nothing written to a disc:
+
+* 13 authored counts found, values 2..5
+* scaled x2 -> all 13 changed, length identical
+* handed back to `lin.substitute` -> 2 chunks re-deflated, container
+  4,894,341 bytes before and after, and it decompresses to exactly the edited
+  bytes
+
+So per-map spawner tuning is done as a mechanism. What it tunes is every
+authored count in one mission, wave zones and story spawners alike, which is a
+per-map knob of real use even without per-zone attribution.

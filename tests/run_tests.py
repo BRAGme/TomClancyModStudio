@@ -233,6 +233,79 @@ def run_level_packages(args):
               all(0 <= v <= 32 for _a, v, _s in sites),
               str(sorted(v for _a, v, _s in sites)))
 
+        run_zone_counts(data, raw_for(iso, "/SHIPYARD_AOFF.LIN"),
+                        lin.decompress(raw_for(iso, "/TRIESTE_AOFF.LIN")))
+
+
+def raw_for(iso, name):
+    from tcps2.vokes import open_archives
+    for arc in open_archives(iso, r"\.IMG$"):
+        ent = arc.files.get(name)
+        if ent:
+            return arc.read_entry(ent)
+    return None
+
+
+def run_zone_counts(data, raw, misread_level):
+    """The authored per-level spawner counts, and editing them safely.
+
+    Nothing here writes to a disc: the edit is applied in memory and handed
+    back to the container to prove it fits.
+    """
+    from tcps2 import lin, r6zones, upackage
+
+    print("\n[Rainbow Six 3 -- authored spawner counts]")
+    sites = r6zones.sites(data)
+    check("Shipyard A's authored counts are found", len(sites) == 13,
+          str(len(sites)))
+    check("every kept value is a real squad size",
+          all(0 <= v <= r6zones.SANE_MAX for _a, _p, v in sites),
+          str(sorted(v for _a, _p, v in sites)))
+
+    # The structural filter is what makes this safe, so prove it carries the
+    # weight -- on a level that actually has misreads to drop. Shipyard A has
+    # none, so testing it there would pass while proving nothing.
+    loose = []
+    for base, _pkg in upackage.packages(misread_level):
+        try:
+            names, _i, _e = upackage.tables(misread_level, base)
+        except Exception:                          # noqa: BLE001
+            continue
+        for prop in r6zones.COUNT_PROPS:
+            loose += [v for _a, v, _s
+                      in upackage.actor_properties(misread_level, names, prop)]
+    kept = [v for _a, _p, v in r6zones.sites(misread_level)]
+    wild = [v for v in loose if not 0 <= v <= r6zones.SANE_MAX]
+    check("Trieste A does contain misreads to reject", len(wild) > 0, str(wild[:4]))
+    check("the structural filter rejects every one of them",
+          all(0 <= v <= r6zones.SANE_MAX for v in kept),
+          str(sorted(v for v in kept if not 0 <= v <= r6zones.SANE_MAX)[:4]))
+    check("and it keeps the small values rather than bounding them away",
+          0 in kept and len(kept) >= len(loose) - len(wild) - 8,
+          "%d loose, %d wild, %d kept" % (len(loose), len(wild), len(kept)))
+    scaled, n = r6zones.scale(data, 2.0)
+    # Zero is authored, not garbage -- it marks a lone pawn rather than a
+    # group -- so a scale must leave exactly as many zeros as it found.
+    zeros_before = sum(1 for _a, _p, v in sites if v == 0)
+    zeros_after = sum(1 for _a, _p, v in r6zones.sites(scaled) if v == 0)
+    check("counts of zero survive a scale untouched",
+          zeros_before == zeros_after,
+          "%d before, %d after" % (zeros_before, zeros_after))
+    check("a scale changes every authored count", n == 13, str(n))
+    check("and preserves the length exactly", len(scaled) == len(data),
+          "%d vs %d" % (len(scaled), len(data)))
+    check("the doubled values are what they should be",
+          sorted(v for _a, _p, v in r6zones.sites(scaled))
+          == sorted(v * 2 for _a, _p, v in sites))
+
+    if raw is not None:
+        packed, touched = lin.substitute(
+            raw, lambda plain: r6zones.scale(plain, 2.0)[0])
+        check("the edit still fits its .LIN container",
+              len(packed) == len(raw), "%d vs %d" % (len(packed), len(raw)))
+        check("and the container round-trips to the same bytes",
+              lin.decompress(packed) == scaled, str(touched))
+
 
 def run_pack_emblem(args):
     """The marks pinned to entries of the user's replacement packs.
