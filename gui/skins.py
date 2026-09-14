@@ -563,14 +563,20 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         # The plate has to be painted BEFORE the emblem or it covers it: the
         # emblem is composited further down, and this plate spans the whole
         # header so it would erase the logo entirely.
+        #
+        # The shear is the SAME 45 degrees the nav rows and the action buttons
+        # use -- `shear_points` steps `cut` across and `cut` down -- so the
+        # header and the buttons read as one shape language rather than two
+        # slightly different slopes.
         _top = px(6)
         _plate_h = height - px(30)
-        _drop = px(170)                      # how far the diagonal leans
-        d.polygon([0, _top, width - _drop, _top, width, _top + _plate_h,
-                   0, _top + _plate_h], fill=_hex(p.panel2) + (238,))
+        d.polygon(shear_points(0, _top, width, _top + _plate_h, _plate_h),
+                  fill=_hex(p.panel2) + (238,))
         lock_rule_y = _top + _plate_h
         d.line([(0, lock_rule_y), (width, lock_rule_y)], fill=p.edge,
                width=px(2))
+        # where the diagonal begins, so the title can be kept to the left of it
+        lock_shear_x = width - _plate_h
 
     label = text.upper() if p.title_upper else text
     big = _font(p.title_font, px(30))
@@ -609,7 +615,9 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         # Keep it clear of the diagonal -- by the title's own baseline the
         # plate's right edge has already pulled in.
         rule_y = lock_rule_y
-        tx = width - px(96)
+        # ranged to the LEFT of where the diagonal starts, so the cut falls
+        # away to the right of the word rather than through it
+        tx = lock_shear_x - px(18)
         draw_tracked(d, (tx, px(16)), label, big, p.title,
                      track=px(p.title_track), anchor_right=True)
         if subtitle:

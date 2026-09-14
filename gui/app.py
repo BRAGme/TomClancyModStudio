@@ -199,10 +199,13 @@ class App(tk.Tk):
         self.update_idletasks()
         y += max(px(52), self.disc.winfo_reqheight()) + px(4)
 
-        # line the serial up with the disc path above it, which sits inside the
-        # panel's own padding plus the entry's gutter
-        self.status.place(x=x + px(22), y=y, width=width - px(22),
-                          height=px(20))
+        # Line the serial up with the disc path above it. The indent is not a
+        # guess: it is measured from where the entry actually sits, because it
+        # depends on the chrome padding, the DISC label's width in whatever
+        # face this skin uses, and the entry's own gutter -- three things that
+        # move per skin and per DPI.
+        self.status.place(x=x + self._path_indent(), y=y,
+                          width=width, height=px(20))
         y += px(26)
 
         bottom = h - px(GUTTER)
@@ -217,6 +220,15 @@ class App(tk.Tk):
 
         for b in (self.browse, self.apply_btn, self.cheat_btn, self.revert_btn):
             b.configure(width=b.width_needed())
+
+    def _path_indent(self):
+        """How far the disc path's text sits in from the panel's left edge."""
+        try:
+            inset = (self.path_entry.winfo_rootx()
+                     - self.disc.winfo_rootx())
+        except tk.TclError:
+            return 0
+        return inset if 0 < inset < theme.px(400) else 0
 
     def _retitle(self, title, subtitle):
         self._title_text = (title, subtitle)
