@@ -229,13 +229,13 @@ def _data_only(args, profile, iso_path, Shadow):
     print("\n[%s -- data files, against the real disc through a shadow]"
           % profile.short)
     vals = profile.normalise(dict(profile.defaults(), grenade_dist=80,
-                                  grenade_delay="quick", molotov_everywhere=True,
+                                  grenade_delay="quick", grenade_carry=80,
                                   terro_skill="up", perfect_dist=900,
                                   sens_steps=20, sens_boost=200))
     edits = profile.build_data(vals)
     check("%s emits data edits" % profile.short, len(edits) >= 2)
 
-    copies = molotov = 0
+    copies = commons = 0
     with Iso(iso_path) as iso:
         for real in open_archives(iso, profile.archive_pattern):
             arc = Vokes(Shadow(real.r))
@@ -249,20 +249,30 @@ def _data_only(args, profile, iso_path, Shadow):
                 applies = [ed for ed in edits if ed.matches(key)]
                 if not applies or e.offset < arc.data_start:
                     continue
-                plain = rselzo.unpack(arc.read_entry(e))
+                kind, plain = dataedit._unpack(arc.read_entry(e))
                 new = plain
                 for ed in applies:
                     new, _n = dataedit.OPS[ed.op](new, ed.params)
                 if new != plain:
-                    built.append((len(new), e, new))
+                    if kind != "plain" and len(new) != len(plain):
+                        check("%s keeps its length in a %s container"
+                              % (e.path, kind), False)
+                    built.append((len(new), e, kind, new))
             built.sort(key=lambda r: -r[0])
-            for _s, e, new in built:
-                arc.write(e.path, new)
-                if arc.read_file(e.path) != new:
+            for _s, e, kind, new in built:
+                original = arc.read_entry(e)
+                packed = dataedit._repack(kind, original, new)
+                if kind != "plain" and len(packed) != len(original):
+                    check("%s container keeps its length" % e.path, False)
+                arc.write(e.path, packed)
+                back = arc.read_file(e.path)
+                if back != packed:
                     check("%s reads back" % e.path, False)
-                if "/MAPS/" in e.path and transforms.read_ws_slots(
-                        arc.read_file(e.path)).get(43):
-                    molotov += 1
+                if e.path.upper().startswith("/COMMON"):
+                    carry = transforms.read_grenade_carry(
+                        dataedit._unpack(back)[1])
+                    if carry and all(c == 80 for c, _n in carry):
+                        commons += 1
             g = arc.files.get("/R6GAMESETTINGS.INI")
             if g:
                 got = transforms.read_ini_values(
@@ -278,7 +288,10 @@ def _data_only(args, profile, iso_path, Shadow):
                   % (real.r.name, stock_ov, ov), ov <= stock_ov)
     check("all three copies of R6GAMESETTINGS.INI were rewritten", copies == 3,
           "%d of 3" % copies)
-    check("the molotov is enabled on every map INI (%d)" % molotov, molotov > 100)
+    # three COMMON packages -- COMMON, COMMONOFF, COMMON_SS -- and the disc
+    # keeps a copy of each in all three vokes archives, so nine rewrites
+    check("every COMMON package in every archive carries the new grenade weight",
+          commons == 9, "%d of 9" % commons)
 
 
 def run(args, work):

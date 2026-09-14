@@ -305,3 +305,73 @@ offsets into the **expanded memory** layout. So a replacement must preserve a
 statement's *memory* length, not its file length. Retargeting a jump is safe;
 deleting a statement is not, and padding with `EX_Nothing` does not work because
 N file bytes expand to N memory bytes while the original occupied more.
+
+---
+
+## Enemy grenades, and two things that are not what they look like
+
+**There is no throw chance anywhere in the game.** What a terrorist spawns
+holding is a weighted roll made once, at spawn, over a table in his template:
+
+```
+NbOfGrenade=2
+020, R6Weapons.r6fraggrenadegadget
+080, None.None
+```
+
+The native parser reads those lines with a `"%03d, %s"` scanf, converts the
+weights to a prefix sum and checks they total 100; the picker rolls
+`rand() % 100` once and nothing re-rolls. Once a terrorist is carrying a
+grenade the decision to use it is deterministic, gated only by
+`m_fMinDistToThrowGrenade` and the per-difficulty reaction delays. So "how
+often do enemies throw grenades" is really two separate questions -- how many
+of them have one, and when they are allowed to use it -- and the tool exposes
+both.
+
+The 118 templates sit as one contiguous plain-text run inside each COMMON
+package. Sixteen of them use the two-entry shape above, at weights between 15
+and 30; the rest are `100, <grenade>` (always) or `100, None.None` (never).
+Only the sixteen are adjustable, because a digit-for-digit edit is the only
+kind a LIN package will take -- see `tcps2/lin.py`.
+
+### `WS[43]` is dead data -- do not use it
+
+Each `/MAPS/<NAME>.INI` carries a table that looks exactly like the answer:
+
+```
+WS[43]=(bUsing=true,weaponname="R6MolotovGadget",sndName0="Foley_FragGrenade",...)
+```
+
+It ships `true` on the Alcatraz maps and `false` elsewhere, which is a very
+persuasive coincidence. **Nothing reads it.** `bUsing`, `weaponname`,
+`sndName0` and the literal `WS[` appear **zero** times in the overlay, in the
+boot executable, and in every decompressed level package. Unreal's config
+importer resolves struct members through the package name table, so a member
+name that is absent from every name table cannot be imported. It is a leftover
+of the Xbox and PC `MultiBank_SoundLoad` system.
+
+The data agrees: `MEATPACKING.INI` and `OLDCITY.INI` both ship `WS[43]` true,
+and no `Meat-*` or `OldC-*` template lists a molotov. An earlier build of this
+tool offered "molotovs on every level" on the strength of that table; it was
+withdrawn.
+
+Only four of the 118 templates offer a molotov at all. Giving one to the others
+means replacing `r6fraggrenadegadget` with `R6MolotovGadget` -- a shorter name,
+so it would need padding after the comma, and a previous whitespace-padded
+attempt on these packages hung the loader. Untested, not shipped.
+
+### Split-screen enemy accuracy: there is nothing to switch
+
+Every channel by which native code can learn it is in split screen was
+enumerated -- 82 accesses across four of them -- and not one lies in weapon,
+aim, dispersion, line-of-sight, observation, reaction-timer or damage code. The
+21 `m_bIsSplitScreen` tests are three pad-rumble, two input-settings, five
+HUD loop bounds, one audio listener, one controller broadcast, one proximity
+trigger, seven render/viewport and one animation LOD. The accuracy model itself
+lives in one `[Engine.R6GameplaySettings]` INI section with no split-screen
+variant, and the AI's combat verbs are UnrealScript rather than native.
+
+The one place split screen picks a different number is a leaf returning 3
+instead of 6 -- traced to its format string, that is the **audio streaming voice
+budget**.
+

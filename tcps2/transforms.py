@@ -351,3 +351,49 @@ def set_ws_slot(plain: bytes, slot: int, using: bool):
 def read_ws_slots(plain: bytes):
     return {int(m.group(2)): m.group(3).lower() == b"true"
             for m in WS_SLOT.finditer(plain)}
+
+
+# ---------------------------------------------------------------------------
+# Rainbow Six 3 terrorist templates
+# ---------------------------------------------------------------------------
+#
+# The 118 terrorist templates live as one contiguous plain-text run inside each
+# COMMON package. What a terrorist spawns holding is a weighted roll made once,
+# at spawn, over a small table:
+#
+#     NbOfGrenade=2
+#     020, R6Weapons.r6fraggrenadegadget
+#     080, None.None
+#
+# The weights are parsed with a `"%03d, %s"` scanf, so the count is a fixed
+# three-digit field -- which is what makes a digit-for-digit edit the right
+# shape, and the only shape a LIN package will accept.
+#
+# There is no *throw* probability anywhere; once a terrorist is holding a
+# grenade the decision to use it is deterministic, gated by the minimum throw
+# distance and the reaction delay in R6GAMESETTINGS.INI. So this is the dial
+# that decides how many of them have one at all.
+
+GRENADE_TABLE = re.compile(
+    rb"(NbOfGrenade=2\r\n)(\d{3})(, R6Weapons\.\w+\r\n)(\d{3})(, None\.None)")
+
+
+def set_grenade_carry(plain: bytes, percent: int):
+    """Set the share of each two-entry template that spawns holding a grenade."""
+    percent = max(0, min(100, int(percent)))
+    changed = [0]
+
+    def sub(m):
+        if int(m.group(2)) == percent:
+            return m.group(0)
+        changed[0] += 1
+        return b"%s%03d%s%03d%s" % (m.group(1), percent, m.group(3),
+                                    100 - percent, m.group(5))
+
+    return GRENADE_TABLE.sub(sub, plain), changed[0]
+
+
+def read_grenade_carry(plain: bytes):
+    """[(carryPercent, className)] for every two-entry template table."""
+    return [(int(m.group(2)), m.group(3).strip(b", \r\n").decode("latin1"))
+            for m in GRENADE_TABLE.finditer(plain)]

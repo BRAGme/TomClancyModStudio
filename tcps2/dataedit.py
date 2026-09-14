@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 
-from . import rselzo, transforms
+from . import lin, rselzo, transforms
 from .vokes import Vokes, VokesError, open_archives
 
 MANIFEST = "data-edits.json"
@@ -57,6 +57,10 @@ def _op_ini_values(plain, params):
     return transforms.set_ini_values(plain, params.get("values", {}))
 
 
+def _op_grenade_carry(plain, params):
+    return transforms.set_grenade_carry(plain, params.get("percent", 20))
+
+
 def _op_ws_slot(plain, params):
     return transforms.set_ws_slot(plain, int(params["slot"]),
                                   bool(params.get("using", True)))
@@ -70,7 +74,30 @@ OPS = {
     "gtf_variables": _op_gtf_variables,
     "ini_values": _op_ini_values,
     "ws_slot": _op_ws_slot,
+    "grenade_carry": _op_grenade_carry,
 }
+
+
+# ---------------------------------------------------------------------------
+# containers
+# ---------------------------------------------------------------------------
+
+def _unpack(original):
+    """(kind, plainBytes) for whichever container this file uses."""
+    if lin.is_lin(original):
+        return "lin", lin.decompress(original)
+    if rselzo.is_compressed(original):
+        return "rselzo", rselzo.decompress(original)
+    return "plain", original
+
+
+def _repack(kind, original, plain):
+    if kind == "lin":
+        return lin.substitute(original, lambda _old: plain)[0]
+    if kind == "rselzo":
+        return rselzo.repack(original, plain)
+    return plain
+
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +174,7 @@ def enemy_template_set(arc):
         if not key.endswith(".MIS"):
             continue
         try:
-            plain = rselzo.unpack(arc.read_entry(ent))
+            _kind, plain = _unpack(arc.read_entry(ent))
         except Exception:                       # noqa: BLE001
             continue
         names |= transforms.enemy_templates(plain)
@@ -219,17 +246,18 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                 else:
                     original = arc.read_entry(ent)
                     store.remember(arc_name, ent.path, original, ent.offset)
-                    plain = rselzo.unpack(original)
+                    _kind, plain = _unpack(original)
                 new, n = op(plain, edit.params)
-                # Only compressed files have to keep their length: their chunk
-                # boundaries are fixed at 0x4000 of plain data, so a change in
-                # size would shift every one. A plain-text INI can grow or
-                # shrink freely -- the archive writer relocates it.
-                if len(new) != len(plain) and rselzo.is_compressed(
-                        arc.read_entry(ent)):
+                # Only a compressed container has to keep its length. A LIN's
+                # packages carry relaid offsets and an rselzo chunk chain has
+                # fixed boundaries, so either would be corrupted by a size
+                # change; a plain-text INI can grow or shrink freely, because
+                # the archive writer will relocate it.
+                kind, _ = _unpack(arc.read_entry(ent))
+                if len(new) != len(plain) and kind != "plain":
                     raise DataEditError(
-                        "%s: %s changed the file length, which would move every "
-                        "chunk boundary" % (ent.path, edit.op))
+                        "%s: %s changed the file length, which a %s container "
+                        "cannot survive" % (ent.path, edit.op, kind))
                 if n:
                     counts[edit.op] = counts.get(edit.op, 0) + n
                 pending[slot] = (arc, ent, new)
@@ -239,9 +267,10 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
     for (arc_name, path), (arc, ent, plain) in pending.items():
         original = store.original(arc_name, path)
         source = original[0] if original else arc.read_entry(ent)
-        if rselzo.unpack(source) == plain:
+        kind, was = _unpack(source)
+        if was == plain:
             continue                       # nothing actually changed
-        packed = rselzo.repack(source, plain) if rselzo.is_compressed(source) else plain
+        packed = _repack(kind, source, plain)
         built.append((len(packed), arc, ent, packed))
     built.sort(key=lambda r: -r[0])
 
@@ -297,7 +326,7 @@ def verify_data(iso, profile, store):
             bad += 1
             continue
         try:
-            rselzo.unpack(arc.read_entry(ent))
+            _unpack(arc.read_entry(ent))
             ok += 1
         except Exception:                       # noqa: BLE001
             bad += 1

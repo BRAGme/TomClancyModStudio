@@ -194,16 +194,27 @@ def _settings():
 
 
         # ---- enemy behaviour, straight out of R6GAMESETTINGS.INI ---------
+        Setting("grenade_carry", "How many enemies carry a grenade", INT, 20,
+                "Enemy Behaviour", minimum=0, maximum=100, unit="%",
+                confidence="applied", touches="data",
+                help="This is the real grenade dial. What a terrorist spawns "
+                     "holding is a weighted roll made once, at spawn, over a "
+                     "small table in his template -- and sixteen of the "
+                     "templates roll a grenade against nothing at somewhere "
+                     "between 15 and 30 percent. This sets that share.",
+                caution="There is no *throw* chance anywhere in the game. Once "
+                        "a terrorist is holding a grenade the decision to use "
+                        "it is deterministic, gated by the two settings below. "
+                        "So this is how many of them can throw, and those are "
+                        "when."),
         Setting("grenade_dist", "How close enemies will throw grenades", INT,
-                200, "Enemy Behaviour", minimum=25, maximum=600,
+                500, "Enemy Behaviour", minimum=25, maximum=900,
                 unit="units", confidence="applied", touches="data",
                 help="The game will not let an NPC throw a grenade at anything "
-                     "nearer than this. It ships at 200. Lower it and they use "
+                     "nearer than this. It ships at 500. Lower it and they use "
                      "grenades in close quarters instead of only lobbing them "
                      "across a room; raise it and grenades become a long-range "
-                     "answer only.",
-                caution="This is a minimum distance, not a probability -- the "
-                        "shipped settings expose no throw chance anywhere."),
+                     "answer only."),
         Setting("grenade_delay", "How long they think about it first", CHOICE,
                 "stock", "Enemy Behaviour", confidence="applied", touches="data",
                 choices=[
@@ -217,15 +228,22 @@ def _settings():
                      "Shortening it is the closest thing this game has to a "
                      "throw-chance dial."),
         Setting("molotov_everywhere", "Molotovs on every level", BOOL, False,
-                "Enemy Behaviour", confidence="applied", touches="data",
-                help="Every level carries a weapon table, and slot 43 is the "
-                     "molotov. It ships enabled on the Alcatraz maps only. "
-                     "This switches it on across all of them.",
-                caution="This is the per-map weapon entry, which is what gates "
-                        "the molotov for a level. Whether a given terrorist "
-                        "then carries one is decided by his template, and that "
-                        "part is still being worked out -- so treat this as "
-                        "necessary but possibly not sufficient on its own."),
+                "Enemy Behaviour", enabled=False, confidence="broken",
+                touches="data",
+                disabled_reason=(
+                    "Withdrawn. An earlier build of this tool switched on a "
+                    "per-map weapon table -- WS[43], R6MolotovGadget, shipped "
+                    "true on Alcatraz only -- and that table is dead data on "
+                    "PS2: the words bUsing, weaponname and sndName0 appear "
+                    "ZERO times in the overlay, the boot executable and every "
+                    "level package, so nothing can read those lines. Two maps "
+                    "already ship it true and have no molotov enemies. It is a "
+                    "leftover of the Xbox and PC sound-bank system."),
+                help="Which enemies carry a molotov is decided by the terrorist "
+                     "templates in COMMON, and only four of the 118 offer one. "
+                     "Giving it to the others means replacing a class name with "
+                     "a longer one, which a LIN package cannot take, so this "
+                     "needs a different technique rather than a bigger number."),
         Setting("terro_skill", "Enemy skill", CHOICE, "stock",
                 "Enemy Behaviour", confidence="applied", touches="data",
                 choices=[
@@ -320,6 +338,22 @@ def _settings():
                     "and break player 1 as well."),
                 help="Player 2's sensitivity resets at the start of every "
                      "mission while player 1's survives."),
+        Setting("ss_accuracy", "Match enemy accuracy to single player", BOOL,
+                False, "Split Screen", enabled=False, confidence="broken",
+                disabled_reason=(
+                    "There is nothing to switch. Every channel by which native "
+                    "code can learn it is in split screen was enumerated -- 82 "
+                    "accesses across four of them -- and not one lies in "
+                    "weapon, aim, dispersion, line-of-sight, observation, "
+                    "reaction-timer or damage code. The 21 split-screen tests "
+                    "are rumble, input settings, HUD loop bounds, the audio "
+                    "listener, a proximity trigger, seven render paths and one "
+                    "animation LOD. The accuracy model itself is script-side "
+                    "and has no split-screen variant."),
+                help="If enemies feel less accurate with two players, the "
+                     "shipped code does not say so. The Enemy Behaviour page "
+                     "raises their skill and their never-miss range for both "
+                     "modes at once, which is the lever that does exist."),
         Setting("teammates", "AI teammates in split screen", BOOL, False,
                 "Split Screen", enabled=False, confidence="broken",
                 disabled_reason=(
@@ -441,7 +475,7 @@ def build_data(v: dict) -> list:
     out = []
     ini = {}
 
-    if int(v.get("grenade_dist", 200)) != 200:
+    if int(v.get("grenade_dist", 500)) != 500:
         ini["m_fMinDistToThrowGrenade"] = int(v["grenade_dist"])
     delay = v.get("grenade_delay", "stock")
     if delay != "stock":
@@ -470,10 +504,11 @@ def build_data(v: dict) -> list:
     if ini:
         out.append(FileEdit("ini_values", r"/R6GAMESETTINGS\.INI$", "",
                             {"values": ini}, "AI and control settings"))
-    if v.get("molotov_everywhere"):
-        out.append(FileEdit("ws_slot", r"/MAPS/.*\.INI$", "",
-                            {"slot": 43, "using": True},
-                            "molotov enabled on every level"))
+    carry = int(v.get("grenade_carry", 20))
+    if carry != 20:
+        out.append(FileEdit("grenade_carry", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"percent": carry},
+                            "%d%% of two-entry templates carry a grenade" % carry))
     return out
 
 
