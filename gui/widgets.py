@@ -8,6 +8,7 @@ gold-ruled box while still holding ordinary widgets.
 
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
@@ -74,7 +75,7 @@ class ScrollArea(ttk.Frame):
         # what the compositor repaints cleanly.
         self.canvas = tk.Canvas(self, bg=theme.P.bg, highlightthickness=0,
                                 bd=0, yscrollincrement=theme.px(18))
-        self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
+        self.bar = ttk.Scrollbar(self, orient="vertical", command=self._yview,
                                  style="Vertical.TScrollbar")
         self.body = tk.Frame(self.canvas, bg=theme.P.bg)
         self._win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
@@ -82,9 +83,64 @@ class ScrollArea(ttk.Frame):
         self.canvas.pack(side="left", fill="both", expand=True)
         self.bar.pack(side="right", fill="y")
 
+        self._settle_id = None
         self.body.bind("<Configure>", self._on_body)
         self.canvas.bind("<Configure>", self._on_canvas)
         self.bind_all("<MouseWheel>", self._wheel, add="+")
+
+    def _yview(self, *args):
+        """What the scrollbar drives. Dragging the thumb is a different code
+        path from the wheel -- `yview("moveto", frac)` rather than
+        `yview_scroll` -- so it needs the same repaint or it tears."""
+        self.canvas.yview(*args)
+        self.repaint()
+
+    def _settle(self):
+        """Runs once the event queue is empty -- i.e. the moment a drag pauses.
+
+        This is the part that is actually verifiable: whatever the screen looks
+        like mid-drag, the settled frame is correct, and scheduling it on idle
+        guarantees the settle happens rather than waiting for the next event to
+        arrive from somewhere else.
+        """
+        self._settle_id = None
+        self.canvas.update_idletasks()
+        self._force_paint()
+
+    def repaint(self):
+        """Force the embedded child windows to redraw where they now are.
+
+        Every setting card is a canvas holding a frame holding labels, so the
+        scrolled content is three levels of real child windows. Tk moves them
+        when the canvas scrolls; Windows does not reliably repaint them, and
+        what is left on screen is rows from the previous scroll position
+        overlaid on the new ones. `update_idletasks` does not fix it because
+        nothing has been invalidated -- the OS does not believe anything is
+        dirty. RDW_ALLCHILDREN says otherwise about the whole subtree.
+        """
+        # ORDER MATTERS. Tk defers the geometry work that actually moves the
+        # embedded windows to an idle task, so forcing a paint first paints the
+        # OLD layout. Let Tk finish moving things, then tell Windows the whole
+        # subtree is dirty and must be painted now.
+        self.canvas.update_idletasks()
+        self._force_paint()
+        # ...and book a second one for when the drag pauses, debounced so a
+        # long drag queues one settle rather than hundreds.
+        if self._settle_id is None:
+            self._settle_id = self.after_idle(self._settle)
+
+    def _force_paint(self):
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            RDW_INVALIDATE, RDW_ERASE = 0x0001, 0x0004
+            RDW_ALLCHILDREN, RDW_UPDATENOW = 0x0080, 0x0100
+            ctypes.windll.user32.RedrawWindow(
+                self.canvas.winfo_id(), None, None,
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW)
+        except Exception:                         # noqa: BLE001
+            pass
 
     def restyle(self):
         self.canvas.configure(bg=theme.P.bg)
@@ -123,9 +179,7 @@ class ScrollArea(ttk.Frame):
             # three increments per notch: enough travel to feel right, small
             # enough that the embedded canvases repaint in step with it
             self.canvas.yview_scroll(-3 * (e.delta // 120), "units")
-            # force the move to be painted before the next notch arrives,
-            # which is what stops a fast scroll from leaving stale rows behind
-            self.canvas.update_idletasks()
+            self.repaint()
 
     def clear(self):
         for child in self.body.winfo_children():
