@@ -104,7 +104,19 @@ NOTES = (
     "The record layouts were established from the disc, and the skill reading "
     "was checked against every ordering the shipped profile names imply -- six "
     "independent ladder checks, none of which failed -- but that is static "
-    "analysis, not play-testing."
+    "analysis, not play-testing."    "\n\n"
+    "There is no unlock option, and not for want of looking. Split screen "
+    "gates its maps on campaign progress, and that progress is save state: it "
+    "is not in DPRFLOPT.BIN or PRFLOPTS.BIN (420 bytes each, and they differ "
+    "from one another by three bytes that are plainly settings), it is not in "
+    "GLBLOPT.BIN, and the shell's own Mission0..Mission15 and Lock0..Lock2 "
+    "widgets only draw the state rather than decide it. The game's unlockable "
+    "system is bought with intel points and covers concept art, characters, "
+    "weapons and nine cheat codes -- God, Team God, Ghost Mode, Unlimited "
+    "Ammo, Unlimited Items, Invisibility, Fast Movement, One Shot Kills and "
+    "Increased Force -- with nothing for missions. The gate is a check in a "
+    "7 MB stripped executable that names neither Unlock nor Available nor "
+    "Campaign anywhere near it, so unlocking would mean finding it blind."
 )
 
 

@@ -101,6 +101,7 @@ def main():
         _width_cases()
         run_rse_weapons(args)
         run_lockdown_weapons(args)
+        run_float_locator()
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1563,6 +1564,49 @@ def run_lockdown_weapons(args):
         check("and so are the ones both sides carry",
               all(before[g] == after[g] for g in SHARED_GUNS if g in before))
         check("the magazines really halve", n > 0, str(n))
+
+
+def run_float_locator():
+    """The float property locator, on bytes built here so the answer is known.
+
+    This is what settled whether the Unreal-engine discs could have a weapons
+    page: it works, and what it finds on those discs is two rate-of-fire
+    overrides in the whole weapons package. See the note in r6_3.py.
+    """
+    import struct
+    from tcps2 import upackage
+
+    print("\n[the float property locator]")
+    names = ["None", "m_fRateOfFire", "m_fJunk", "SomethingElse"]
+    idx = {n: i for i, n in enumerate(names)}
+
+    def prop(name, value):
+        return (upackage.encode_compact(idx[name]) + bytes([upackage.INFO_FLOAT])
+                + struct.pack("<f", value))
+
+    good = prop("m_fRateOfFire", 700.0) + upackage.encode_compact(idx["None"])
+    found = upackage.find_float_props(good, names, "m_fRateOfFire")
+    check("a float property is found by name", len(found) == 1, str(found))
+    check("and read back exactly",
+          found and abs(found[0][1] - 700.0) < 1e-3, str(found))
+
+    ok = upackage.float_properties(good, names, "m_fRateOfFire")
+    check("a site whose list terminates is kept", len(ok) == 1, str(len(ok)))
+
+    # the same bytes with garbage after them: no terminator, so it is dropped
+    bad = prop("m_fRateOfFire", 700.0) + bytes([0xFF]) * 40
+    check("a site that does not walk to a terminator is dropped",
+          not upackage.float_properties(bad, names, "m_fRateOfFire"))
+
+    nan = (prop("m_fRateOfFire", float("nan"))
+           + upackage.encode_compact(idx["None"]))
+    check("a NaN is never a rate of fire",
+          not upackage.float_properties(nan, names, "m_fRateOfFire"))
+    huge = prop("m_fRateOfFire", 1e30) + upackage.encode_compact(idx["None"])
+    check("and nor is 1e30, given a sane range",
+          not upackage.float_properties(huge, names, "m_fRateOfFire", (0.01, 5000)))
+    check("the int locator does not answer for a float",
+          not upackage.find_int_props(good, names, "m_fRateOfFire"))
 
 
 if __name__ == "__main__":

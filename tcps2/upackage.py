@@ -35,6 +35,11 @@ MAGIC = 0x9E2A83C1
 #: property info byte for "int, four-byte value, not an array"
 INFO_INT32 = 0x22
 
+#: and the same for a float: type 4, four-byte value. The weapon model on the
+#: Unreal-engine discs is mostly floats -- rate of fire, the accuracy cone, the
+#: recoil -- so the int locator alone reaches almost none of it.
+INFO_FLOAT = 0x24
+
 
 class PackageError(Exception):
     pass
@@ -254,6 +259,21 @@ def walk_properties(data, pos, names, limit=200):
     return None
 
 
+def find_float_props(data, names, prop):
+    """[(valueOffset, value)] for every serialised `prop` float."""
+    if prop not in names:
+        return []
+    needle = encode_compact(names.index(prop)) + bytes([INFO_FLOAT])
+    out = []
+    i = data.find(needle)
+    while i >= 0:
+        at = i + len(needle)
+        if at + 4 <= len(data):
+            out.append((at, struct.unpack_from("<f", data, at)[0]))
+        i = data.find(needle, i + 1)
+    return out
+
+
 def actor_properties(data, names, prop, info=INFO_INT32):
     """Every VALIDATED site of `prop`, with the properties that follow it.
 
@@ -262,6 +282,28 @@ def actor_properties(data, names, prop, info=INFO_INT32):
     """
     out = []
     for at, val in find_int_props(data, names, prop, info):
+        rest = walk_properties(data, at + 4, names)
+        if rest is None:
+            continue
+        out.append((at, val, [nm for nm, _i, _o in rest]))
+    return out
+
+
+def float_properties(data, names, prop, sane=None):
+    """The same validation, for floats.
+
+    [(valueOffset, value, [siblingName, ...])]. A float found by name index is
+    every bit as likely to be a coincidence inside geometry as an int is, so
+    the same rule applies: the property list after it has to walk cleanly to a
+    terminator. `sane` is an optional (lo, hi) the value must fall inside,
+    which throws out the NaNs and the 1e30s that a random four bytes produces.
+    """
+    out = []
+    for at, val in find_float_props(data, names, prop):
+        if val != val or val in (float("inf"), float("-inf")):
+            continue
+        if sane and not (sane[0] <= val <= sane[1]):
+            continue
         rest = walk_properties(data, at + 4, names)
         if rest is None:
             continue
