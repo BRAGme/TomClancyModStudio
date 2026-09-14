@@ -352,6 +352,7 @@ MISSION_ART = {
     # table carries the image name rather than deriving it.
     "ghost_recon_slus20613": ("rsb", "/%s.RSB"),
     "jungle_storm_slus20820": ("rsb", "/%s.RSB"),
+    "soaf_sles51180": ("rsb", "/%s.RSB"),
 }
 
 

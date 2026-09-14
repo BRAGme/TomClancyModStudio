@@ -82,7 +82,18 @@ def mission_facts(files, stem):
     }
 
 
+_NUMBER = re.compile(r"^([A-Z]{1,4}\d+)\b[\s-]*", re.I)
+
+
 def codename(name):
-    """"M01 - Iron Dragon" -> ("M01", "Iron Dragon")."""
-    number, _sep, title = name.partition(" - ")
-    return number.strip(), title.strip()
+    """"M01 - Iron Dragon" -> ("M01", "Iron Dragon").
+
+    Ghost Recon and Jungle Storm separate the two with " - ". The Sum of All
+    Fears does not -- it writes "M01 Hostage Rescue Operation" for its campaign
+    and "T01 - Movement" for its training, in the same file set -- so the split
+    is on the leading mission number rather than on the dash.
+    """
+    m = _NUMBER.match(name.strip())
+    if not m:
+        return name.strip(), ""
+    return m.group(1).upper(), name.strip()[m.end():].strip()

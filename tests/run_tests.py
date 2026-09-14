@@ -83,6 +83,7 @@ def main():
     ap.add_argument("--gr2", help="Ghost Recon 2 ISO, same engine, data only")
     ap.add_argument("--graw", help="Advanced Warfighter ISO, for its INI")
     ap.add_argument("--lockdown", help="Lockdown ISO, for its Nimitz archive")
+    ap.add_argument("--soaf", help="Sum of All Fears image, for its missions")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -1228,12 +1229,13 @@ def run_rse_missions(args):
     from tcps2.iso import Iso
 
     jobs = [("ghost_recon_slus20613", args.gr, 23),
-            ("jungle_storm_slus20820", args.js, 16)]
+            ("jungle_storm_slus20820", args.js, 16),
+            ("soaf_sles51180", args.soaf, 11)]
     for pid, iso_path, campaign_n in jobs:
         if not iso_path:
             continue
         profile = BY_ID[pid]
-        mod = __import__("tcps2.games." + pid.split("_slus")[0],
+        mod = __import__("tcps2.games." + pid.split("_sl")[0],
                          fromlist=["MISSIONS"])
         MISSIONS = mod.MISSIONS
         print("\n[%s -- the mission page]" % profile.short)
