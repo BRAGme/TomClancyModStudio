@@ -339,55 +339,76 @@ def run_level_packages(args):
 
         run_zone_counts(data, raw_for(iso, "/SHIPYARD_AOFF.LIN"),
                         lin.decompress(raw_for(iso, "/TRIESTE_AOFF.LIN")))
-        run_missions(iso)
+        run_missions(iso, args)
 
 
-def run_missions(iso):
+def run_missions(iso, args):
     """The per-mission dials: what they emit, and what they reach.
 
     Applied in memory against the real disc through a read-only archive; the
     ISO is never written.
     """
     from tcps2 import dataedit, lin, r6zones
-    from tcps2.games.r6_3 import MISSIONS, PROFILE, mission_key
+    from tcps2.games.r6_3 import (MISSIONS, PROFILE, mission_key,
+                                   mission_select)
     from tcps2.vokes import open_archives
 
     print("\n[Rainbow Six 3 -- per-mission enemy counts]")
     per_mission = [s for s in PROFILE.settings if s.group == "Missions"]
-    check("every mission has a dial", len(per_mission) == len(MISSIONS) == 15,
+    check("every mission has a card",
+          len(per_mission) == len(MISSIONS) == 18,
           "%d settings, %d missions" % (len(per_mission), len(MISSIONS)))
+    # a disabled card sitting at its default must not raise a plan warning;
+    # it is not asking for anything
+    from tcps2 import engine
+    quiet = engine.plan(args.rs3data, PROFILE, dict(PROFILE.defaults()))
+    check("untouched disabled cards raise no warnings", not quiet.warnings,
+          str(quiet.warnings[:2]))
+    loud = engine.plan(args.rs3data, PROFILE,
+                       dict(PROFILE.defaults(),
+                            **{mission_key(MISSIONS[0][0]): 400}))
+    check("but moving one does warn", len(loud.warnings) == 1,
+          str(loud.warnings))
     check("they are data edits, not code patches",
           all(s.touches == "data" for s in per_mission))
 
     vals = dict(PROFILE.defaults())
     check("leaving them alone writes nothing", PROFILE.build_data(vals) == [])
 
-    # The page order is the campaign's, taken off the disc -- alphabetical put
-    # Oil Refinery tenth. Read the campaign file and compare rather than
-    # trusting the table.
-    from tcps2.games.r6_3 import CAMPAIGN_LISTED
-    campaign = None
+    # The order is the one the player gave, not one derived from the disc --
+    # the campaign INI is a Raven Shield leftover and the ELO ratings tie. So
+    # the checks are that the table is INTERNALLY consistent and that every
+    # level it names is really there, which is what can be verified here.
+    kinds = [m[4] for m in MISSIONS]
+    titles = [m[1] for m in MISSIONS]
+    check("training comes before everything else",
+          kinds[:3] == ["training"] * 3 and "training" not in kinds[3:],
+          str(kinds[:4]))
+    check("Alpine Village opens the campaign, not Oil Refinery",
+          titles[3] == "Alpine Village", titles[3])
+    check("the bonus map sits between Trieste and Parade",
+          titles[titles.index("Parking Garage") - 1:][:3]
+          == ["Trieste", "Parking Garage", "Parade"],
+          str(titles[titles.index("Parking Garage") - 1:][:3]))
+    check("every mission's packages exist on the disc", True)
+
+    present = set()
     for arc in open_archives(iso, r"\.IMG$"):
-        ent = arc.files.get("/MAPS/RAVENSHIELDCAMPAIGN.INI")
-        if ent:
-            campaign = arc.read_entry(ent).decode("latin-1")
-            break
-    check("the disc carries a campaign definition", campaign is not None)
-    if campaign:
-        listed = [m.strip().upper() for m in
-                  re.findall(r"^missions=(.+)$", campaign, re.M)]
-        stems = [m[0] for m in MISSIONS]
-        # only the entries whose level this disc actually ships
-        wanted = [L for L in listed
-                  if any(L == s2 or (L == "MOUNTAIN_HIGH" and s2 == "MOUNTAIN_HIGHWAY")
-                         for s2 in stems)]
-        got = stems[:CAMPAIGN_LISTED]
-        norm = ["MOUNTAIN_HIGHWAY" if w == "MOUNTAIN_HIGH" else w for w in wanted]
-        check("the first eleven are in campaign order", got == norm,
-              "%s vs %s" % (got[:4], norm[:4]))
-        check("the rest are the ones the campaign never names",
-              all(st not in norm for st in stems[CAMPAIGN_LISTED:]),
-              str(stems[CAMPAIGN_LISTED:]))
+        present |= {n for n in arc.files if n.upper().endswith(".LIN")}
+    missing = []
+    for stem, _t, parts, _w, _k in MISSIONS:
+        pat = re.compile(mission_select(stem, parts), re.I)
+        if not any(pat.search(n) for n in present):
+            missing.append(stem)
+    check("each selector matches a real package", not missing, str(missing))
+
+    # training ships as one package with no A/B, which the selector has to know
+    tr = [m for m in MISSIONS if m[4] == "training"]
+    check("training levels are single packages", all(m[2] == "" for m in tr))
+    check("their dials are off, since they author no counts",
+          all(not PROFILE.setting(mission_key(m[0])).enabled for m in tr))
+    check("and they emit nothing even when set",
+          PROFILE.build_data({mission_key(m[0]): 400 for m in tr}) == [])
 
     vals[mission_key("SHIPYARD")] = 200
     vals[mission_key("ISLAND")] = 50

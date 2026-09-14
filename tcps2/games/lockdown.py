@@ -228,14 +228,14 @@ def mission_key(mid):
 
 
 def mission_art_for(key):
-    """[(id, part)] so a card can show the mission's own snapshot.
+    """The art base names for a mission card's snapshot.
 
     Lockdown keeps one picture per mission rather than one per section, so
-    there is a single entry and the part is ignored by the art lookup.
+    this is always a single name.
     """
     for mid, _place, _secs, _spawns in MISSIONS:
         if key == mission_key(mid):
-            return [(mid, "A")]
+            return [mid]
     return []
 
 
@@ -244,9 +244,11 @@ def _mission_settings():
     that is honestly switched off.
 
     Rainbow Six 3 can do this for real because its authored spawner counts sit
-    in the level packages in a form that has been read and rewritten. Lockdown
-    keeps the equivalent in its own `.MIS` scripts, and that format has not
-    been cracked -- so the page shows the missions and says so, rather than
+    in the level packages as numbers, which can be read and rewritten in place.
+    Lockdown has no such number: its `.MIS` scripts spell every enemy out as
+    its own fixed 111-byte placement record, so scaling a mission would mean
+    adding or removing records, and the Nimitz archive stores each file at a
+    fixed offset. The page shows the missions and says so, rather than
     offering a slider that quietly does nothing.
     """
     out = []
@@ -259,11 +261,12 @@ def _mission_settings():
                  % (secs, "" if secs == 1 else "s", spawns),
             touches="data", enabled=False,
             disabled_reason=(
-                "Reading only, for now. Lockdown keeps its spawn counts in the "
-                "per-mission .MIS scripts and that format has not been read "
-                "yet, so there is nothing here to rewrite. Rainbow Six 3's "
-                "Missions page does edit, because its counts live in the level "
-                "packages and those have been."),
+                "Reading only. The .MIS format has been read, and it holds no "
+                "count to scale: each enemy is its own fixed-size placement "
+                "record, so changing how many there are would change the "
+                "file's length, and the archive stores it at a fixed offset. "
+                "Rainbow Six 3's Missions page does edit, because its counts "
+                "are numbers inside the level packages."),
             confidence="broken"))
     return out
 

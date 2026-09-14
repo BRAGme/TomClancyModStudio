@@ -201,14 +201,15 @@ def plan(iso_path, profile, values) -> Plan:
     data = profile.build_data(values) if profile.build_data else []
 
     for s in profile.settings:
-        if not s.enabled and values.get(s.key):
-            warnings.append("%s is disabled in this build: %s"
-                            % (s.label, s.disabled_reason))
-        # Only complain about a gated setting when it is actually asking for
+        # Only complain about a setting when it is actually asking for
         # something. "stock", False and 0 all mean "leave this alone", so they
-        # are never worth a warning even when their master switch is off.
+        # are never worth a warning even when their master switch is off -- and
+        # neither is a value still sitting on its own default.
         value = values.get(s.key)
         asking = value not in (None, False, 0, "stock", s.default)
+        if not s.enabled and asking:
+            warnings.append("%s is disabled in this build: %s"
+                            % (s.label, s.disabled_reason))
         if asking and profile.unmet(s.key, values):
             warnings.append("%s does nothing without: %s"
                             % (s.label, ", ".join(profile.unmet(s.key, values))))

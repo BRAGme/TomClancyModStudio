@@ -334,23 +334,26 @@ ARCHIVE_BANNERS = {
 #: art at all -- Ghost Recon, Jungle Storm, Ghost Recon 2 and Advanced
 #: Warfighter ship one generic loading screen between them, so a mission page
 #: for those would be the same picture fifteen times.
+#: Keyed by the art's own base name, not by (stem, part): Rainbow Six 3's
+#: training levels are single packages with no A/B suffix, so a two-part
+#: pattern cannot name them.
 MISSION_ART = {
-    "r6_3_slus20883": ("fbz", "/NTSC_DI/LE/LOADING/LVL/%s_%s.FBZ"),
+    "r6_3_slus20883": ("fbz", "/NTSC_DI/LE/LOADING/LVL/%s.FBZ"),
     "lockdown_slus21144": ("psx", "/PS2DATA/SHELL/ART/%s_SNAPSHOT.PSX"),
 }
 
 
-def mission_art(detection, stem, part="A", cache_dir=None):
-    """The game's own loading screen for one mission part, or None."""
+def mission_art(detection, name, cache_dir=None):
+    """The game's own loading screen, by its art base name, or None."""
     import os
     profile = getattr(detection, "profile", None)
     spec = MISSION_ART.get(getattr(profile, "id", None))
     if spec is None:
         return None
     kind, pattern = spec
-    name = pattern % (stem, part) if "%s_%s" in pattern else pattern % stem
+    path = pattern % name
     cached = (os.path.join(cache_dir, "%s.%s.png"
-                           % (profile.id, name.strip("/").replace("/", "_")))
+                           % (profile.id, path.strip("/").replace("/", "_")))
               if cache_dir else None)
     if cached and os.path.exists(cached):
         try:
@@ -363,10 +366,10 @@ def mission_art(detection, stem, part="A", cache_dir=None):
         from .iso import Iso
         with Iso(detection.path) as iso:
             if kind == "psx":
-                img = psx_image(iso, profile, name)
+                img = psx_image(iso, profile, path)
                 img = img.convert("RGB") if img is not None else None
             else:
-                img = find_fbz(iso, name.replace(".", r"\.") + "$",
+                img = find_fbz(iso, path.replace(".", r"\.") + "$",
                                profile.archive_pattern)
     except Exception:                             # noqa: BLE001
         return None

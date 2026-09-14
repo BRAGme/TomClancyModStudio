@@ -31,7 +31,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "1.7"
+VERSION = "1.8"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -476,8 +476,8 @@ class App(tk.Tk):
         if spec is None or self.detection is None:
             return ()
         out = []
-        for stem, part in spec(setting.key):
-            img = art.mission_art(self.detection, stem, part, theme.cache_dir())
+        for name in spec(setting.key):
+            img = art.mission_art(self.detection, name, theme.cache_dir())
             if img is not None:
                 out.append(img)
         return out

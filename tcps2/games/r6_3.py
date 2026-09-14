@@ -151,48 +151,52 @@ WAVE_MAPS = (
 #:
 #: `waves` is the number of R6DZoneWave actors the level places, read off the
 #: recovered export table rather than estimated; see research/rs3ai/zones.md.
-#: Campaign order, taken from the disc: `PSX2GAME.INI` names
-#: `Campaign=RavenShieldCampaign.ini`, and that file lists its missions in the
-#: order they are played. Alphabetical order put Airport first and Oil Refinery
-#: tenth, which is nobody's campaign.
+#: The campaign in the order it is played, given by the person who has played
+#: it. The disc does not state it anywhere readable: `RavenShieldCampaign.ini`
+#: is a Raven Shield list the PS2 build inherited -- it names Bank,
+#: MeatPacking_Day, Island_Dawn and Airport_Night, none of which are on this
+#: disc, and omits four that are -- and the per-map `m_fStoryMapELO` is a
+#: difficulty rating with ties, not a running order. Ordering by either put Oil
+#: Refinery first, which is wrong.
 #:
-#: Four of the disc's fifteen are absent from that list -- Alcatraz, Office
-#: Complex, Old City and Trieste -- and they follow the eleven it names. They
-#: are fully present as level packages; the campaign file simply does not call
-#: them, which is the same story as the missions delisted from the menu. Four
-#: entries in the list point the other way, at levels this disc does not carry
-#: (Bank, MeatPacking_Day, Island_Dawn, Airport_Night), so it is a Raven Shield
-#: list the PS2 build inherited rather than one written for it.
+#: "Crespo Foundation" is the mission's own name for the OFFICE_COMPLEX
+#: package; the display names live in the packed .LNG bundle, so the word
+#: "Crespo" appears nowhere on the disc as text.
+#:
+#: Training and the Parking Garage come first because neither is in mission
+#: selection -- they are chosen separately from the main menu.
+#:
+#: (stem, title, parts, wave zones, kind). An empty `parts` means the level is
+#: a single package with no A/B suffix, which is how the training levels ship.
 MISSIONS = (
-    ("OIL_REFINERY", "Oil Refinery", "AB", 5),
-    ("ALPINES", "Alpine Village", "AB", 2),
-    ("MOUNTAIN_HIGHWAY", "Mountain Highway", "AB", 3),
-    ("SHIPYARD", "Shipyard", "AB", 3),
-    ("AIRPORT", "Airport", "AB", 3),
-    ("ISLAND", "Island Estate", "A", 2),
-    ("MEATPACKING", "Meat Packing", "AB", 4),
-    ("IMPORT_EXPORT", "Import/Export", "AB", 3),
-    ("PENTHOUSE", "Penthouse", "A", 0),
-    ("GARAGE", "Parking Garage", "AB", 2),
-    ("PARADE", "Parade", "AB", 3),
-    # not named by the campaign file, but on the disc in full
-    ("ALCATRAZ", "Alcatraz", "AB", 3),
-    ("OFFICE_COMPLEX", "Office Complex", "AB", 3),
-    ("OLDCITY", "Old City", "AB", 2),
-    ("TRIESTE", "Trieste", "A", 3),
+    ("TRAINING_BASICS", "Training: Basics", "", 0, "training"),
+    ("TRAINING_SHOOTING", "Training: Shooting", "", 0, "training"),
+    ("TRAINING_TEAM", "Training: Team", "", 0, "training"),
+    ("ALPINES", "Alpine Village", "AB", 2, "campaign"),
+    ("MOUNTAIN_HIGHWAY", "Mountain Highway", "AB", 3, "campaign"),
+    ("OIL_REFINERY", "Oil Refinery", "AB", 5, "campaign"),
+    ("ISLAND", "Island Estate", "A", 2, "campaign"),
+    ("SHIPYARD", "Shipyard", "AB", 3, "campaign"),
+    ("OFFICE_COMPLEX", "Crespo Foundation", "AB", 3, "campaign"),
+    ("OLDCITY", "Old City", "AB", 2, "campaign"),
+    ("ALCATRAZ", "Alcatraz", "AB", 3, "campaign"),
+    ("IMPORT_EXPORT", "Import/Export", "AB", 3, "campaign"),
+    ("PENTHOUSE", "Penthouse", "A", 0, "campaign"),
+    ("MEATPACKING", "Meat Packing Plant", "AB", 4, "campaign"),
+    ("TRIESTE", "Trieste", "A", 3, "campaign"),
+    ("GARAGE", "Parking Garage", "AB", 2, "bonus"),
+    ("PARADE", "Parade", "AB", 3, "campaign"),
+    ("AIRPORT", "Airport", "AB", 3, "campaign"),
 )
-
-#: how many of MISSIONS the campaign file actually lists, in order
-CAMPAIGN_LISTED = 11
 
 MISSION_GROUP = "Missions"
 
 
 def mission_art_for(key):
-    """[(stem, part)] for a mission dial, so its card can show the real thing."""
-    for stem, _title, parts, _waves in MISSIONS:
+    """The art base names for a mission dial, so its card shows the real thing."""
+    for stem, _title, parts, _waves, _kind in MISSIONS:
         if key == mission_key(stem):
-            return [(stem, p) for p in parts]
+            return ["%s_%s" % (stem, p) for p in parts] if parts else [stem]
     return []
 
 
@@ -201,7 +205,14 @@ def mission_key(stem):
 
 
 def mission_select(stem, parts):
-    """A regex matching every package this mission ships, both copies."""
+    """A regex matching every package this mission ships, both copies.
+
+    Each level part ships twice, `<STEM>OFF.LIN` and `<STEM>_SS.LIN`, and both
+    have to match or half the copies stay stock. The training levels have no
+    A/B suffix at all, which is what the empty-`parts` branch is for.
+    """
+    if not parts:
+        return r"/%s(OFF|_SS)\.LIN$" % stem
     return r"/%s_[%s](OFF|_SS)\.LIN$" % (stem, parts)
 
 
@@ -215,20 +226,34 @@ def _mission_settings():
     is why the label says enemies rather than waves.
     """
     out = []
-    for n, (stem, title, parts, waves) in enumerate(MISSIONS):
-        where = "part A and B" if len(parts) == 2 else "one part"
+    for stem, title, parts, waves, kind in MISSIONS:
+        where = ("part A and B" if len(parts) == 2
+                 else "one part" if parts else "a single level")
         zones = ("%d deployment zone%s" % (waves, "" if waves == 1 else "s")
                  if waves else "no deployment zones -- story spawners only")
-        listed = ("" if n < CAMPAIGN_LISTED else
-                  " The campaign file does not list this one, so it is here "
-                  "after the eleven it does; the level itself is complete.")
+        note = {"training": " Not in mission selection: training is chosen "
+                            "separately from the main menu.",
+                "bonus": " Not in mission selection -- the Parking Garage "
+                         "is picked separately from the main menu.",
+                }.get(kind, "")
+        # The training levels author no spawner counts at all -- nothing to
+        # scale -- so the dial is off rather than present and inert. Their
+        # cards still carry the game's own art, which is why they are here.
+        live = kind != "training"
         out.append(Setting(
             mission_key(stem), title, INT, 100, MISSION_GROUP,
             minimum=25, maximum=400, unit="%",
             help="Scales every enemy count authored into %s (%s; %s). "
-                 "100%% leaves the mission exactly as it shipped.%s"
-                 % (title, where, zones, listed),
-            touches="data", confidence="applied"))
+                 "100%% leaves it exactly as it shipped.%s"
+                 % (title, where, zones, note) if live else
+                 "%s, and it authors no spawner counts -- there is nothing "
+                 "here to scale.%s" % (where.capitalize(), note),
+            touches="data", enabled=live,
+            disabled_reason=("" if live else
+                             "The training levels place no authored enemy "
+                             "counts, so a dial would have nothing to change. "
+                             "The card is here for the level's own artwork."),
+            confidence="applied" if live else "broken"))
     return out
 
 
@@ -582,7 +607,11 @@ def build_data(v: dict) -> list:
     # One edit per mission whose dial has been moved. These rewrite counts
     # inside the level packages themselves, so they reach one mission only --
     # everything else on this profile is a global code patch.
-    for stem, title, parts, _waves in MISSIONS:
+    for stem, title, parts, _waves, kind in MISSIONS:
+        # training authors no counts, so its dial is disabled and must never
+        # emit an edit even if a saved config carries a value for it
+        if kind == "training":
+            continue
         pct = int(v.get(mission_key(stem), 100))
         if pct == 100:
             continue
