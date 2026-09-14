@@ -7,12 +7,15 @@ Point it at an ISO, move some sliders, press **Apply to disc**. Nothing is
 rebuilt and no ISO tools are needed. A pristine copy of everything it overwrites
 is kept next to the ISO, and **Restore disc** puts it all back.
 
-**It wears the menu of whichever disc you load.** The skin follows the game --
-Rainbow Six 3's gunmetal HUD with its cut corners, letterspaced titles and red
-selection tab; Ghost Recon's gold-on-navy console shell; Jungle Storm's the same
-shell in teal. The backdrop, the Rainbow laurel badge and the Ghost Recon
-wordmark are pulled out of your own disc at run time and cached -- no game data
-ships with the tool.
+**It wears the menu of whichever disc you load.** Six discs, six skins, and
+each one is built from that game's own artwork: Rainbow Six 3's gunmetal HUD
+with its cut corners, letterspaced titles and red selection tab; Advanced
+Warfighter's near-black and teal; Ghost Recon's gold-on-navy console shell;
+Jungle Storm's the same shell in teal; Ghost Recon 2's lime on drab; Sum of All
+Fears in olive. The backdrop and the corner badge are pulled out of your own
+disc at run time and cached -- no game data ships with the tool.
+
+![the six skins side by side](docs/screens/themes.png)
 
 ![the Enemy Waves page](docs/screens/enemy-waves.png)
 
@@ -22,16 +25,24 @@ ships with the tool.
 
 | Disc | Serial | Enemies | Bullet holes / FX | Split screen |
 |---|---|---|---|---|
-| Rainbow Six 3 | SLUS-20883 | **wave mode**, fully tunable | decal ring, body lifetime | weapon model, impacts, blood, weather, emitters |
+| Rainbow Six 3 | SLUS-20883 | **wave mode**, fully tunable; grenade carry, throw range, reaction, skill, never-miss range | decal ring, body lifetime | weapon model, impacts, blood, weather, emitters, **player 2 look speed** |
 | Ghost Recon | SLUS-20613 | full count, skill tier, skill points | pool size, lifetime, every-surface | effect gates |
 | Ghost Recon: Jungle Storm | SLUS-20820 | **Defend wave counts**, full count, skill points | pool size, lifetime, every-surface | effect gates |
+| Ghost Recon 2 | SLUS-21105 | grenade carry, throw range, reaction, opening-fire delay, skill, never-miss range, sight radius | — | — |
+| Ghost Recon Advanced Warfighter | SLUS-21422 | Survival release rate and batch size | — | — |
+| The Sum of All Fears | SLES-51180 | full count, script-held reinforcements, skill points | — | — |
 
-The three discs run two different engines, so what is possible differs sharply
+The six discs run two different engines, so what is possible differs sharply
 and the tool says which is which on every option.
 
-* **Rainbow Six 3 PS2 is an Unreal build.** Its enemies come from a
-  deployment-zone system inside the executable, so its options are code patches
-  — and they have been watched working in the running game.
+* **Rainbow Six 3, Advanced Warfighter and Ghost Recon 2 are Unreal builds.**
+  Rainbow Six 3's enemies come from a deployment-zone system inside the
+  executable, so its options are code patches — and they have been watched
+  working in the running game. Ghost Recon 2 is the same disc layout a year
+  later (`SP.SOZ`, vokes archives, `.LIN` packages, the same
+  `R6GAMESETTINGS.INI` down to the shipped values) but its own overlay has not
+  been mapped, so it is offered data options only rather than Rainbow Six 3's
+  addresses pointed at a different build.
 * **Ghost Recon and Jungle Storm are Red Storm's own engine**, and they keep
   their enemies in **data**: a mission file is XML, one `<Actor>` element is one
   soldier, and nothing in the executable caps how many there are. Those options

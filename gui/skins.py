@@ -1,16 +1,21 @@
 """One skin per disc, so the tool looks like the menu you would be standing in.
 
-Two chrome families cover all three games:
+Two chrome families cover the shelf, in six colourways:
 
   ``rs3``  Rainbow Six 3's gunmetal HUD -- translucent slate panels with a
            hairline light edge, corners cut at 45 degrees, wide letterspaced
-           uppercase titles ranged right, and a red tab on the selected row.
+           uppercase titles, and a red tab on the selected row. Advanced
+           Warfighter is the same chrome in its own near-black and teal, which
+           is what its menus and loading screens actually are.
 
-  ``gr``   Ghost Recon's and Jungle Storm's console shell -- flat translucent
-           panels inside a gold rule, rounded buttons that turn solid gold when
-           selected, and a heavy white title ranged left. Jungle Storm is the
-           same shell in teal instead of navy, which is exactly how the two
-           games ship.
+  ``gr``   The console shell the Red Storm games use -- flat translucent panels
+           inside a bright rule, rounded buttons that fill solid when selected,
+           and a heavy white title. Ghost Recon is gold on navy, Jungle Storm
+           the same in teal, Sum of All Fears in olive, and Ghost Recon 2 in the
+           lime-on-drab its own screens are framed in.
+
+Every skin ranges its title and its disc line to the right, so the six look
+like one tool wearing six uniforms rather than six different tools.
 
 Colours were read off the games themselves rather than invented; the artwork is
 pulled out of the user's own disc at run time and cached, never redistributed.
@@ -82,7 +87,7 @@ GR = Palette(
     warn="#f0c24a",
     bad="#e2705a",
     good="#8fd257",
-    title_align="left",
+    title_align="right",
     title_track=0,
     title_upper=False,
     title_font="Verdana",
@@ -112,7 +117,7 @@ JS = Palette(
     warn="#f0c24a",
     bad="#e2705a",
     good="#8fd257",
-    title_align="left",
+    title_align="right",
     title_track=0,
     title_upper=False,
     title_font="Verdana",
@@ -123,9 +128,53 @@ JS = Palette(
 )
 
 #: Advanced Warfighter is Rainbow Six 3's engine and its menus follow that
-#: house style, so it wears the same gunmetal chrome. Sum of All Fears is the
-#: Red Storm shell like the Ghost Recons, in its own colour.
-GRAW = replace(RS3)
+#: house style -- but not its colour. Every one of its own screens is near-black
+#: with one hue on it, and that hue measures a flat 180 degrees: the frosted
+#: band under the logo samples #2f9090, the bright edge above it #479696. So it
+#: gets the gunmetal chrome in teal rather than Rainbow's slate.
+GRAW = replace(
+    RS3,
+    bg="#070b0b",
+    veil="#050808",
+    panel="#0f1717",
+    panel2="#162323",
+    edge="#5fcfcf",
+    edge_dim="#2b4d4d",
+    text="#c2dede",
+    dim="#84a9a9",
+    faint="#517070",
+    title="#e8f8f8",
+    accent="#45bcbc",
+    accent_dim="#256a6a",
+    sel_fill="#15302f",
+    sel_text="#dffafa",
+    tab="#2f9090",
+    good="#5fcf9a",
+    glyph_triangle="#45bcbc",
+)
+
+#: Ghost Recon 2's shell is the Red Storm frame again, drab olive ruled in the
+#: lime its wordmark and every panel edge are drawn in (#b4e198, measured off
+#: the language screens).
+GR2 = replace(
+    GR,
+    bg="#0b120a",
+    veil="#080d07",
+    panel="#182415",
+    panel2="#23321c",
+    edge="#b4e198",
+    edge_dim="#4e6b3f",
+    text="#d5e9c8",
+    dim="#9bba8b",
+    faint="#66805a",
+    accent="#b4e198",
+    accent_dim="#6f9457",
+    sel_fill="#b4e198",
+    sel_text="#182415",
+    tab="#b4e198",
+    warn="#e2d05a",
+    good="#9fe57a",
+)
 
 SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
                panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#5a7d60",
@@ -137,6 +186,7 @@ BY_PROFILE = {
     "jungle_storm_slus20820": JS,
     "graw_slus21422": GRAW,
     "soaf_sles51180": SOAF,
+    "gr2_slus21105": GR2,
 }
 
 DEFAULT = RS3
@@ -318,28 +368,32 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
                                  (height - em.height) // 2))
     pad = left + box_w + px(22)
 
+    right = p.title_align != "left"
+    tx = width - px(30) if right else pad
+
     if p.chrome == "rs3":
         # the angled rule the game runs under its title
         y = height - px(15)
         cut = px(14)
         d.line([(pad, y), (width - px(26) - cut, y), (width - px(26), y - cut)],
                fill=p.edge_dim, width=px(2))
-        tx = width - px(30)
         draw_tracked(d, (tx, px(10)), label, big, p.title,
-                     track=px(p.title_track), anchor_right=True)
+                     track=px(p.title_track), anchor_right=right)
         if subtitle:
             draw_tracked(d, (tx, height - px(40)), subtitle, small, p.dim,
-                         track=px(1), anchor_right=True)
+                         track=px(1), anchor_right=right)
     else:
         # heavy white title with the dark halo the console shells use
         shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
-        sd.text((pad + px(2), px(8)), label, font=big, fill=(0, 0, 0, 210))
+        sx = tx - d.textlength(label, font=big) if right else tx
+        sd.text((sx + px(2), px(8)), label, font=big, fill=(0, 0, 0, 210))
         shadow = shadow.filter(ImageFilter.GaussianBlur(px(3)))
         img.alpha_composite(shadow)
-        d.text((pad, px(6)), label, font=big, fill=p.title)
+        d.text((sx, px(6)), label, font=big, fill=p.title)
         if subtitle:
-            d.text((pad + px(3), height - px(34)), subtitle, font=small, fill=p.dim)
+            ux = tx - d.textlength(subtitle, font=small) if right else tx + px(3)
+            d.text((ux, height - px(34)), subtitle, font=small, fill=p.dim)
     return ImageTk.PhotoImage(img)
 
 

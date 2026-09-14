@@ -79,6 +79,7 @@ def main():
     ap.add_argument("--gr", help="Ghost Recon ISO, to test the raw-ELF path")
     ap.add_argument("--js", help="Jungle Storm ISO, same")
     ap.add_argument("--rs3data", help="Rainbow Six 3 ISO, for its INI data path")
+    ap.add_argument("--gr2", help="Ghost Recon 2 ISO, same engine, data only")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -121,7 +122,8 @@ def run_raw_and_data(args, work):
 
     for iso_path, pid, boot in ((args.gr, "ghost_recon_slus20613", "SLUS_206.13"),
                                 (args.js, "jungle_storm_slus20820", "SLUS_208.20"),
-                                (args.rs3data, "r6_3_slus20883", None)):
+                                (args.rs3data, "r6_3_slus20883", None),
+                                (args.gr2, "gr2_slus21105", None)):
         if not iso_path:
             continue
         profile = BY_ID[pid]
@@ -216,22 +218,40 @@ def run_raw_and_data(args, work):
             check("no two files overlap after relocation", not overlap)
 
 
+#: per game: the values to drive the data path with, and how many copies of
+#: each shared file the disc is expected to carry. Rainbow Six 3 puts
+#: R6GAMESETTINGS.INI and three COMMON packages in all three of its archives;
+#: Ghost Recon 2 has the INI three times but only two COMMON packages that
+#: carry grenade tables at all -- its COMMONOFF has none.
+DATA_CASES = {
+    "r6_3_slus20883": (
+        dict(grenade_dist=80, grenade_delay="quick", grenade_carry=80,
+             terro_skill="up", perfect_dist=900, sens_steps=20,
+             sens_boost=200),
+        3, 9),
+    "gr2_slus21105": (
+        dict(gr2_grenade_dist=80, gr2_grenade_delay="quick",
+             gr2_grenade_carry=80, gr2_fire_delay="snap", gr2_skill="up",
+             gr2_perfect_dist=900, gr2_sight=9000, gr2_sens_steps=20,
+             gr2_sens_boost=200),
+        3, 2),
+}
+
+
 def _data_only(args, profile, iso_path, Shadow):
     """The archive path for a game whose code patches are covered elsewhere.
 
-    Rainbow Six 3 keeps its AI tuning and control curve in plain-text INI files
-    that live in all three vokes archives, so the thing worth checking is that
-    every copy is rewritten and that nothing lands on top of anything else.
+    These discs keep their AI tuning and control curve in plain-text INI files
+    that live in every vokes archive, so the thing worth checking is that every
+    copy is rewritten and that nothing lands on top of anything else.
     """
     from tcps2 import dataedit, rselzo, transforms
     from tcps2.vokes import Vokes, open_archives
 
     print("\n[%s -- data files, against the real disc through a shadow]"
           % profile.short)
-    vals = profile.normalise(dict(profile.defaults(), grenade_dist=80,
-                                  grenade_delay="quick", grenade_carry=80,
-                                  terro_skill="up", perfect_dist=900,
-                                  sens_steps=20, sens_boost=200))
+    overrides, want_ini, want_common = DATA_CASES[profile.id]
+    vals = profile.normalise(dict(profile.defaults(), **overrides))
     edits = profile.build_data(vals)
     check("%s emits data edits" % profile.short, len(edits) >= 2)
 
@@ -286,12 +306,10 @@ def _data_only(args, profile, iso_path, Shadow):
             ov = sum(1 for a, b in zip(ext, ext[1:]) if b[0] < a[1])
             check("%s gains no overlap (%d before, %d after)"
                   % (real.r.name, stock_ov, ov), ov <= stock_ov)
-    check("all three copies of R6GAMESETTINGS.INI were rewritten", copies == 3,
-          "%d of 3" % copies)
-    # three COMMON packages -- COMMON, COMMONOFF, COMMON_SS -- and the disc
-    # keeps a copy of each in all three vokes archives, so nine rewrites
-    check("every COMMON package in every archive carries the new grenade weight",
-          commons == 9, "%d of 9" % commons)
+    check("every copy of R6GAMESETTINGS.INI was rewritten", copies == want_ini,
+          "%d of %d" % (copies, want_ini))
+    check("every COMMON package that has grenade tables carries the new weight",
+          commons == want_common, "%d of %d" % (commons, want_common))
 
 
 def run(args, work):

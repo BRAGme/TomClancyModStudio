@@ -102,6 +102,11 @@ BANNER_PREFERENCE = {
     # backdrop the in-game menus sit on.
     "graw_slus21422": [r"/CD/LE/GR3_2\.FBZ$", r"/CD/LE/GR3_1\.FBZ$",
                        r"/CD/LE/LANG_BG\.FBZ$"],
+    # Ghost Recon 2's briefing screens are its menu chrome exactly: the drab
+    # green plate, the lime rule across the top, the wordmark in the corner.
+    "gr2_slus21105": [r"/DI/LE/LOADING/EN/LOADING_ASSAULT\.FBZ$",
+                      r"/DI/LE/LOADING/EN/LOADING_SUPREMACY\.FBZ$",
+                      r"/DI/ONLINESEL\.FBZ$"],
     "r6_3_slus20883": [r"/NTSC_DI/LE/LOADING/LVL/SHIPYARD_A\.FBZ$",
                        r"/NTSC_DI/LE/LOADING/LVL/ALCATRAZ_A\.FBZ$",
                        r"/NTSC_DI/LE/LOADING/LVL/MENU\.FBZ$",
@@ -112,6 +117,9 @@ BANNER_PREFERENCE = {
 #: fraction of that image the mark occupies (left, top, right, bottom)
 EMBLEM = {
     "graw_slus21422": ([r"/CD/LE/GR3_2\.FBZ$"], (0.560, 0.050, 1.000, 0.355)),
+    "gr2_slus21105": ([r"/DI/LE/LOADING/EN/LOADING_ASSAULT\.FBZ$",
+                      r"/DI/LE/LOADING/EN/LOADING_SUPREMACY\.FBZ$"],
+                     (0.075, 0.035, 0.945, 0.180)),
     "r6_3_slus20883": ([r"/NTSC_DI/LE/LOADING/LVL/MENU\.FBZ$",
                         r"/NTSC_CD/LE/LANG_BG\.FBZ$"],
                        (0.355, 0.775, 0.645, 0.965)),
@@ -137,6 +145,18 @@ EMBLEM_MODE = {
     "jungle_storm_slus20820": ("key", 46, 3.0),
     "graw_slus21422": ("key", 96, 3.0),
     "soaf_sles51180": ("key", 96, 3.0),
+    # the wordmark is white over a lit olive plate, so the floor has to sit
+    # above the plate rather than above black
+    "gr2_slus21105": ("key", 150, 4.0),
+}
+
+#: Jungle Storm ships no lettering anywhere -- no wordmark texture on the disc,
+#: and no corner mark in its own menus either -- so the ring its shell is built
+#: around is all there is to badge the header with. These are drawn into the
+#: middle of it, in the skin's own colour, so the header reads as a game rather
+#: than as a circle.
+EMBLEM_WORDMARK = {
+    "jungle_storm_slus20820": (("GHOST RECON", "JUNGLE STORM"), "#d8efe9"),
 }
 
 #: the game's own menu art, by name, inside its archives
@@ -165,7 +185,7 @@ def find_fbz(iso, pattern, archive_pattern=None):
             return None
     rx = re.compile(pattern, re.I)
     from .vokes import open_archives
-    for arc in open_archives(iso, archive_pattern or r"/(VOKES\d|GR|MENU)\.IMG$"):
+    for arc in open_archives(iso, archive_pattern or r"/(VOKES\d|GR2?|MENU)\.IMG$"):
         for key, e in arc.files.items():
             if rx.search(key):
                 try:
@@ -250,7 +270,7 @@ def emblem_image(detection, cache_dir=None):
                 from .vokes import open_archives
                 name, box = name_box
                 for arc in open_archives(iso, profile.archive_pattern or
-                                         r"/(VOKES\d|GR|MENU)\.IMG$"):
+                                         r"/(VOKES\d|GR2?|MENU)\.IMG$"):
                     ent = arc.files.get(name.upper())
                     if ent is None:
                         continue
@@ -279,11 +299,65 @@ def emblem_image(detection, cache_dir=None):
             r, g, b, _a = px[x, y]
             lum = (r * 3 + g * 6 + b) // 10
             px[x, y] = (r, g, b, max(0, min(255, int((lum - floor) * gain))))
+    mark = EMBLEM_WORDMARK.get(profile.id)
+    if mark:
+        rgba = _stamp_wordmark(rgba, mark[0], mark[1])
     if cached:
         try:
             rgba.save(cached, "PNG")
         except Exception:                         # noqa: BLE001
             pass
+    return rgba
+
+
+def _stamp_wordmark(rgba, lines, colour):
+    """Set `lines` into the clear middle of a keyed emblem.
+
+    The size is fitted rather than fixed: whatever the mark's own resolution
+    turns out to be, the lettering ends up the same fraction of it, so the
+    header looks the same after the thumbnail as it did here.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    except ImportError:
+        return rgba
+    w, h = rgba.size
+    budget_w, budget_h = int(w * 0.60), int(h * 0.46)
+    per_line = max(8, budget_h // len(lines))
+
+    def load(size):
+        for name in ("bahnschrift.ttf", "seguisb.ttf", "segoeuib.ttf"):
+            try:
+                return ImageFont.truetype(name, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    probe = ImageDraw.Draw(rgba)
+    size = per_line
+    while size > 8:
+        font = load(size)
+        widest = max(probe.textlength(t, font=font) for t in lines)
+        if widest <= budget_w and size * 1.18 * len(lines) <= budget_h:
+            break
+        size -= 1
+    font = load(size)
+
+    step = int(size * 1.18)
+    y = (h - step * len(lines)) // 2
+    glow = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    for i, text in enumerate(lines):
+        x = (w - probe.textlength(text, font=font)) / 2
+        gd.text((x, y + i * step), text, font=font, fill=(0, 0, 0, 235))
+    glow = glow.filter(ImageFilter.GaussianBlur(max(1, size // 6)))
+    rgba.alpha_composite(glow)
+
+    d = ImageDraw.Draw(rgba)
+    rgb = tuple(int(colour.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    for i, text in enumerate(lines):
+        x = (w - probe.textlength(text, font=font)) / 2
+        d.text((x, y + i * step), text, font=font, fill=rgb + (255,))
     return rgba
 
 
@@ -302,7 +376,7 @@ def _archive_banner(iso, profile):
     from .vokes import open_archives
 
     arcs = open_archives(iso, profile.archive_pattern or
-                         r"/(VOKES\d|GR|MENU)\.IMG$")
+                         r"/(VOKES\d|GR2?|MENU)\.IMG$")
     wanted = ARCHIVE_BANNERS.get(profile.id, [])
     for name in wanted:
         for arc in arcs:

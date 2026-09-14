@@ -1,6 +1,7 @@
 """Entry point for both the window and the command line.
 
     ModStudio.exe                 -- open the window
+    ModStudio.exe <disc.iso>      -- open the window on that disc
     ModStudio.exe --cli ...       -- do it from a script instead
 
 Kept as one executable so a release is a single file to download.
@@ -41,7 +42,7 @@ def main():
         from cli import main as cli_main
         raise SystemExit(cli_main(argv[1:]))
     from gui.app import main as gui_main
-    gui_main()
+    gui_main(argv)
 
 
 if __name__ == "__main__":

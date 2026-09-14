@@ -108,12 +108,19 @@ class App(tk.Tk):
                                  font=theme.F("body", 9))
         self.disc_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
         self.path_var = tk.StringVar()
-        self.path_entry = tk.Entry(row, textvariable=self.path_var, bg=p.bg,
-                                   fg=p.text, bd=0, insertbackground=p.text,
+        # A tk.Entry draws its text hard against its own left edge and has no
+        # text inset of its own -- `ipadx` grows the widget but the text stays
+        # put. So the field is a frame in the entry's colour with the entry
+        # inset inside it, which is the only way to get a gutter before the path.
+        self.path_well = tk.Frame(row, bg=p.bg)
+        self.path_well.pack(side="left", fill="x", expand=True,
+                            padx=(0, theme.px(4)))
+        self.path_entry = tk.Entry(self.path_well, textvariable=self.path_var,
+                                   bg=p.bg, fg=p.text, bd=0,
+                                   insertbackground=p.text,
                                    font=theme.F("body", 10), highlightthickness=0)
-        self.path_entry.pack(side="left", fill="x", expand=True,
-                             ipady=theme.px(6), ipadx=theme.px(10),
-                             padx=(0, theme.px(4)))
+        self.path_entry.pack(fill="x", expand=True, padx=theme.px(12),
+                             pady=theme.px(7))
         self.path_entry.bind("<Return>", lambda _e: self._load_iso(self.path_var.get()))
         self.browse = ActionButton(row, "Browse", self._browse)
         self.browse.pack(side="left", padx=(theme.px(10), 0))
@@ -309,6 +316,7 @@ class App(tk.Tk):
         for wdg in self.disc.body.winfo_children():
             wdg.configure(bg=p.panel)
         self.disc_lbl.configure(bg=p.panel, fg=p.dim)
+        self.path_well.configure(bg=p.bg)
         self.path_entry.configure(bg=p.bg, fg=p.text, insertbackground=p.text)
         self.log.configure(bg=p.panel, fg=p.dim)
         self._log_tags()
@@ -630,9 +638,15 @@ class App(tk.Tk):
                 break
 
 
-def main():
+def main(argv=None):
     theme.set_dpi_aware()
-    App().mainloop()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    app = App()
+    for arg in argv:
+        if os.path.isfile(arg):
+            app.after(150, lambda q=arg: app._load_iso(q))
+            break
+    app.mainloop()
 
 
 if __name__ == "__main__":

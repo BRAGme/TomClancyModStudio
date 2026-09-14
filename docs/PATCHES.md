@@ -375,3 +375,55 @@ The one place split screen picks a different number is a leaf returning 3
 instead of 6 -- traced to its format string, that is the **audio streaming voice
 budget**.
 
+
+
+---
+
+# Ghost Recon 2 (PS2, SLUS-21105) -- what is here and what is not
+
+Ghost Recon 2 is not a Ghost Recon disc in the engine sense. It is laid out
+exactly like Rainbow Six 3:
+
+| | Rainbow Six 3 | Ghost Recon 2 | Ghost Recon / Jungle Storm |
+|---|---|---|---|
+| overlays | `SP.SOZ`, `MP.SOZ` | `SP.SOZ`, `MP.SOZ` | none -- one plain ELF |
+| archives | `VOKES0/1/2.IMG` | `GR2.IMG`, `VOKES0.IMG`, `VOKES2.IMG` | `GR.IMG`, `MENU.IMG` |
+| packages | `.LIN` (chunked zlib) | `.LIN` (chunked zlib) | `rselzo` (LZO1X) |
+| tuning | `R6GAMESETTINGS.INI` | `R6GAMESETTINGS.INI` | `.MIS` / `.ATR` XML |
+
+Boot ELF `SLUS_211.05`, 148,528 bytes, two program headers; the loaded one maps
+file `+0x80` to `0x01400000` for `0x24200` bytes. PCSX2 CRC `82E1D0EA`
+(volume `GHOSTRECON2`, `VER = 1.02`).
+
+## The data surface, measured
+
+`R6GAMESETTINGS.INI` ships **three** copies -- one in `GR2.IMG` (11,646 bytes)
+and one in each of `VOKES0.IMG` and `VOKES2.IMG` (18,273 bytes). Every key the
+tool writes ships at the same value Rainbow Six 3 ships it at:
+
+```
+m_fMinDistToThrowGrenade            = 500
+m_fGrenadeReactionDelayRecruit      = 1.0      Veteran = 0.5
+m_fReactionTimeForFiringRecruit     = 1.0      Veteran = 0.5
+m_fTerroristSkillMultiplierRecruit  = 0.20     Veteran = 0.70   Elite = 1.25
+m_fDistForPerfectAccuracyTerro      = 500.0
+m_fSightRadius                      = 5000.0
+m_iXSensitivityMaxSteps             = 10       Y = 10
+m_fXSensitivityMultiplier           = 0.70     Y = 0.60
+m_fXSensitivityStepIncrement        = 0.15     Y = 0.15
+```
+
+`COMMON.LIN` is 1,730,200 bytes packed and 5,115,413 plain, identical in
+`VOKES0.IMG` and `VOKES2.IMG`. It carries 73 `NbOfGrenade` tables, of which
+**eight** are the two-entry weighted form the grenade dial edits, shipping
+`20, 15, 25, 20, 30, 20, 20, 20`. `GR2.IMG`'s `COMMONOFF.LIN` has none, so it is
+left alone.
+
+## Why there are no code options
+
+Rainbow Six 3's wave, render and split-screen patches are virtual addresses
+inside **its** `SP.SOZ`. Ghost Recon 2's overlay is a different build from a
+year later; the same offsets point at different instructions. Nothing here has
+been mapped, so nothing is offered. `R6DZoneWave` appears once in
+`COMMON.LIN` -- the class exists -- but no shipped mission places one, so even
+a mapped wave patch would have nothing to switch on.

@@ -22,7 +22,10 @@ HIDDEN = [
     "gui.presets", "tcps2", "tcps2.iso", "tcps2.soz", "tcps2.vokes",
     "tcps2.art", "tcps2.model", "tcps2.engine", "tcps2.detect",
     "tcps2.games", "tcps2.games.r6_3", "tcps2.games.ghost_recon",
-    "tcps2.games.jungle_storm",
+    "tcps2.games.jungle_storm", "tcps2.games.ghost_recon2",
+    "tcps2.games.graw", "tcps2.games.soaf",
+    "tcps2.lin", "tcps2.rselzo", "tcps2.transforms", "tcps2.dataedit",
+    "tcps2.overlay", "tcps2.rsb", "gui.skins",
     "PIL.Image", "PIL.ImageTk", "PIL.ImageDraw", "PIL.ImageFont",
     "PIL.ImageEnhance", "PIL.ImageFilter",
 ]
