@@ -305,6 +305,7 @@ class App(tk.Tk):
 
         self.profile = det.profile
         theme.use(skins.for_profile(det.profile))
+        skins.set_textures(art.chrome_images(det, theme.cache_dir()))
         self.backdrop_src = art.banner_image(det, theme.cache_dir())
         self.emblem_src = art.emblem_image(det, theme.cache_dir())
         self._restyle()

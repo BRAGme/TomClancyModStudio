@@ -193,6 +193,85 @@ PSX_EMBLEM = {
     "lockdown_slus21144": "/PS2DATA/SHELL/ART/LOCKDOWN_SMALL.PSX",
 }
 
+#: Pieces of Lockdown's own shell sheet, by the box they occupy in it.
+#: SHELL1 is 256x128 and packs the whole menu kit; these boxes were measured
+#: off the decoded sheet, not guessed:
+#:   rule    y 115..128 -- the blue rule the menus are banded with. It is two
+#:           solid lines with a soft glow between and below them, and it is
+#:           uniform across its width, so it stretches to any width cleanly.
+#:   chevron x 16..48   -- the pale blue triangles used as scroll markers.
+#:   metal   x 96..191  -- the brushed plate behind a highlighted entry.
+PSX_CHROME = {
+    "lockdown_slus21144": {
+        "rule": ("/PS2DATA/SHELL/ART/SHELL1.PSX", (0, 115, 256, 128)),
+        "chevron": ("/PS2DATA/SHELL/ART/SHELL1.PSX", (16, 0, 48, 16)),
+        "metal": ("/PS2DATA/SHELL/ART/SHELL1.PSX", (96, 37, 191, 112)),
+    },
+}
+
+
+def chrome_images(detection, cache_dir=None):
+    """The game's own shell pieces, for the skin to build its chrome out of.
+
+    Returns a name -> RGBA image dict, empty for the discs that ship nothing
+    usable. The pieces are cached beside the banner so the disc is read once.
+    """
+    import os
+    profile = getattr(detection, "profile", None)
+    if profile is None:
+        return {}
+    spec = PSX_CHROME.get(profile.id)
+    if not spec:
+        return {}
+    try:
+        from PIL import Image
+    except ImportError:
+        return {}
+
+    out, missing = {}, []
+    for name in spec:
+        path = (os.path.join(cache_dir, "%s.%s.png" % (profile.id, name))
+                if cache_dir else None)
+        if path and os.path.exists(path):
+            try:
+                out[name] = Image.open(path).convert("RGBA")
+                continue
+            except Exception:                     # noqa: BLE001
+                pass
+        missing.append(name)
+    if not missing:
+        return out
+
+    try:
+        from . import upscale
+        from .iso import Iso
+        with Iso(detection.path) as iso:
+            sheets = {}
+            for name in missing:
+                src, box = spec[name]
+                if src not in sheets:
+                    sheet = psx_image(iso, profile, src)
+                    # If the user keeps a PCSX2 replacement pack for this disc,
+                    # the whole shell sheet is usually in it at 2x or 4x. The
+                    # boxes are fractions of the sheet, so they scale with it.
+                    big = upscale.better(profile.serial, sheet) if sheet else None
+                    sheets[src] = (big or sheet,
+                                   (big.width // sheet.width) if big else 1)
+                sheet, factor = sheets[src]
+                if sheet is None:
+                    continue
+                piece = sheet.crop(tuple(v * factor for v in box))
+                out[name] = piece
+                if cache_dir:
+                    try:
+                        piece.save(os.path.join(
+                            cache_dir, "%s.%s.png" % (profile.id, name)), "PNG")
+                    except Exception:             # noqa: BLE001
+                        pass
+    except Exception:                             # noqa: BLE001
+        return out
+    return out
+
 #: the game's own menu art, by name, inside its archives
 ARCHIVE_BANNERS = {
     "ghost_recon_slus20613": ["/MAIN_MENU_PS2.RSB", "/SHELL_BGD_PS2.RSB",
@@ -294,7 +373,8 @@ def banner_image(detection, cache_dir=None):
             for name in PSX_BANNERS.get(profile.id, []):
                 img = psx_image(iso, profile, name)
                 if img is not None:
-                    img = img.convert("RGB")
+                    from . import upscale
+                    img = (upscale.better(profile.serial, img) or img).convert("RGB")
                     break
             if img is None:
                 img = raw_image(iso, profile.id)

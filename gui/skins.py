@@ -328,15 +328,89 @@ def _graw_frame(canvas, p: Palette, x0, y0, x1, y1, px, tag, fill, stroke,
                               tags=tag)
 
 
-def _lock_rule(canvas, p: Palette, x0, x1, y, px, tag, bright=True):
+#: Rows of Lockdown's own rule, lifted out of its shell sheet by `set_textures`
+#: as (r, g, b, alpha) top to bottom. The rule is uniform across its width, so
+#: the game's pixels can be composited as lines instead of stretched as a
+#: bitmap -- same colours, but crisp at any width and any display scale, and
+#: with no image cache to invalidate when the window resizes.
+LOCK_RULE_ROWS: list = []
+
+#: Lockdown's menu bands, measured off the game's own main menu rather than
+#: invented: an ordinary band runs #3b3d45 to #24272f, and the selected one is
+#: DARKER and neutral -- #393939 to #191a1a under a lit #575757 top edge -- not
+#: the paler plate a highlight would normally be.
+LOCK_BAND = ((0x3b, 0x3d, 0x45), (0x24, 0x27, 0x2f))
+LOCK_BAND_SEL = ((0x39, 0x39, 0x39), (0x19, 0x1a, 0x1a))
+LOCK_BAND_EDGE = "#575757"
+
+
+def set_textures(images):
+    """Hand the skin the game's own shell pieces, or {} to drop them."""
+    LOCK_RULE_ROWS.clear()
+    rule = (images or {}).get("rule")
+    if rule is None:
+        return
+    try:
+        rgba = rule.convert("RGBA")
+        px = rgba.load()
+        mid = rgba.width // 2
+        for y in range(rgba.height):
+            LOCK_RULE_ROWS.append(px[mid, y])
+    except Exception:                             # noqa: BLE001
+        LOCK_RULE_ROWS.clear()
+
+
+def _blend(rgb, a, under):
+    """Composite one texture row over the colour it is drawn on."""
+    ur, ug, ub = int(under[1:3], 16), int(under[3:5], 16), int(under[5:7], 16)
+    f = a / 255.0
+    return "#%02x%02x%02x" % (int(rgb[0] * f + ur * (1 - f)),
+                              int(rgb[1] * f + ug * (1 - f)),
+                              int(rgb[2] * f + ub * (1 - f)))
+
+
+def _lock_rule(canvas, p: Palette, x0, x1, y, px, tag, bright=True, under=None):
     """The full-width blue rule Lockdown runs through everything.
 
     In the game it does not stop at the edge of the thing it belongs to -- it
     crosses the whole screen -- which is most of what makes the menus read as
-    banded rather than boxed.
+    banded rather than boxed. It is not one line either: two solid strokes with
+    a soft glow between and below them, which is why it is worth taking the
+    game's own pixels rather than drawing a hairline.
     """
-    colour = p.edge if bright else p.edge_dim
-    canvas.create_line(x0, y, x1, y, fill=colour, width=px(1), tags=tag)
+    rows = LOCK_RULE_ROWS
+    if not rows:
+        colour = p.edge if bright else p.edge_dim
+        canvas.create_line(x0, y, x1, y, fill=colour, width=px(1), tags=tag)
+        return
+    under = under or p.panel
+    height = px(8)
+    for i in range(height):
+        r, g, b, a = rows[min(len(rows) - 1, i * len(rows) // height)]
+        if not a:
+            continue
+        if not bright:
+            a = int(a * 0.45)
+        canvas.create_line(x0, y + i - px(1), x1, y + i - px(1),
+                           fill=_blend((r, g, b), a, under), tags=tag)
+
+
+def _lock_band(canvas, x0, y0, x1, y1, top, bottom, tag, cut=0):
+    """A menu band, shaded the way the game shades its own.
+
+    `cut` is the 45-degree shear taken off the top-right corner, so the shading
+    has to follow the same diagonal `shear_points` describes rather than stop
+    short of it and leave a notch.
+    """
+    span = max(1, y1 - y0)
+    for i in range(span):
+        f = i / float(span)
+        right = x1 - cut + i if i < cut else x1
+        canvas.create_line(
+            x0, y0 + i, right, y0 + i,
+            fill="#%02x%02x%02x" % tuple(int(top[c] + (bottom[c] - top[c]) * f)
+                                         for c in range(3)),
+            tags=tag)
 
 
 def paint_panel(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome", raised=False):
@@ -346,8 +420,8 @@ def paint_panel(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome", raised=Fal
     fill = p.panel2 if raised else p.panel
     if p.chrome == "lock":
         canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="", tags=tag)
-        _lock_rule(canvas, p, x0, x1, y0, px, tag)
-        _lock_rule(canvas, p, x0, x1, y1, px, tag, bright=False)
+        _lock_rule(canvas, p, x0, x1, y0, px, tag, under=fill)
+        _lock_rule(canvas, p, x0, x1, y1, px, tag, bright=False, under=fill)
         return
     if p.chrome == "graw":
         _graw_frame(canvas, p, x0, y0, x1, y1, px, tag, fill,
@@ -380,8 +454,8 @@ def paint_group(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome"):
     if p.chrome == "lock":
         canvas.create_rectangle(x0, y0, x1, y1, fill=p.panel, outline="",
                                 tags=tag)
-        _lock_rule(canvas, p, x0, x1, y0 + px(1), px, tag)
-        _lock_rule(canvas, p, x0, x1, y1 - px(1), px, tag)
+        _lock_rule(canvas, p, x0, x1, y0 + px(1), px, tag, under=p.panel)
+        _lock_rule(canvas, p, x0, x1, y1 - px(1), px, tag, under=p.panel)
         return
     if p.chrome == "graw":
         _graw_frame(canvas, p, x0, y0, x1, y1, px, tag, p.panel, p.edge)
@@ -402,13 +476,20 @@ def paint_button(canvas, p: Palette, x0, y0, x1, y1, px, selected, hover=False,
     """One navigation row."""
     if p.chrome == "lock":
         # A full-width band with the right end sheared off, the way the game
-        # sets its own menu entries and page titles.
+        # sets its own menu entries and page titles. The selected band is
+        # DARKER than the rest and neutral rather than blue -- that is how the
+        # game marks it, together with a lit top edge and its rule underneath.
         cut = int((y1 - y0) * 0.62)
-        base = p.sel_fill if selected else (p.panel2 if hover else p.panel)
-        canvas.create_polygon(shear_points(x0, y0, x1, y1, cut), fill=base,
-                              outline="", tags=tag)
+        top, bottom = (LOCK_BAND_SEL if selected else LOCK_BAND)
+        if hover and not selected:
+            top = tuple(min(255, c + 14) for c in top)
+            bottom = tuple(min(255, c + 14) for c in bottom)
+        _lock_band(canvas, x0, y0, x1, y1, top, bottom, tag, cut)
         if selected:
-            _lock_rule(canvas, p, x0, x1 - cut, y1 - px(1), px, tag)
+            canvas.create_line(x0, y0, x1 - cut, y0, fill=LOCK_BAND_EDGE,
+                               width=px(1), tags=tag)
+            _lock_rule(canvas, p, x0, x1, y1 - px(1), px, tag,
+                       under="#%02x%02x%02x" % bottom)
         return
     if p.chrome == "graw":
         cut = int((y1 - y0) * 0.55)

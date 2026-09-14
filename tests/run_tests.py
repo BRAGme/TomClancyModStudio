@@ -167,9 +167,61 @@ def run_lockdown(args):
               str(after_g["m249.gun"]))
 
         run_lockdown_psx(pak)
+        run_upscale(pak, profile)
 
     check("an all-default config writes nothing",
           profile.build_data(dict(profile.defaults())) == [])
+
+
+def run_upscale(pak, profile):
+    """The PCSX2 replacement-pack lookup, if the user keeps one.
+
+    Skipped silently when there is no pack, since it is the user's own file
+    and not something the repo ships.
+    """
+    import struct
+    from tcps2 import psx, upscale
+
+    folder = upscale.pack_dir(profile.serial)
+    if folder is None:
+        return
+    print("\n[Lockdown -- PCSX2 replacement pack]")
+    names = os.listdir(folder)
+
+    # The filename's TEX0 field claims a PS2 size; the DDS header states its
+    # own. A pack entry must be a whole multiple of what it replaces, and that
+    # cross-check is what makes filename filtering trustworthy.
+    bad = []
+    for name in names:
+        parsed = upscale.tex0(name)
+        if parsed is None:
+            bad.append(name); continue
+        _psm, tw, th = parsed
+        with open(os.path.join(folder, name), "rb") as fh:
+            head = fh.read(20)
+        h, w = struct.unpack_from("<II", head, 12)
+        if not (tw and th and w % tw == 0 and h % th == 0 and w // tw == h // th):
+            bad.append(name)
+    check("every pack entry is a whole multiple of the texture it replaces",
+          not bad, "%d of %d disagree" % (len(bad), len(names)))
+
+    sheet = psx.to_image(pak.read_file("/PS2DATA/SHELL/ART/SHELL1.PSX"))
+    better = upscale.better(profile.serial, sheet)
+    check("the shell sheet is found in the pack",
+          better is not None and better.width > sheet.width,
+          str(better.size if better else None))
+    if better is not None:
+        # PS2 alpha runs 0..128; taken at face value the whole sheet would
+        # draw at half opacity, so the lookup has to rescale it.
+        check("its alpha is rescaled off the PS2 0..128 range",
+              max(better.split()[-1].getdata()) > 200)
+
+    # A texture the pack does not hold must be refused, not approximated --
+    # this is what stops a disc borrowing another texture's art.
+    solid = sheet.copy()
+    solid.paste((255, 0, 255, 255), (0, 0, solid.width, solid.height))
+    check("a texture the pack does not hold is refused",
+          upscale.better(profile.serial, solid) is None)
 
 
 def run_lockdown_psx(pak):
