@@ -24,14 +24,14 @@ from tcps2 import art, engine  # noqa: E402
 from tcps2.detect import identify  # noqa: E402
 from tcps2.model import BOOL, INT  # noqa: E402
 
-from . import skins, theme  # noqa: E402
+from . import discorddialog, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
 from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
                       SettingCard, nav_style)  # noqa: E402
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "1.1"
+VERSION = "1.2"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -74,9 +74,13 @@ class App(tk.Tk):
         self._msgs = queue.Queue()
         self._recent = []
         self._last_size = (0, 0)
+        #: None until Discord presence is switched on; see gui/presence.py
+        self.presence = None
 
         self._build()
         self._load_prefs()
+        self.protocol("WM_DELETE_WINDOW", self._quit)
+        self._start_presence()
         self.after(120, self._pump)
 
     # -- construction ------------------------------------------------------
@@ -156,9 +160,16 @@ class App(tk.Tk):
                                       accent=True)
         self.cheat_btn = ActionButton(self.bar, "Cheat file", self._save_pnach)
         self.revert_btn = ActionButton(self.bar, "Restore disc", self._revert)
+        self.discord_btn = ActionButton(self.bar, "Discord", self.discord_setup)
+        self.discord_btn.configure(width=self.discord_btn.width_needed())
         for b in (self.apply_btn, self.cheat_btn, self.revert_btn):
             b.pack(side="right", padx=(theme.px(10), 0))
             b.set_enabled(False)
+        # Packed last so it sits at the LEFT of the right-hand group: "Apply to
+        # disc" is the primary action and belongs at the end of the row, not
+        # with a settings button beyond it. Never disabled -- it configures the
+        # tool rather than touching the disc, so it works with nothing loaded.
+        self.discord_btn.pack(side="right", padx=(theme.px(10), 0))
 
         self.logwrap = Chrome(self.stage, kind="panel", pad=theme.px(8),
                               autofit=False)
@@ -223,7 +234,8 @@ class App(tk.Tk):
         self.logwrap.place(x=x, y=log_top, width=width, height=px(LOG_H))
         self.logwrap.set_height(px(LOG_H))
 
-        for b in (self.browse, self.apply_btn, self.cheat_btn, self.revert_btn):
+        for b in (self.browse, self.apply_btn, self.cheat_btn,
+                  self.revert_btn, self.discord_btn):
             b.configure(width=b.width_needed())
 
     def _path_indent(self):
@@ -402,6 +414,7 @@ class App(tk.Tk):
 
     def _show_group(self, name):
         self.active_group = name
+        self._publish()
         for n, item in self.nav_items.items():
             item.select(n == name)
         self._retitle(name or self.profile.short,
@@ -457,6 +470,7 @@ class App(tk.Tk):
     def _changed(self):
         if not self.profile:
             return
+        self._publish()
         vals = self._values()
         for key, card in self.cards.items():
             s = self.profile.setting(key)
@@ -485,6 +499,69 @@ class App(tk.Tk):
                 return
 
     # -- actions -----------------------------------------------------------
+    # -- Discord -----------------------------------------------------------
+
+    def _start_presence(self):
+        """Bring the presence up if it is switched on. Failure is silent.
+
+        There is deliberately no message when this does not work: Discord not
+        being installed is the common case, not a fault, and a modal about it
+        on every launch would be worse than the feature is good.
+        """
+        prefs = presence.load()
+        if not prefs["enabled"] or not prefs["app_id"]:
+            return
+        try:
+            self.presence = presence.Presence(prefs["app_id"])
+            self.presence.start()
+            self._publish()
+        except Exception:                         # noqa: BLE001
+            self.presence = None
+
+    def discord_setup(self):
+        chosen = discorddialog.configure(self, self.presence)
+        if chosen is None:
+            return
+        enabled, app_id = chosen
+        # Restart rather than mutate: the application id is fixed at handshake,
+        # so changing it means a new connection either way.
+        if self.presence is not None:
+            self.presence.close()
+            self.presence = None
+        if enabled and app_id:
+            self.presence = presence.Presence(app_id)
+            self.presence.start()
+            self._publish()
+            self._say("Discord presence on. It connects when Discord is running.")
+        else:
+            self._say("Discord presence off.")
+
+    def _publish(self):
+        """Say what is on screen, in the two lines Discord gives us."""
+        if self.presence is None:
+            return
+        if self.profile is None:
+            self.presence.update(details="No disc loaded", state="Idle",
+                                 image="idle", image_text=APP_NAME)
+            return
+        # Count controls moved off stock rather than edits built. This runs on
+        # every widget change, a slider drag included, so it has to stay cheap.
+        defaults = dict(self.profile.defaults())
+        changed = sum(1 for k, v in self._values().items()
+                      if k in defaults and v != defaults[k])
+        state = self.active_group or "Browsing"
+        if changed:
+            state += "  -  %d change%s" % (changed, "" if changed == 1 else "s")
+        self.presence.update(details="Modding " + self.profile.title,
+                             state=state, image=self.profile.id,
+                             image_text="%s  (%s)" % (self.profile.title,
+                                                      self.profile.serial))
+
+    def _quit(self):
+        if self.presence is not None:
+            self.presence.close()
+        self.destroy()
+
     def _guard(self):
         if self.busy:
             return False
