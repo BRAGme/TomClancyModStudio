@@ -16,13 +16,29 @@ Six 3's. Everything here is **data**, not code:
 
   * `COMMON.LIN` holds the enemy templates, and the grenade picture in it was
     counted rather than assumed. Of the 73 `NbOfGrenade` tables: 43 always come
-    up empty, **18 always spawn a frag grenade**, 8 roll one against nothing at
+    up empty, 18 always spawn a frag grenade, 8 roll a frag against nothing at
     20/15/25/30 percent, 2 always carry a molotov, 1 a smoke, and 1 rolls 10
-    percent frag against 10 percent tear gas. So yes -- enemies throw grenades
-    in this game, and 21 of the 73 templates are holding one every time.
-    The 8 rolled tables are the ones with a number in them to change, and they
-    use the same three-digit weighted form Rainbow Six 3 uses, so the same
-    digit-for-digit edit works.
+    percent frag against 10 percent tear gas. The 8 rolled tables are the ones
+    with a number in them to change, and they use the same three-digit weighted
+    form Rainbow Six 3 uses, so the same digit-for-digit edit works.
+
+    **Two of those gadget classes are dead on this disc.** Searching the
+    decompressed `SP.SOZ` and `MP.SOZ` overlays case-insensitively:
+    `R6FragGrenadeGadget` appears 4 times, `R6SmokeGrenadeGadget` once,
+    `R6TearGasGrenadeGadget` once, `R6PhosphorusGrenadeGadget` once --
+    but `R6MolotovGadget` and `R6FlashBangGadget` appear **zero** times, in
+    either overlay. The molotov is named in `COMMON.LIN` and in no other package
+    on the disc, not even `COMMONOFF.LIN`, which carries every other gadget
+    class. Rainbow Six 3's overlay, by contrast, names all six. So the two
+    molotov templates here reference a class this build cannot instantiate:
+    leftovers from the Rainbow Six 3 codebase, not content.
+
+    The throwing machinery itself is real. `COMMON.LIN`'s script name table
+    registers `ServerThrowGrenade`, `CanThrowGrenade`, `TooCloseToThrowGrenade`,
+    `GrenadeWasThrown`, `GetSaveDistanceToThrow` and
+    `m_bThrowGrenadeWithLeftHand`, the animation table has `StandPullPin` and
+    `StandThrowGrenade`, and `m_fMinDistToThrowGrenade` is a registered
+    variable. `ThrowGrenade` appears 5 times in `SP.SOZ` and twice in `MP.SOZ`.
 
 What is **not** here is the wave system, the render switches and the split-screen
 fixes. Those are virtual addresses inside Rainbow Six 3's `SP.SOZ`, and this is
@@ -80,6 +96,17 @@ NOTES = (
     "COMMON.LIN carries 73 weapon-and-grenade tables in the same format. Both "
     "read and write correctly here, which is what the Enemies and Controls "
     "pages are built on.\n\n"
+    "On grenades: the throwing machinery is real -- the script name table "
+    "registers ServerThrowGrenade, CanThrowGrenade, TooCloseToThrowGrenade and "
+    "GrenadeWasThrown, the animation table has StandPullPin and "
+    "StandThrowGrenade, and m_fMinDistToThrowGrenade is a live variable. But "
+    "two gadget classes the templates name are NOT in this build: "
+    "R6MolotovGadget and R6FlashBangGadget appear zero times in either "
+    "overlay, while frag, smoke, tear gas and phosphorus all appear. Rainbow "
+    "Six 3's overlay names all six. So the molotov and flashbang templates "
+    "here are leftovers from that codebase and cannot spawn. Frags can, and "
+    "the reason you may never have seen one thrown is the 500-unit minimum "
+    "throw distance rather than the carry chance.\n\n"
     "There are no code options. Rainbow Six 3's wave, render and split-screen "
     "patches are addresses inside ITS overlay; this is a different build and "
     "those offsets mean something else in it. This disc's overlay has not been "
@@ -97,21 +124,26 @@ def _settings():
                 confidence="applied", touches="data",
                 help="What an enemy spawns holding is a weighted roll made "
                      "once, at spawn, over a small table in his template. "
-                     "Eight of this disc's 73 tables roll a frag grenade "
-                     "against nothing, at 20, 15, 25 and 30 percent. This sets "
-                     "that share. A further 21 templates always carry "
-                     "something -- 18 a frag, 2 a molotov, 1 smoke -- and are "
-                     "not affected by this.",
-                caution="There is no separate throw chance. Once he is holding "
-                        "one, whether he uses it is decided by the two settings "
-                        "below."),
+                     "Eight of this disc's 73 tables roll a FRAG grenade "
+                     "against nothing, at 20, 15, 25 and 30 percent, and this "
+                     "sets that share. A further 18 always spawn a frag. The "
+                     "frag class is live: it is in both overlays, and four of "
+                     "the ten ST*_MAP_C multiplayer packages name it.",
+                caution="If you have never seen an enemy throw one, the dial "
+                        "below is the likelier reason than this one -- an NPC "
+                        "will not throw at anything closer than 500 units, and "
+                        "in tight rooms that rules out most fights. There is no "
+                        "separate throw chance; once he is holding one the "
+                        "decision is deterministic."),
         Setting("gr2_grenade_dist", "How close enemies will throw grenades",
                 INT, 500, "Enemies", minimum=25, maximum=900, unit="units",
                 confidence="applied", touches="data",
                 help="The game will not let an enemy throw at anything nearer "
-                     "than this. It ships at 500. Lower it and grenades turn up "
-                     "in close quarters; raise it and they become a long-range "
-                     "answer only."),
+                     "than this, and it ships at 500 -- far enough that a lot "
+                     "of this game's fights never qualify. If grenades feel "
+                     "absent, this is the dial: drop it to 150-250 and they "
+                     "start turning up in rooms instead of only across open "
+                     "ground."),
         Setting("gr2_grenade_delay", "How long they think about it first",
                 CHOICE, "stock", "Enemies", confidence="applied",
                 touches="data",

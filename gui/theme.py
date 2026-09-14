@@ -45,15 +45,44 @@ def colour(name):
     return getattr(P, name, P.text)
 
 
+#: resolved family per preference string, so the lookup happens once
+_FAMILIES = {}
+
+
+def family(pref: str) -> str:
+    """The first family in a comma-separated preference list that Tk actually has.
+
+    A palette names the face the game itself uses; if this machine does not have
+    it, Tk silently substitutes something arbitrary and the skin quietly stops
+    looking like the game. Resolving here means the fallback is the one the
+    palette chose rather than whatever Tk felt like.
+    """
+    if pref in _FAMILIES:
+        return _FAMILIES[pref]
+    wanted = [n.strip() for n in pref.split(",") if n.strip()]
+    chosen = wanted[-1] if wanted else "Segoe UI"
+    try:
+        import tkinter.font as tkfont
+        have = {n.lower() for n in tkfont.families(_root)} if _root else set()
+        for name in wanted:
+            if name.lower() in have:
+                chosen = name
+                break
+    except Exception:                            # noqa: BLE001
+        pass
+    _FAMILIES[pref] = chosen
+    return chosen
+
+
 def F(kind="body", size=10):
     """A tk font tuple in the active skin's faces."""
     if kind == "title":
-        return (P.title_font, size)
+        return (family(P.title_font), size)
     if kind == "bold":
-        return (P.bold_font, size)
+        return (family(P.bold_font), size)
     if kind == "mono":
         return ("Consolas", size)
-    return (P.body_font, size)
+    return (family(P.body_font), size)
 
 
 def set_dpi_aware():

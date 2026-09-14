@@ -373,16 +373,38 @@ def paint_button(canvas, p: Palette, x0, y0, x1, y1, px, selected, hover=False,
 # lettering
 # ---------------------------------------------------------------------------
 
+#: family name -> the files Pillow should try for it, best first. Pillow loads
+#: by filename, Tk by family name, so a palette's preference string has to be
+#: translatable both ways.
+FONT_FILES = {
+    "Bahnschrift": ["bahnschrift.ttf"],
+    "Bahnschrift Light": ["bahnschrift.ttf", "segoeuil.ttf"],
+    "Bahnschrift SemiBold": ["bahnschrift.ttf", "seguisb.ttf"],
+    "Bahnschrift SemiCondensed": ["bahnschrift.ttf", "segoeui.ttf"],
+    "Verdana": ["verdana.ttf", "segoeui.ttf"],
+    "Verdana Bold": ["verdanab.ttf", "segoeuib.ttf"],
+    "Segoe UI": ["segoeui.ttf"],
+    "Segoe UI Light": ["segoeuil.ttf", "segoeui.ttf"],
+    "Segoe UI Semibold": ["seguisb.ttf", "segoeuib.ttf"],
+    "Segoe UI Bold": ["segoeuib.ttf"],
+    "Tahoma": ["tahoma.ttf"],
+    "Tahoma Bold": ["tahomabd.ttf", "tahoma.ttf"],
+    "Trebuchet MS": ["trebuc.ttf"],
+    "Trebuchet MS Bold": ["trebucbd.ttf", "trebuc.ttf"],
+    "Franklin Gothic Medium": ["framd.ttf", "segoeui.ttf"],
+    "Impact": ["impact.ttf"],
+    "Consolas": ["consola.ttf"],
+}
+
+
 def _font(name, size):
+    """Load the first face of a comma-separated preference list that exists."""
     from PIL import ImageFont
-    files = {
-        "Bahnschrift Light": ["bahnschrift.ttf", "segoeuil.ttf"],
-        "Verdana": ["verdana.ttf", "segoeui.ttf"],
-        "Verdana Bold": ["verdanab.ttf", "segoeuib.ttf"],
-        "Segoe UI": ["segoeui.ttf"],
-        "Segoe UI Semibold": ["seguisb.ttf", "segoeuib.ttf"],
-    }.get(name, ["segoeui.ttf"])
-    for f in files:
+    tried = []
+    for want in [n.strip() for n in str(name).split(",") if n.strip()]:
+        tried += FONT_FILES.get(want, [])
+    tried.append("segoeui.ttf")
+    for f in tried:
         try:
             return ImageFont.truetype(f, size)
         except OSError:
