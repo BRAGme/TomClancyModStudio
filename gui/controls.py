@@ -1,10 +1,10 @@
-"""Hand-drawn toggle, radio and slider.
+"""Hand-drawn toggle, radio and slider, in whichever skin is active.
 
 ttk's own indicators are a fixed handful of pixels and stay that size on a
-scaled display, which on a 150% monitor leaves a checkbox smaller than the
-full stop at the end of its own label. These draw themselves on a canvas at
-whatever size the theme asks for, and they also give us the look the rest of
-the window is going for.
+scaled display, which on a 150% monitor leaves a checkbox smaller than the full
+stop at the end of its own label. These draw themselves at whatever size the
+skin asks for, which also lets them wear the game's colours: a steel switch with
+a red-lit travel in Rainbow Six 3, a gold one in the two Ghost Recons.
 """
 
 from __future__ import annotations
@@ -12,55 +12,52 @@ from __future__ import annotations
 import tkinter as tk
 
 from . import theme
+from .skins import mix, round_points
 
 
-class _CanvasControl(tk.Canvas):
-    def __init__(self, master, width, height, **kw):
-        super().__init__(master, width=width, height=height, bg=theme.PANEL,
-                         highlightthickness=0, bd=0, takefocus=1, **kw)
+class _Hit(tk.Canvas):
+    """A small canvas that behaves like a button."""
+
+    def __init__(self, master, width, height, on_click):
+        super().__init__(master, width=width, height=height, bg=theme.P.panel,
+                         highlightthickness=0, bd=0, takefocus=0)
+        self._on_click = on_click
         self._enabled = True
-        self.bind("<Button-1>", self._clicked)
+        self.hovered = False
+        self.bind("<Button-1>", lambda _e: self._enabled and self._on_click())
         self.bind("<Enter>", lambda _e: self._hover(True))
         self.bind("<Leave>", lambda _e: self._hover(False))
-        self._hovered = False
+        self.configure(cursor="hand2")
 
     def _hover(self, on):
-        self._hovered = on
+        self.hovered = on
         self.redraw()
-
-    def _clicked(self, _e):
-        if self._enabled:
-            self.activate()
 
     def set_enabled(self, on):
         self._enabled = on
-        self.configure(cursor="" if not on else "hand2")
+        self.configure(cursor="hand2" if on else "")
         self.redraw()
 
-    def activate(self):
-        raise NotImplementedError
-
     def redraw(self):
-        raise NotImplementedError
+        pass
 
 
 class Toggle(tk.Frame):
-    """A pill switch plus its label, the whole row clickable."""
+    """A switch plus its label, the whole row clickable."""
 
     def __init__(self, master, text, variable, command=None):
-        super().__init__(master, bg=theme.PANEL)
+        super().__init__(master, bg=theme.P.panel)
         self.var = variable
         self.command = command
         self._enabled = True
 
-        w, h = theme.px(38), theme.px(20)
-        self.pill = _CanvasControl(self, w, h)
-        self.pill.activate = self.toggle
+        w, h = theme.px(40), theme.px(21)
+        self.pill = _Hit(self, w, h, self.toggle)
         self.pill.redraw = self._draw
-        self.pill.pack(side="left", padx=(0, theme.px(11)))
+        self.pill.pack(side="left", padx=(0, theme.px(12)))
 
-        self.label = tk.Label(self, text=text, bg=theme.PANEL, fg=theme.TEXT,
-                              font=theme.FONT_BOLD, anchor="w", justify="left")
+        self.label = tk.Label(self, text=text, bg=theme.P.panel, fg=theme.P.text,
+                              font=theme.F("bold", 10), anchor="w", justify="left")
         self.label.pack(side="left", fill="x", expand=True)
         for w_ in (self.label, self):
             w_.bind("<Button-1>", lambda _e: self.toggle())
@@ -78,7 +75,7 @@ class Toggle(tk.Frame):
     def set_enabled(self, on):
         self._enabled = on
         self.pill.set_enabled(on)
-        self.label.configure(fg=theme.TEXT if on else theme.FAINT,
+        self.label.configure(fg=theme.P.text if on else theme.P.faint,
                              cursor="hand2" if on else "")
         self.configure(cursor="hand2" if on else "")
         self._draw()
@@ -87,55 +84,65 @@ class Toggle(tk.Frame):
         self._draw()
 
     def _draw(self):
-        c = self.pill
+        p, c = theme.P, self.pill
         c.delete("all")
-        w = int(c["width"])
-        h = int(c["height"])
+        w, h = int(c["width"]), int(c["height"])
         on = bool(self.var.get())
         r = h // 2
+
         if not self._enabled:
-            track, knob = theme.LINE, theme.FAINT
+            track, knob, edge = p.panel2, p.faint, p.edge_dim
         elif on:
-            track = theme.ACCENT if c._hovered else theme.ACCENT_DIM
-            knob = "#f4fbec"
+            track = p.tab if p.chrome == "rs3" else p.sel_fill
+            knob = "#f4f8fa" if p.chrome == "rs3" else "#fffaf0"
+            edge = mix(track, "#ffffff", 0.3)
         else:
-            track = theme.PANEL_HI if not c._hovered else theme.LINE
-            knob = theme.DIM
-        _round_rect(c, 1, 1, w - 1, h - 1, r, fill=track, outline="")
-        cx = (w - r - 1) if on else (r + 1)
+            track = mix(p.panel, p.bg, 0.6 if not c.hovered else 0.2)
+            knob = p.dim
+            edge = p.edge_dim
+
+        if p.chrome == "rs3":
+            from .skins import panel_points
+            cut = theme.px(5)
+            c.create_polygon(panel_points(1, 1, w - 1, h - 1, cut),
+                             fill=track, outline=edge, width=1)
+        else:
+            c.create_polygon(round_points(1, 1, w - 1, h - 1, r), smooth=True,
+                             fill=track, outline=edge, width=theme.px(1))
         pad = theme.px(3)
-        c.create_oval(cx - r + pad, pad, cx + r - pad, h - pad,
+        kx = (w - r - 1) if on else (r + 1)
+        c.create_oval(kx - r + pad, pad, kx + r - pad, h - pad,
                       fill=knob, outline="")
 
 
 class RadioRow(tk.Frame):
-    """One option of a choice: a dot, a label, and an optional explanation."""
+    """One option of a choice: a marker, a label, and an explanation."""
 
     def __init__(self, master, text, help_text, value, variable, command=None):
-        super().__init__(master, bg=theme.PANEL)
+        super().__init__(master, bg=theme.P.panel)
         self.var = variable
         self.value = value
         self.command = command
         self._enabled = True
 
-        top = tk.Frame(self, bg=theme.PANEL)
+        top = tk.Frame(self, bg=theme.P.panel)
         top.pack(fill="x")
         d = theme.px(18)
-        self.dot = _CanvasControl(top, d, d)
-        self.dot.activate = self.choose
+        self.dot = _Hit(top, d, d, self.choose)
         self.dot.redraw = self._draw
-        self.dot.pack(side="left", padx=(0, theme.px(10)))
-        self.label = tk.Label(top, text=text, bg=theme.PANEL, fg=theme.TEXT,
-                              font=theme.FONT, anchor="w")
+        self.dot.pack(side="left", padx=(0, theme.px(11)))
+        self.label = tk.Label(top, text=text, bg=theme.P.panel, fg=theme.P.text,
+                              font=theme.F("body", 10), anchor="w")
         self.label.pack(side="left", fill="x", expand=True)
 
         self.help = None
         if help_text:
-            self.help = tk.Label(self, text=help_text, bg=theme.PANEL,
-                                 fg=theme.DIM, font=theme.FONT_SMALL,
+            self.help = tk.Label(self, text=help_text, bg=theme.P.panel,
+                                 fg=theme.P.dim, font=theme.F("body", 8),
                                  wraplength=theme.px(520), justify="left",
                                  anchor="w")
-            self.help.pack(fill="x", padx=(theme.px(28), 0), pady=(theme.px(1), 0))
+            self.help.pack(fill="x", padx=(theme.px(29), 0),
+                           pady=(theme.px(1), 0))
 
         for w_ in (self.label, top):
             w_.bind("<Button-1>", lambda _e: self.choose())
@@ -153,34 +160,44 @@ class RadioRow(tk.Frame):
     def set_enabled(self, on):
         self._enabled = on
         self.dot.set_enabled(on)
-        self.label.configure(fg=theme.TEXT if on else theme.FAINT)
+        self.label.configure(fg=theme.P.text if on else theme.P.faint)
         if self.help:
-            self.help.configure(fg=theme.DIM if on else theme.FAINT)
+            self.help.configure(fg=theme.P.dim if on else theme.P.faint)
         self._draw()
 
     def _draw(self):
-        c = self.dot
+        p, c = theme.P, self.dot
         try:
             c.delete("all")
         except tk.TclError:
             return
         d = int(c["width"])
         on = self.var.get() == self.value
-        ring = theme.FAINT if not self._enabled else (
-            theme.ACCENT if on or c._hovered else theme.LINE)
-        c.create_oval(1, 1, d - 1, d - 1, outline=ring, width=theme.px(2))
-        if on:
-            p = theme.px(5)
-            c.create_oval(p, p, d - p, d - p,
-                          fill=theme.ACCENT if self._enabled else theme.FAINT,
-                          outline="")
+        live = self._enabled
+        mark = p.tab if p.chrome == "rs3" else p.sel_fill
+        ring = p.faint if not live else (mark if on else
+                                         (p.edge if c.hovered else p.edge_dim))
+        if p.chrome == "rs3":
+            from .skins import panel_points
+            c.create_polygon(panel_points(1, 1, d - 1, d - 1, theme.px(4)),
+                             fill="", outline=ring, width=theme.px(2))
+            if on:
+                k = theme.px(5)
+                c.create_rectangle(k, k, d - k, d - k,
+                                   fill=mark if live else p.faint, outline="")
+        else:
+            c.create_oval(1, 1, d - 1, d - 1, outline=ring, width=theme.px(2))
+            if on:
+                k = theme.px(5)
+                c.create_oval(k, k, d - k, d - k,
+                              fill=mark if live else p.faint, outline="")
 
 
 class Slider(tk.Frame):
     """A draggable track with its value spelled out beside it."""
 
     def __init__(self, master, variable, minimum, maximum, unit="", command=None):
-        super().__init__(master, bg=theme.PANEL)
+        super().__init__(master, bg=theme.P.panel)
         self.var = variable
         self.min, self.max = minimum, maximum
         self.unit = unit
@@ -189,11 +206,12 @@ class Slider(tk.Frame):
         self._drag = False
 
         self.h = theme.px(26)
-        self.canvas = tk.Canvas(self, height=self.h, bg=theme.PANEL,
+        self.canvas = tk.Canvas(self, height=self.h, bg=theme.P.panel,
                                 highlightthickness=0, bd=0, cursor="hand2")
         self.canvas.pack(side="left", fill="x", expand=True)
-        self.value_lbl = tk.Label(self, text="", bg=theme.PANEL, fg=theme.TEXT,
-                                  font=theme.FONT_BOLD, width=13, anchor="e")
+        self.value_lbl = tk.Label(self, text="", bg=theme.P.panel,
+                                  fg=theme.P.text, font=theme.F("bold", 10),
+                                  width=13, anchor="e")
         self.value_lbl.pack(side="right", padx=(theme.px(12), 0))
 
         self.canvas.bind("<Configure>", lambda _e: self._draw())
@@ -210,10 +228,9 @@ class Slider(tk.Frame):
         return int(round(self.min + frac * (self.max - self.min)))
 
     def _press(self, e):
-        if not self._enabled:
-            return
-        self._drag = True
-        self._set(self._value_at(e.x))
+        if self._enabled:
+            self._drag = True
+            self._set(self._value_at(e.x))
 
     def _move(self, e):
         if self._drag and self._enabled:
@@ -239,7 +256,7 @@ class Slider(tk.Frame):
     def set_enabled(self, on):
         self._enabled = on
         self.canvas.configure(cursor="hand2" if on else "")
-        self.value_lbl.configure(fg=theme.TEXT if on else theme.FAINT)
+        self.value_lbl.configure(fg=theme.P.text if on else theme.P.faint)
         self._draw()
 
     def sync(self):
@@ -247,7 +264,7 @@ class Slider(tk.Frame):
 
     # -- painting ----------------------------------------------------------
     def _draw(self):
-        c = self.canvas
+        p, c = theme.P, self.canvas
         c.delete("all")
         w = c.winfo_width()
         if w <= 1:
@@ -258,22 +275,24 @@ class Slider(tk.Frame):
         span = max(1, w - pad * 2)
         frac = (self.var.get() - self.min) / max(1, (self.max - self.min))
         x = pad + frac * span
-        th = theme.px(5)
-        fill = theme.ACCENT if self._enabled else theme.FAINT
-        _round_rect(c, pad, mid - th // 2, w - pad, mid + th // 2 + 1,
-                    th // 2, fill=theme.BG, outline="")
-        if x > pad:
-            _round_rect(c, pad, mid - th // 2, x, mid + th // 2 + 1,
-                        th // 2, fill=fill, outline="")
-        r = theme.px(8)
-        c.create_oval(x - r, mid - r, x + r, mid + r,
-                      fill="#eef6e5" if self._enabled else theme.LINE,
-                      outline=fill, width=theme.px(2))
+        th = theme.px(6)
+        fill = p.accent if self._enabled else p.faint
+
+        c.create_rectangle(pad, mid - th // 2, w - pad, mid + th // 2,
+                           fill=mix(p.bg, "#000000", 0.25), outline=p.edge_dim)
+        if x > pad + 1:
+            c.create_rectangle(pad + 1, mid - th // 2 + 1, x, mid + th // 2 - 1,
+                               fill=fill, outline="")
+        if p.chrome == "rs3":
+            from .skins import panel_points
+            k = theme.px(7)
+            c.create_polygon(panel_points(x - k, mid - k, x + k, mid + k,
+                                          theme.px(4)),
+                             fill="#e9eef2" if self._enabled else p.panel2,
+                             outline=fill, width=theme.px(2))
+        else:
+            r = theme.px(8)
+            c.create_oval(x - r, mid - r, x + r, mid + r,
+                          fill=p.sel_fill if self._enabled else p.panel2,
+                          outline=p.accent_dim, width=theme.px(2))
         self.value_lbl.configure(text="%d %s" % (self.var.get(), self.unit))
-
-
-def _round_rect(canvas, x0, y0, x1, y1, r, **kw):
-    r = max(0, min(r, (x1 - x0) // 2, (y1 - y0) // 2))
-    pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
-           x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
-    return canvas.create_polygon(pts, smooth=True, **kw)

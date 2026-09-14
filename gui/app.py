@@ -1,4 +1,11 @@
-"""Tom Clancy PS2 Mod Studio -- the window."""
+"""Tom Clancy PS2 Mod Studio -- the window.
+
+The whole window sits on one canvas holding the loaded game's own artwork, and
+every part of the interface is placed onto it, so the backdrop shows in the gaps
+the way it does in the games' own menus. Which skin is in force follows the
+disc: gunmetal for Rainbow Six 3, gold-on-navy for Ghost Recon, gold-on-teal for
+Jungle Storm.
+"""
 
 from __future__ import annotations
 
@@ -15,16 +22,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcps2 import art, engine  # noqa: E402
 from tcps2.detect import identify  # noqa: E402
-from tcps2.model import BOOL, CHOICE, INT  # noqa: E402
+from tcps2.model import BOOL, INT  # noqa: E402
 
-from . import theme  # noqa: E402
+from . import skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
-from .widgets import ScrollArea, SettingCard  # noqa: E402
+from .widgets import ActionButton, Chrome, NavItem, ScrollArea, SettingCard  # noqa: E402
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
-VERSION = "1.0"
-BANNER_H = 132   # logical pixels; scaled by the theme once the display is known
+PRESET_HINT = "Choose a preset…"
+VERSION = "1.1"
 NOTES_TAB = "About this disc"
+
+HEADER = 132
+ACTION_H = 46
+LOG_H = 88
+GUTTER = 22
 
 
 def settings_path():
@@ -38,27 +50,31 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("%s %s" % (APP_NAME, VERSION))
-        self.configure(bg=theme.BG)
         theme.install(self)
+        self.configure(bg=theme.P.bg)
+        self.geometry("%dx%d" % (theme.px(1160), theme.px(860)))
+        self.minsize(theme.px(900), theme.px(660))
         self._set_icon()
-        self.px = theme.px
-        self.geometry("%dx%d" % (self.px(1120), self.px(830)))
-        self.minsize(self.px(880), self.px(620))
 
         self.detection = None
         self.profile = None
-        self.vars = {}
-        self.cards = {}
+        self.vars, self.cards, self.nav_items = {}, {}, {}
         self.active_group = None
         self.busy = False
-        self._banner_photo = None
+        self.backdrop_src = None
+        self.emblem_src = None
+        self._plate = None
+        self._header_img = None
+        self._title_text = ("Choose a disc", "")
         self._msgs = queue.Queue()
         self._recent = []
+        self._last_size = (0, 0)
 
         self._build()
         self._load_prefs()
         self.after(120, self._pump)
 
+    # -- construction ------------------------------------------------------
     def _set_icon(self):
         base = getattr(sys, "_MEIPASS", os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))))
@@ -74,82 +90,142 @@ class App(tk.Tk):
                     self._icon_img = ImageTk.PhotoImage(Image.open(path))
                     self.iconphoto(True, self._icon_img)
                 return
-            except Exception:
+            except Exception:                     # noqa: BLE001
                 continue
 
-    # -- layout ------------------------------------------------------------
     def _build(self):
-        self.banner = tk.Label(self, bd=0, bg=theme.BG)
-        self.banner.pack(fill="x")
-        self._draw_banner()
+        p = theme.P
+        self.stage = tk.Canvas(self, bg=p.bg, highlightthickness=0, bd=0)
+        self.stage.pack(fill="both", expand=True)
+        self.stage.bind("<Configure>", self._on_resize)
 
-        disc = ttk.Frame(self, padding=(theme.px(22), theme.px(14), theme.px(22), theme.px(8)))
-        disc.pack(fill="x")
-        ttk.Label(disc, text="Disc image").pack(side="left", padx=(0, theme.px(10)))
+        self.header = tk.Label(self.stage, bd=0, bg=p.bg)
+
+        self.disc = Chrome(self.stage, kind="panel", pad=theme.px(9))
+        row = tk.Frame(self.disc.body, bg=p.panel)
+        row.pack(fill="x")
+        self.disc_lbl = tk.Label(row, text="DISC", bg=p.panel, fg=p.dim,
+                                 font=theme.F("body", 9))
+        self.disc_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
         self.path_var = tk.StringVar()
-        self.path_entry = ttk.Entry(disc, textvariable=self.path_var)
-        self.path_entry.pack(side="left", fill="x", expand=True)
+        self.path_entry = tk.Entry(row, textvariable=self.path_var, bg=p.bg,
+                                   fg=p.text, bd=0, insertbackground=p.text,
+                                   font=theme.F("body", 10), highlightthickness=0)
+        self.path_entry.pack(side="left", fill="x", expand=True, ipady=theme.px(5))
         self.path_entry.bind("<Return>", lambda _e: self._load_iso(self.path_var.get()))
-        ttk.Button(disc, text="Browse…", command=self._browse).pack(side="left", padx=(theme.px(8), 0))
+        self.browse = ActionButton(row, "Browse", "triangle", self._browse)
+        self.browse.pack(side="left", padx=(theme.px(10), 0))
 
-        self.status = ttk.Label(self, text="Choose a Rainbow Six 3, Ghost Recon or "
-                                           "Jungle Storm disc image to begin.",
-                                style="Dim.TLabel")
-        self.status.pack(fill="x", padx=theme.px(24), pady=(0, theme.px(10)))
+        self.status = tk.Label(self.stage, text="", bg=p.bg, fg=p.dim,
+                               font=theme.F("body", 9), anchor="w")
 
-        body = ttk.Frame(self)
-        body.pack(fill="both", expand=True, padx=theme.px(22))
-
-        self.nav = ttk.Frame(body, width=theme.px(196))
+        self.group = Chrome(self.stage, kind="group", pad=theme.px(12),
+                            autofit=False)
+        self.nav = tk.Frame(self.group.body, bg=p.panel, width=theme.px(212))
         self.nav.pack(side="left", fill="y")
         self.nav.pack_propagate(False)
+        self.area = ScrollArea(self.group.body)
+        self.area.pack(side="left", fill="both", expand=True,
+                       padx=(theme.px(12), 0))
 
-        right = ttk.Frame(body, style="Panel.TFrame")
-        right.pack(side="left", fill="both", expand=True)
-        self.area = ScrollArea(right)
-        self.area.pack(fill="both", expand=True, padx=theme.px(2), pady=theme.px(2))
-
-        bar = ttk.Frame(self, padding=(theme.px(22), theme.px(12), theme.px(22), theme.px(6)))
-        bar.pack(fill="x")
-        ttk.Label(bar, text="Preset").pack(side="left", padx=(0, theme.px(8)))
+        self.bar = tk.Frame(self.stage, bg=p.bg)
+        self.preset_lbl = tk.Label(self.bar, text="PRESET", bg=p.bg, fg=p.dim,
+                                   font=theme.F("body", 9))
+        self.preset_lbl.pack(side="left", padx=(theme.px(4), theme.px(10)))
         self.preset_var = tk.StringVar(value="")
-        self.preset_box = ttk.Combobox(bar, textvariable=self.preset_var, width=24,
-                                       state="readonly", values=[])
-        self.preset_box.pack(side="left")
+        self.preset_box = ttk.Combobox(self.bar, textvariable=self.preset_var,
+                                       width=34, state="readonly", values=[])
+        self.preset_box.pack(side="left", pady=theme.px(6))
         self.preset_box.bind("<<ComboboxSelected>>", self._apply_preset)
 
-        self.apply_btn = ttk.Button(bar, text="Apply to disc", style="Accent.TButton",
-                                    command=self._apply, state="disabled")
-        self.apply_btn.pack(side="right")
-        self.cheat_btn = ttk.Button(bar, text="Save cheat file…",
-                                    command=self._save_pnach, state="disabled")
-        self.cheat_btn.pack(side="right", padx=theme.px(8))
-        self.revert_btn = ttk.Button(bar, text="Restore disc", style="Danger.TButton",
-                                     command=self._revert, state="disabled")
-        self.revert_btn.pack(side="right", padx=theme.px(8))
+        self.apply_btn = ActionButton(self.bar, "Apply to disc", "cross",
+                                      self._apply, accent=True)
+        self.cheat_btn = ActionButton(self.bar, "Cheat file", "triangle",
+                                      self._save_pnach)
+        self.revert_btn = ActionButton(self.bar, "Restore disc", "triangle",
+                                       self._revert)
+        for b in (self.apply_btn, self.cheat_btn, self.revert_btn):
+            b.pack(side="right", padx=(theme.px(10), 0))
+            b.set_enabled(False)
 
-        logwrap = ttk.Frame(self, padding=(theme.px(22), 0, theme.px(22), theme.px(14)))
-        logwrap.pack(fill="x")
-        self.log = tk.Text(logwrap, height=6, bg=theme.PANEL, fg=theme.DIM,
-                           font=theme.FONT_MONO, bd=0, highlightthickness=0,
-                           padx=theme.px(12), pady=theme.px(8), wrap="word", state="disabled")
+        self.logwrap = Chrome(self.stage, kind="panel", pad=theme.px(8),
+                              autofit=False)
+        self.log = tk.Text(self.logwrap.body, height=4, bg=p.panel, fg=p.dim,
+                           font=theme.F("mono", 9), bd=0, highlightthickness=0,
+                           padx=theme.px(8), pady=theme.px(2), wrap="word",
+                           state="disabled")
         self.log.pack(fill="both", expand=True)
-        self.log.tag_configure("good", foreground=theme.GOOD)
-        self.log.tag_configure("warn", foreground=theme.WARN)
-        self.log.tag_configure("bad", foreground=theme.BAD)
+        self._log_tags()
         self._say("%s %s -- ready." % (APP_NAME, VERSION))
 
-    def _draw_banner(self, image=None, title=APP_NAME, subtitle="Patch a PS2 disc in place"):
-        w = max(self.winfo_width(), theme.px(1120))
-        h = theme.px(BANNER_H)
-        photo = (theme.make_banner(image, w, h, title, subtitle) if image
-                 else theme.flat_banner(w, h, title, subtitle))
-        if photo is None:
-            self.banner.configure(text=title, font=theme.FONT_H1, fg=theme.TEXT,
-                                  height=3)
+    def _log_tags(self):
+        for tag in ("good", "warn", "bad"):
+            self.log.tag_configure(tag, foreground=theme.colour(tag))
+
+    # -- layout ------------------------------------------------------------
+    def _on_resize(self, e):
+        if (e.width, e.height) == self._last_size:
             return
-        self._banner_photo = photo
-        self.banner.configure(image=photo, text="")
+        self._last_size = (e.width, e.height)
+        self._paint_stage(e.width, e.height)
+        self._layout(e.width, e.height)
+
+    def _paint_stage(self, w, h):
+        self._plate = theme.backdrop(self.backdrop_src, w, h)
+        self.stage.delete("plate")
+        if self._plate is not None:
+            self.stage.create_image(0, 0, image=self._plate, anchor="nw",
+                                    tags="plate")
+            self.stage.tag_lower("plate")
+
+    def _layout(self, w, h):
+        px = theme.px
+        x, width = px(GUTTER), w - px(GUTTER) * 2
+        head_h = px(HEADER)
+
+        self.header.place(x=0, y=0, width=w, height=head_h)
+        self._retitle_image(w, head_h)
+
+        y = head_h + px(10)
+        self.disc.place(x=x, y=y, width=width)
+        self.update_idletasks()
+        y += max(px(52), self.disc.winfo_reqheight()) + px(4)
+
+        self.status.place(x=x + px(6), y=y, width=width, height=px(20))
+        y += px(26)
+
+        bottom = h - px(GUTTER)
+        log_top = bottom - px(LOG_H)
+        act_top = log_top - px(ACTION_H) - px(8)
+        group_h = max(px(140), act_top - y - px(10))
+        self.group.place(x=x, y=y, width=width, height=group_h)
+        self.group.set_height(group_h)
+        self.bar.place(x=x, y=act_top, width=width, height=px(ACTION_H))
+        self.logwrap.place(x=x, y=log_top, width=width, height=px(LOG_H))
+        self.logwrap.set_height(px(LOG_H))
+
+        for b in (self.browse, self.apply_btn, self.cheat_btn, self.revert_btn):
+            b.configure(width=b.width_needed())
+
+    def _retitle(self, title, subtitle):
+        self._title_text = (title, subtitle)
+
+    def _retitle_image(self, w, h):
+        title, subtitle = self._title_text
+        img = skins.title_image(title, theme.P, theme.px, max(w, 10), h,
+                                subtitle, self.emblem_src)
+        if img is None:
+            self.header.configure(text=title, fg=theme.P.title,
+                                  font=theme.F("title", 20))
+            return
+        self._header_img = img
+        self.header.configure(image=img, text="", bg=theme.P.bg)
+
+    def _refresh_layout(self):
+        w, h = self.stage.winfo_width(), self.stage.winfo_height()
+        if w > 4 and h > 4:
+            self._paint_stage(w, h)
+            self._layout(w, h)
 
     # -- logging -----------------------------------------------------------
     def _say(self, text, tag=None):
@@ -177,8 +253,7 @@ class App(tk.Tk):
     def _browse(self):
         start = os.path.dirname(self.path_var.get()) if self.path_var.get() else ""
         path = filedialog.askopenfilename(
-            title="Choose a PS2 disc image",
-            initialdir=start or None,
+            title="Choose a PS2 disc image", initialdir=start or None,
             filetypes=[("PS2 disc images", "*.iso *.bin"), ("All files", "*.*")])
         if path:
             self._load_iso(path)
@@ -191,39 +266,61 @@ class App(tk.Tk):
         self._say("Reading %s" % os.path.basename(path))
         det = identify(path)
         self.detection = det
+
         if not det.ok:
             self.profile = None
-            self.status.configure(text=det.message, foreground=theme.BAD)
+            self.status.configure(text=det.message, fg=theme.P.bad)
             self._say(det.message, "bad")
-            self._draw_banner()
             self.area.clear()
             self._set_buttons(False)
             return
 
         self.profile = det.profile
-        tone = theme.GOOD if det.crc_matches else theme.WARN
-        line = "%s   •   %s   •   disc CRC %s" % (
-            det.title, det.profile.serial, det.crc)
+        theme.use(skins.for_profile(det.profile))
+        self.backdrop_src = art.banner_image(det, theme.cache_dir())
+        self.emblem_src = art.emblem_image(det, theme.cache_dir())
+        self._restyle()
+
+        tone = theme.P.good if det.crc_matches else theme.P.warn
+        line = "%s   •   disc CRC %s" % (det.profile.serial, det.crc)
         if det.message:
             line += "   •   " + det.message
-        self.status.configure(text=line, foreground=tone)
+        self.status.configure(text=line, fg=tone)
         self._say("Recognised %s (%s)" % (det.title, det.profile.serial), "good")
         if det.message:
             self._say(det.message, "warn")
 
-        self._draw_banner(art.banner_image(det, theme.cache_dir()),
-                          det.title, "%s   ·   %s" % (det.profile.serial,
-                                                           os.path.basename(path)))
         self._build_settings()
         self._remember(path)
 
+    def _restyle(self):
+        """Re-colour the fixed furniture after a skin change."""
+        p = theme.P
+        self.configure(bg=p.bg)
+        self.stage.configure(bg=p.bg)
+        for wdg in (self.header, self.status, self.bar):
+            wdg.configure(bg=p.bg)
+        self.preset_lbl.configure(bg=p.bg, fg=p.dim)
+        self.nav.configure(bg=p.panel)
+        self.area.restyle()
+        self.disc.restyle()
+        self.group.restyle()
+        self.logwrap.restyle()
+        for wdg in self.disc.body.winfo_children():
+            wdg.configure(bg=p.panel)
+        self.disc_lbl.configure(bg=p.panel, fg=p.dim)
+        self.path_entry.configure(bg=p.bg, fg=p.text, insertbackground=p.text)
+        self.log.configure(bg=p.panel, fg=p.dim)
+        self._log_tags()
+        self._refresh_layout()
+
     def _set_buttons(self, on):
-        has_edits = bool(self.profile and self.profile.settings)
+        has = bool(self.profile and self.profile.settings)
         crc_ok = bool(self.detection and self.detection.crc_matches)
-        self.apply_btn.configure(state="normal" if on and has_edits and crc_ok else "disabled")
-        self.cheat_btn.configure(state="normal" if on and has_edits else "disabled")
-        can_revert = bool(self.detection and self.detection.has_backup)
-        self.revert_btn.configure(state="normal" if on and can_revert else "disabled")
+        self.apply_btn.set_enabled(on and has and crc_ok)
+        self.cheat_btn.set_enabled(on and has)
+        self.revert_btn.set_enabled(on and bool(self.detection
+                                                and self.detection.has_backup))
 
     # -- settings ----------------------------------------------------------
     def _build_settings(self):
@@ -239,44 +336,50 @@ class App(tk.Tk):
             self.vars[s.key] = v
 
         saved = getattr(self, "_saved_values", {}).get(p.id, {})
-        for key, value in p.normalise(saved).items() if saved else []:
-            if key in self.vars:
-                try:
-                    self.vars[key].set(value)
-                except tk.TclError:
-                    pass
+        if saved:
+            for key, value in p.normalise(saved).items():
+                if key in self.vars:
+                    try:
+                        self.vars[key].set(value)
+                    except tk.TclError:
+                        pass
 
         names = list(p.groups())
         if p.notes:
             names.append(NOTES_TAB)
-        self.preset_box.configure(values=[name for name, _ in PRESETS.get(p.id, [])])
-        self.preset_var.set("")
+        names_p = [n for n, _ in PRESETS.get(p.id, [])]
+        self.preset_box.configure(values=names_p)
+        self.preset_var.set(PRESET_HINT if names_p else "")
 
         for child in self.nav.winfo_children():
             child.destroy()
-        self._nav_buttons = {}
+        self.nav_items = {}
         for name in names:
-            b = ttk.Button(self.nav, text=name, style="Nav.TButton",
-                           command=lambda n=name: self._show_group(n))
-            b.pack(fill="x", pady=theme.px(1))
-            self._nav_buttons[name] = b
+            item = NavItem(self.nav, name, lambda n=name: self._show_group(n))
+            item.pack(fill="x", pady=(0, theme.px(6)))
+            self.nav_items[name] = item
 
         self._show_group(names[0] if names else None)
         self._set_buttons(True)
 
     def _show_group(self, name):
         self.active_group = name
-        for n, b in getattr(self, "_nav_buttons", {}).items():
-            b.configure(style="NavOn.TButton" if n == name else "Nav.TButton")
+        for n, item in self.nav_items.items():
+            item.select(n == name)
+        self._retitle(name or self.profile.short,
+                      "%s  ·  %s" % (self.profile.title,
+                                          os.path.basename(self.detection.path)))
+        self._retitle_image(max(self.stage.winfo_width(), 10), theme.px(HEADER))
         self.area.clear()
         body = self.area.body
 
         if name == NOTES_TAB:
-            card = ttk.Frame(body, style="Card.TFrame", padding=theme.px(18))
-            card.pack(fill="x", padx=theme.px(10), pady=theme.px(8))
-            ttk.Label(card, text=self.profile.title, style="H2.TLabel").pack(anchor="w")
-            ttk.Label(card, text=self.profile.notes, style="Help.TLabel",
-                      wraplength=theme.px(620), justify="left").pack(anchor="w", pady=(theme.px(10), 0))
+            card = Chrome(body, kind="panel", pad=theme.px(16))
+            card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
+            tk.Label(card.body, text=self.profile.notes, bg=theme.P.panel,
+                     fg=theme.P.dim, font=theme.F("body", 9),
+                     wraplength=theme.px(640), justify="left",
+                     anchor="w").pack(fill="x")
             self._disc_facts(body)
             return
 
@@ -285,30 +388,30 @@ class App(tk.Tk):
             if s.group != name:
                 continue
             card = SettingCard(body, s, self.vars[s.key], self._changed)
-            card.pack(fill="x", padx=theme.px(10), pady=theme.px(6))
+            card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
             self.cards[s.key] = card
         if not self.cards:
-            ttk.Label(body, text="Nothing to configure here yet.",
-                      style="PanelDim.TLabel").pack(padx=theme.px(18), pady=theme.px(18), anchor="w")
+            tk.Label(body, text="Nothing to configure here yet.", bg=theme.P.bg,
+                     fg=theme.P.faint, font=theme.F("body", 9)
+                     ).pack(padx=theme.px(18), pady=theme.px(18), anchor="w")
         self._changed()
 
     def _disc_facts(self, body):
         det = self.detection
-        card = ttk.Frame(body, style="Card.TFrame", padding=theme.px(18))
-        card.pack(fill="x", padx=theme.px(10), pady=theme.px(8))
-        ttk.Label(card, text="This disc", style="H2.TLabel").pack(anchor="w")
-        rows = [("File", det.path),
-                ("Boot", det.boot),
-                ("Serial", det.profile.serial),
-                ("Volume id", det.volume),
+        card = Chrome(body, kind="panel", pad=theme.px(16))
+        card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
+        rows = [("File", det.path), ("Boot", det.boot),
+                ("Serial", det.profile.serial), ("Volume id", det.volume),
                 ("Disc CRC", det.crc + ("" if det.crc_matches else "  (unexpected)")),
                 ("Cheat file", det.profile.pcsx2_crc + ".pnach"),
                 ("Backup", "yes" if det.has_backup else "not taken yet")]
         for k, v in rows:
-            r = ttk.Frame(card, style="Card.TFrame")
+            r = tk.Frame(card.body, bg=theme.P.panel)
             r.pack(fill="x", pady=theme.px(2))
-            ttk.Label(r, text=k, style="PanelDim.TLabel", width=14).pack(side="left")
-            ttk.Label(r, text=str(v), style="Mono.TLabel").pack(side="left")
+            tk.Label(r, text=k, bg=theme.P.panel, fg=theme.P.dim, width=14,
+                     anchor="w", font=theme.F("body", 8)).pack(side="left")
+            tk.Label(r, text=str(v), bg=theme.P.panel, fg=theme.P.text,
+                     anchor="w", font=theme.F("mono", 9)).pack(side="left")
 
     def _values(self):
         return {k: v.get() for k, v in self.vars.items()}
@@ -318,8 +421,8 @@ class App(tk.Tk):
             return
         vals = self._values()
         for key, card in self.cards.items():
-            missing = self.profile.unmet(key, vals)
             s = self.profile.setting(key)
+            missing = self.profile.unmet(key, vals)
             if not s.enabled:
                 card.set_enabled(False)
             elif missing:
@@ -330,6 +433,8 @@ class App(tk.Tk):
 
     def _apply_preset(self, _e=None):
         name = self.preset_var.get()
+        if name == PRESET_HINT:
+            return
         for pname, values in PRESETS.get(self.profile.id, []):
             if pname == name:
                 for k, v in values.items():
@@ -353,13 +458,13 @@ class App(tk.Tk):
     def _run(self, fn, done):
         self.busy = True
         for b in (self.apply_btn, self.cheat_btn, self.revert_btn):
-            b.configure(state="disabled")
+            b.set_enabled(False)
 
         def worker():
             try:
                 result = fn()
                 self._msgs.put(("done", lambda: done(result, None)))
-            except Exception as exc:                      # noqa: BLE001
+            except Exception as exc:              # noqa: BLE001
                 tb = traceback.format_exc()
                 self._msgs.put(("done", lambda: done(None, (exc, tb))))
         threading.Thread(target=worker, daemon=True).start()
@@ -368,9 +473,7 @@ class App(tk.Tk):
         if not self._guard():
             return
         vals = self._values()
-        path = self.detection.path
-        profile = self.profile
-
+        path, profile = self.detection.path, self.profile
         try:
             pl = engine.plan(path, profile, vals)
         except engine.EngineError as exc:
@@ -378,49 +481,56 @@ class App(tk.Tk):
             self._say(str(exc), "bad")
             return
 
-        lines = ["%d change%s will be written into %s."
-                 % (len(pl.edits), "" if len(pl.edits) == 1 else "s",
-                    profile.overlays[0].name)]
+        lines = []
+        if pl.edits:
+            lines.append("%d change%s into %s."
+                         % (len(pl.edits), "" if len(pl.edits) == 1 else "s",
+                            profile.overlays[0].name))
+        if pl.data:
+            lines.append("%d edit%s to the game's own data files."
+                         % (len(pl.data), "" if len(pl.data) == 1 else "s"))
         if pl.pnach:
             lines.append("%d more need the emulator cheat file -- use "
-                         "“Save cheat file” for those." % len(pl.pnach))
+                         "“Cheat file” for those." % len(pl.pnach))
+        if not lines:
+            lines.append("Nothing is selected, so the disc goes back to stock.")
         if pl.pristine_source == "hash":
             lines.append("A backup of the untouched disc data will be kept next "
                          "to the ISO.")
         if pl.warnings:
             lines.append("")
             lines += ["• " + w for w in pl.warnings]
-        lines.append("")
-        lines.append("Close the emulator first -- it locks the file.")
+        lines += ["", "Close the emulator first -- it locks the file."]
         if not messagebox.askokcancel(APP_NAME, "\n".join(lines)):
             return
 
         self._say("Patching…")
 
-        def work():
-            return engine.apply(path, profile, vals, progress=lambda m: self._post("  " + m))
-
         def done(result, err):
             self.busy = False
             if err:
-                exc, tb = err
-                self._say(str(exc), "bad")
-                messagebox.showerror(APP_NAME, str(exc))
+                self._say(str(err[0]), "bad")
+                messagebox.showerror(APP_NAME, str(err[0]))
             else:
                 ok = result["verified"] == result["applied"]
-                self._say("Done: %d of %d words verified by reading the disc back."
-                          % (result["verified"], result["applied"]),
+                self._say("Done: %d of %d words verified by reading the disc "
+                          "back." % (result["verified"], result["applied"]),
                           "good" if ok else "bad")
+                d = result.get("data") or {}
+                if d.get("files"):
+                    self._say("%d data file(s) rewritten, %d read back cleanly."
+                              % (d["files"], d.get("verified", 0)),
+                              "bad" if d.get("broken") else "good")
                 self._say("Backup: %s" % result["backup"])
-                if self.profile.build_pnach and self.profile.build_pnach(vals):
-                    self._say("Some options still need the cheat file.", "warn")
                 if not ok:
                     messagebox.showerror(APP_NAME, "Some words did not land. The "
                                                    "disc may be a different build.")
             self.detection = identify(path)
             self._set_buttons(True)
 
-        self._run(work, done)
+        self._run(lambda: engine.apply(path, profile, vals,
+                                       progress=lambda m: self._post("  " + m)),
+                  done)
 
     def _revert(self):
         if not self._guard():
@@ -437,14 +547,17 @@ class App(tk.Tk):
                 self._say(str(err[0]), "bad")
                 messagebox.showerror(APP_NAME, str(err[0]))
             else:
-                self._say("Disc restored (stock hash %s)."
-                          % ("matches" if result["hash_ok"] else "DOES NOT match"),
+                extra = (", %d data files put back" % result["data"]
+                         if result.get("data") else "")
+                self._say("Disc restored (stock check %s)%s."
+                          % ("passed" if result["hash_ok"] else "FAILED", extra),
                           "good" if result["hash_ok"] else "bad")
             self.detection = identify(path)
             self._set_buttons(True)
 
         self._run(lambda: engine.revert(path, profile,
-                                        progress=lambda m: self._post("  " + m)), done)
+                                        progress=lambda m: self._post("  " + m)),
+                  done)
 
     def _save_pnach(self):
         if not self._guard():
@@ -453,17 +566,15 @@ class App(tk.Tk):
         words = self.profile.build_pnach(vals) if self.profile.build_pnach else []
         if not words:
             messagebox.showinfo(APP_NAME,
-                                "None of the options you have chosen need a cheat "
-                                "file -- they all go straight into the disc.")
+                                "None of the options you have chosen need a "
+                                "cheat file -- they all go into the disc.")
             return
         crc = self.detection.crc or self.profile.pcsx2_crc
-        name = "%s.pnach" % crc
         folders = engine.find_pcsx2_cheat_dirs()
-        initial = folders[0] if folders else os.path.dirname(self.detection.path)
         path = filedialog.asksaveasfilename(
             title="Save the PCSX2 cheat file",
-            initialdir=initial, initialfile=name,
-            defaultextension=".pnach",
+            initialdir=folders[0] if folders else os.path.dirname(self.detection.path),
+            initialfile="%s.pnach" % crc, defaultextension=".pnach",
             filetypes=[("PCSX2 cheat file", "*.pnach")])
         if not path:
             return
@@ -489,9 +600,9 @@ class App(tk.Tk):
     def _save_prefs(self):
         data = {"recent": self._recent, "profiles": {}}
         try:
-            old = json.load(open(settings_path(), encoding="utf-8"))
-            data["profiles"] = old.get("profiles", {})
-        except Exception:
+            with open(settings_path(), encoding="utf-8") as fh:
+                data["profiles"] = json.load(fh).get("profiles", {})
+        except Exception:                         # noqa: BLE001
             pass
         if self.profile:
             data["profiles"][self.profile.id] = self._values()
@@ -503,8 +614,9 @@ class App(tk.Tk):
 
     def _load_prefs(self):
         try:
-            data = json.load(open(settings_path(), encoding="utf-8"))
-        except Exception:
+            with open(settings_path(), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:                         # noqa: BLE001
             return
         self._recent = data.get("recent", [])
         self._saved_values = data.get("profiles", {})
@@ -517,8 +629,7 @@ class App(tk.Tk):
 
 def main():
     theme.set_dpi_aware()
-    app = App()
-    app.mainloop()
+    App().mainloop()
 
 
 if __name__ == "__main__":

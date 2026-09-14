@@ -7,6 +7,13 @@ Point it at an ISO, move some sliders, press **Apply to disc**. Nothing is
 rebuilt and no ISO tools are needed. A pristine copy of everything it overwrites
 is kept next to the ISO, and **Restore disc** puts it all back.
 
+**It wears the menu of whichever disc you load.** The skin follows the game --
+Rainbow Six 3's gunmetal HUD with its cut corners, letterspaced titles and red
+selection tab; Ghost Recon's gold-on-navy console shell; Jungle Storm's the same
+shell in teal. The backdrop, the Rainbow laurel badge and the Ghost Recon
+wordmark are pulled out of your own disc at run time and cached -- no game data
+ships with the tool.
+
 ![the Enemy Waves page](docs/screens/enemy-waves.png)
 
 ---
@@ -248,6 +255,7 @@ ever opened for writing.
 | `tcps2/transforms.py` | the length-preserving XML edits |
 | `tcps2/dataedit.py` | applying, verifying and undoing data edits |
 | `tcps2/rsb.py`, `art.py` | the games' own textures and screens, used to skin the window |
+| `gui/skins.py` | one palette and chrome painter per disc |
 | `tcps2/games/*.py` | one profile per disc: its options and the stock word at every address it touches |
 | `tcps2/engine.py` | plan, apply, verify, restore |
 

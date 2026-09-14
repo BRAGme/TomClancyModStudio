@@ -50,7 +50,7 @@ def main(iso, out_dir):
         app.after(400, capture_pages)
 
     def capture_pages():
-        names = list(getattr(app, "_nav_buttons", {}).keys()) or ["(none)"]
+        names = list(getattr(app, "nav_items", {}).keys()) or ["(none)"]
         for i, name in enumerate(names):
             app._show_group(name)
             app.update_idletasks()
