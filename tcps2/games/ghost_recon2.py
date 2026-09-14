@@ -51,6 +51,7 @@ from __future__ import annotations
 
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting)
+from . import r6tuning
 
 BOOT = "SLUS_211.05"
 
@@ -193,6 +194,9 @@ def _settings():
                         "apply on top of it, so the practical distance is "
                         "shorter when you are still and longer when you run."),
 
+    ] + r6tuning.cards(["search_time", "speed", "spotting"], "gr2_",
+                       "Enemies") + [
+
         # ---- your loadout ------------------------------------------------
         Setting("gr2_player_grenades", "Grenades you carry", INT, 1, "Loadout",
                 minimum=1, maximum=10, unit="x", confidence="applied",
@@ -247,10 +251,9 @@ def build_data(v: dict) -> list:
         ini["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v["gr2_perfect_dist"])
     if int(v.get("gr2_sight", 5000)) != 5000:
         ini["m_fSightRadius"] = "%.1f" % float(v["gr2_sight"])
-    mult = int(v.get("gr2_player_grenades", 1))
-    if mult != 1:
-        for tier in ("Recruit", "Veteran", "Elite"):
-            ini["m_PlayerGrenadeMultiplier" + tier] = mult
+    # the dials shared with Rainbow Six 3 and Advanced Warfighter; the keys
+    # that overlap with the lines above resolve to the same value.
+    ini.update(r6tuning.ini_updates("gr2_", v))
     steps = int(v.get("gr2_sens_steps", 10))
     if steps != 10:
         ini["m_iXSensitivityMaxSteps"] = steps

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
+from . import r6tuning
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -264,17 +265,11 @@ def _settings():
                      "to make enemies less lethal up close; raising it does the "
                      "opposite."),
 
-        # ---- your loadout ------------------------------------------------
-        Setting("player_grenades", "Grenades you carry", INT, 1, "Loadout",
-                minimum=1, maximum=10, unit="x", confidence="applied",
-                touches="data",
-                help="The AMMO MULTIPLIERS block scales what you start a "
-                     "mission holding. Magazines already ship multiplied -- 3x "
-                     "on Recruit, 2x above it -- but grenades ship at 1x on all "
-                     "three, meaning the loadout you picked and nothing more. "
-                     "This multiplies them the same way.",
-                caution="This multiplies the loadout, so it does nothing for a "
-                        "kit you sent out with no grenades in it."),
+        # ---- shared with the other two Unreal-family discs ---------------
+    ] + r6tuning.cards(
+        ["fire_delay", "sight", "search_time", "speed", "spotting"],
+        "", "Enemy Behaviour",
+    ) + r6tuning.cards(["player_grenades"], "", "Loadout") + [
 
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
@@ -502,10 +497,10 @@ def build_data(v: dict) -> list:
         ini["m_fTerroristSkillMultiplierElite"] = eli
     if int(v.get("perfect_dist", 500)) != 500:
         ini["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v["perfect_dist"])
-    mult = int(v.get("player_grenades", 1))
-    if mult != 1:
-        for tier in ("Recruit", "Veteran", "Elite"):
-            ini["m_PlayerGrenadeMultiplier" + tier] = mult
+    # the dials this disc shares with Ghost Recon 2 and Advanced Warfighter.
+    # The keys that overlap with the lines above resolve to the same value, so
+    # merging is idempotent rather than a second opinion.
+    ini.update(r6tuning.ini_updates("", v))
     steps = int(v.get("sens_steps", 10))
     if steps != 10:
         ini["m_iXSensitivityMaxSteps"] = steps

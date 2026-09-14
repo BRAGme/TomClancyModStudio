@@ -24,11 +24,24 @@ below.
 no container to rebuild. Note its PT_LOAD sits at file offset **0x800**, not the
 0x80 the other games use -- that was measured from the program header, and
 getting it wrong writes 0x780 bytes off target.
+
+Being Rainbow Six 3's engine does pay off in one large way: this disc ships
+`R6GAMESETTINGS.INI`, twice, with the same AI keys and the same shipped values
+as Rainbow Six 3 and Ghost Recon 2 -- compared key by key across all three, not
+assumed. That is where the Enemies, Controls and Loadout pages come from, and
+none of it is a code patch. The only value that differs is the look sensitivity
+multiplier: 0.60/0.52 here against 0.70/0.60 on the other two, which is why
+`SENS_BASE` is per profile.
+
+Its `COMMON.LIN` has no two-entry grenade tables at all, so unlike the other
+two there is no grenade-carry share to set -- checked, not assumed.
 """
 
 from __future__ import annotations
 
-from ..model import CHOICE, INT, Choice, GameProfile, Overlay, Setting, WordEdit
+from ..model import (CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
+                     Setting, WordEdit)
+from . import r6tuning
 
 BOOT = "SLUS_214.22"
 
@@ -55,6 +68,10 @@ INTERVALS = {
     "2.0": 0x4000,
 }
 
+#: this disc's own shipped look curve. Rainbow Six 3 and Ghost Recon 2 ship
+#: 0.70/0.60; Advanced Warfighter is slower out of the box.
+SENS_BASE = {"x_mult": 0.60, "y_mult": 0.52, "x_step": 0.15, "y_step": 0.15}
+
 NOTES = (
     "Advanced Warfighter reads correctly and the tool wears its artwork.\n\n"
     "Despite the name this is Rainbow Six 3's engine, not Ghost Recon's -- same "
@@ -67,10 +84,18 @@ NOTES = (
     "values the executable owns, and they are what the options here change. How "
     "many enemies a given Survival wave asks for lives in the level's own data, "
     "in a container that has not been decoded yet.\n\n"
-    "One thing that is NOT here: difficulty does not scale enemies at all. The "
-    "difficulty setting has three readers in the whole overlay -- two health "
-    "regeneration gates and one picking between four authored floats. There is "
-    "nothing to patch because there is nothing there.\n\n"
+    "One thing that is NOT in the EXECUTABLE: difficulty does not scale "
+    "enemies there at all. The difficulty setting has three readers in the "
+    "whole overlay -- two health regeneration gates and one picking between "
+    "four authored floats.\n\n"
+    "The difficulty that does exist is data. This disc ships "
+    "R6GAMESETTINGS.INI twice, holding the same AI keys as Rainbow Six 3 and "
+    "Ghost Recon 2 at the same shipped values, and that is what the Enemies, "
+    "Controls and Loadout pages edit: skill multipliers, the range inside "
+    "which a shot cannot miss, sight radius, how long they hunt after losing "
+    "you, how fast they move, what movement does to spotting, the grenade "
+    "timings, the look curve and the grenade loadout. All plain text, all "
+    "reversible.\n\n"
     "Mission S07 is cut. The executable's level table jumps from s06_b straight "
     "to s08_a, and the briefing list does the same."
 )
@@ -99,7 +124,12 @@ def _settings():
                         "been read, so what a level does with more than one at "
                         "a time is a reasonable guess rather than a measured "
                         "fact. Try it one step at a time."),
-    ]
+    ] + r6tuning.cards(
+        ["skill", "fire_delay", "perfect_dist", "sight", "search_time",
+         "speed", "spotting", "grenade_dist", "grenade_delay"],
+        "graw_", "Enemies",
+    ) + r6tuning.cards(["sens_steps", "sens_boost"], "graw_", "Controls") \
+      + r6tuning.cards(["player_grenades"], "graw_", "Loadout")
 
 
 def build_edits(v: dict) -> list:
@@ -117,6 +147,20 @@ def build_edits(v: dict) -> list:
     return e
 
 
+def build_data(v: dict) -> list:
+    """Everything on the Enemies, Controls and Loadout pages is one INI file.
+
+    Both copies are rewritten -- the game reads whichever answers first -- and
+    an all-default config produces no edit at all, so a stock disc stays stock.
+    """
+    ini = r6tuning.ini_updates("graw_", v)
+    ini.update(r6tuning.sens_updates("graw_", v, SENS_BASE))
+    if not ini:
+        return []
+    return [FileEdit("ini_values", r"/R6GAMESETTINGS\.INI$", "",
+                     {"values": ini}, "AI and control settings")]
+
+
 PROFILE = GameProfile(
     id="graw_slus21422",
     title="Tom Clancy's Ghost Recon Advanced Warfighter",
@@ -129,7 +173,7 @@ PROFILE = GameProfile(
     settings=_settings(),
     build_edits=build_edits,
     build_pnach=lambda v: [],
-    build_data=lambda v: [],
+    build_data=build_data,
     # GR3_1 and GR3_2 hold every single-player level package and are easy to
     # miss -- this disc has five archives, not the three the others have.
     archive_pattern=r"/(VOKES\d|MENU|GR3_\d)\.IMG$",

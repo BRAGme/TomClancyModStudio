@@ -80,6 +80,7 @@ def main():
     ap.add_argument("--js", help="Jungle Storm ISO, same")
     ap.add_argument("--rs3data", help="Rainbow Six 3 ISO, for its INI data path")
     ap.add_argument("--gr2", help="Ghost Recon 2 ISO, same engine, data only")
+    ap.add_argument("--graw", help="Advanced Warfighter ISO, for its INI")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -123,7 +124,8 @@ def run_raw_and_data(args, work):
     for iso_path, pid, boot in ((args.gr, "ghost_recon_slus20613", "SLUS_206.13"),
                                 (args.js, "jungle_storm_slus20820", "SLUS_208.20"),
                                 (args.rs3data, "r6_3_slus20883", None),
-                                (args.gr2, "gr2_slus21105", None)):
+                                (args.gr2, "gr2_slus21105", None),
+                                (args.graw, "graw_slus21422", None)):
         if not iso_path:
             continue
         profile = BY_ID[pid]
@@ -227,13 +229,22 @@ DATA_CASES = {
     "r6_3_slus20883": (
         dict(grenade_dist=80, grenade_delay="quick", grenade_carry=80,
              terro_skill="up", perfect_dist=900, sens_steps=20,
-             sens_boost=200, player_grenades=4),
+             sens_boost=200, player_grenades=4, fire_delay="snap",
+             sight=9000, search_time=90, speed="sprint", spotting="sharp"),
         3, 9),
+    "graw_slus21422": (
+        dict(graw_skill="up", graw_fire_delay="snap", graw_perfect_dist=900,
+             graw_sight=9000, graw_search_time=90, graw_speed="sprint",
+             graw_spotting="sharp", graw_grenade_dist=80,
+             graw_grenade_delay="quick", graw_sens_steps=20,
+             graw_sens_boost=200, graw_player_grenades=4),
+        2, 0),
     "gr2_slus21105": (
         dict(gr2_grenade_dist=80, gr2_grenade_delay="quick",
              gr2_grenade_carry=80, gr2_fire_delay="snap", gr2_skill="up",
              gr2_perfect_dist=900, gr2_sight=9000, gr2_sens_steps=20,
-             gr2_sens_boost=200, gr2_player_grenades=4),
+             gr2_sens_boost=200, gr2_player_grenades=4, gr2_search_time=90,
+             gr2_speed="sprint", gr2_spotting="sharp"),
         3, 2),
 }
 
@@ -253,7 +264,9 @@ def _data_only(args, profile, iso_path, Shadow):
     overrides, want_ini, want_common = DATA_CASES[profile.id]
     vals = profile.normalise(dict(profile.defaults(), **overrides))
     edits = profile.build_data(vals)
-    check("%s emits data edits" % profile.short, len(edits) >= 2)
+    # Advanced Warfighter has no grenade-carry table, so it emits the INI edit
+    # alone; the other two emit that plus the COMMON rewrite.
+    check("%s emits data edits" % profile.short, len(edits) >= 1)
 
     copies = commons = loadout = 0
     with Iso(iso_path) as iso:
