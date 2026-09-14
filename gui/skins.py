@@ -195,25 +195,30 @@ SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
                body_font="Corbel, Segoe UI",
                bold_font="Corbel Bold, Segoe UI Semibold")
 
-#: Lockdown's shell is the Nimitz HUD -- a colder, bluer slate than Rainbow
-#: Six 3's, with the same cut-cornered idiom. It keeps the gunmetal chrome.
+#: Measured off the game's own loading frame rather than invented: the ground
+#: is flat black (30,856 of 36,000 sampled pixels are #000000), the plate is a
+#: cold steel blue clustered tightly at hue 208-210 (#1c252d through #293642),
+#: and the lettering is #eaeaea. The crimson is the "Rainbow Six" half of the
+#: wordmark. It keeps the cut-cornered chrome; see the note in the profile for
+#: why the shape language is not copied from the game's own shell textures.
 LOCKDOWN = replace(
     RS3,
-    bg="#0a0d12",
-    veil="#070a0e",
-    panel="#141a24",
-    panel2="#1c2432",
-    edge="#7f96b8",
-    edge_dim="#33405a",
-    text="#c6d2e4",
-    dim="#8290a8",
-    faint="#5a6578",
-    title="#dde6f4",
-    accent="#8fa8d0",
-    accent_dim="#4f6288",
-    sel_fill="#27314a",
-    sel_text="#eaf0fa",
-    tab="#c8452f",
+    bg="#05070a",
+    veil="#000000",
+    panel="#131a21",
+    panel2="#1c252d",
+    edge="#6f8497",
+    edge_dim="#293642",
+    text="#c3ced8",
+    dim="#8595a3",
+    faint="#55636e",
+    title="#eaeaea",
+    accent="#8ea3b5",
+    accent_dim="#4a5a68",
+    sel_fill="#232f3a",
+    sel_text="#f2f4f6",
+    tab="#9c1f18",
+    bad="#c8402f",
 )
 
 BY_PROFILE = {
@@ -512,7 +517,10 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     # given disc actually has a badge -- Jungle Storm's has to line up with
     # Ghost Recon's or the two skins look unrelated side by side.
     left = px(26)
-    box_w, box_h = px(250), height - px(30)
+    # A wide wordmark is limited by the box WIDTH, but a squarer mark -- like
+    # Lockdown's stacked logo -- is limited by its height, so a little more
+    # headroom here costs the wide ones nothing and helps the tall ones.
+    box_w, box_h = px(258), height - px(16)
     if emblem is not None:
         em = emblem.convert("RGBA")
         em.thumbnail((box_w, box_h), Image.LANCZOS)

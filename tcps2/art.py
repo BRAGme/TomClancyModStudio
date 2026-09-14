@@ -164,7 +164,7 @@ EMBLEM_MODE = {
     # Lockdown's wordmark is a dark red "Rainbow Six" over a bright white
     # "LOCKDOWN". Keying at the usual floor deletes the red half, so it is
     # lifted first and then keyed low.
-    "lockdown_slus21144": ("lift", 28, 2.2),
+    "lockdown_slus21144": ("lift", 18, 3.0),
 }
 
 #: Jungle Storm ships no lettering anywhere -- no wordmark texture on the disc,
@@ -337,6 +337,13 @@ def emblem_image(detection, cache_dir=None):
         # stamped dark into dark art: raise it before keying or nothing survives
         img = ImageOps.autocontrast(img, cutoff=2)
         img = ImageEnhance.Brightness(img).enhance(1.25)
+        if gain >= 3.0:
+            # Lockdown's mark is half deep crimson on black, which survives the
+            # key but comes out almost unreadable at header size. Saturating
+            # and lifting it again is the difference between a red smudge and a
+            # legible wordmark.
+            img = ImageEnhance.Color(img).enhance(1.6)
+            img = ImageEnhance.Brightness(img).enhance(1.45)
     rgba = img.convert("RGBA")
     px = rgba.load()
     for y in range(rgba.height):

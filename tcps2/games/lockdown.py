@@ -86,6 +86,16 @@ NOTES = (
     "in the executable, so the values are positional in a layout nobody has "
     "decoded. Look sensitivity was searched for and is absent: the executable "
     "contains no Sensitiv* string anywhere. Split screen has no data knob.\n\n"
+    "On the look: the palette is measured off this disc's own loading frame -- "
+    "a flat black ground, a cold steel blue clustered at hue 208-210, white "
+    "lettering and the crimson from the wordmark. The SHAPE of the chrome is "
+    "NOT copied from the game, because its shell textures could not be "
+    "decoded: the .psx container splits exactly (a 70-byte header, a 1,024-byte "
+    "palette, then one byte per pixel) and the palette is plainly right -- the "
+    "game's reds and steels come out -- but the pixel order is a swizzle that "
+    "resisted every variant tried, so the menus themselves were never seen.
+
+"
     "One caveat worth stating plainly: none of this has been run in the game. "
     "The record layouts were established from the disc, and the skill reading "
     "was checked against every ordering the shipped profile names imply -- six "
