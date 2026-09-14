@@ -182,6 +182,81 @@ def build_data(v: dict) -> list:
     return out
 
 
+#: The campaign, read off the disc rather than typed from memory: every
+#: `<id>_SEC_nn.MIS` carries its own title string ("M01 - South Africa -
+#: Section 01"), and the spawn figure counts the `.cms` character templates
+#: the mission's own section scripts reference.
+#:
+#: Every one of the sixteen ships all four modes -- campaign, co-op and
+#: Terrorist Hunt in both directions -- as separate .MIS files.
+#: (id, place, sections, spawn templates)
+MISSIONS = (
+    ("M01", "South Africa", 3, 28),
+    ("M02", "Amsterdam", 3, 41),
+    ("M03", "Parliament", 2, 20),
+    ("M04", "University", 3, 30),
+    ("M05", "Distillery", 3, 38),
+    ("M06", "Paris Hospital", 2, 18),
+    ("M07", "Catacombs", 3, 32),
+    ("M08", "Calais Docks", 3, 42),
+    ("M09", "Channel Ferry", 3, 38),
+    ("M10", "Marseilles", 2, 29),
+    ("M11", "Algeria", 3, 51),
+    ("M12", "Sahara Desert", 3, 31),
+    ("M13", "Estate", 3, 35),
+    ("M14", "NATO Summit", 2, 26),
+    ("M15", "Mercenary Base", 3, 31),
+    ("M16", "Castle", 4, 56),
+)
+
+MISSION_GROUP = "Missions"
+
+
+def mission_key(mid):
+    return "mission_" + mid.lower()
+
+
+def mission_art_for(key):
+    """[(id, part)] so a card can show the mission's own snapshot.
+
+    Lockdown keeps one picture per mission rather than one per section, so
+    there is a single entry and the part is ignored by the art lookup.
+    """
+    for mid, _place, _secs, _spawns in MISSIONS:
+        if key == mission_key(mid):
+            return [(mid, "A")]
+    return []
+
+
+def _mission_settings():
+    """One card per mission: its own snapshot, what it contains, and a dial
+    that is honestly switched off.
+
+    Rainbow Six 3 can do this for real because its authored spawner counts sit
+    in the level packages in a form that has been read and rewritten. Lockdown
+    keeps the equivalent in its own `.MIS` scripts, and that format has not
+    been cracked -- so the page shows the missions and says so, rather than
+    offering a slider that quietly does nothing.
+    """
+    out = []
+    for mid, place, secs, spawns in MISSIONS:
+        out.append(Setting(
+            mission_key(mid), "%s  %s" % (mid, place), INT, 100, MISSION_GROUP,
+            minimum=25, maximum=400, unit="%",
+            help="%d section%s, referencing %d enemy templates. Ships in all "
+                 "four modes: campaign, co-op and Terrorist Hunt both ways."
+                 % (secs, "" if secs == 1 else "s", spawns),
+            touches="data", enabled=False,
+            disabled_reason=(
+                "Reading only, for now. Lockdown keeps its spawn counts in the "
+                "per-mission .MIS scripts and that format has not been read "
+                "yet, so there is nothing here to rewrite. Rainbow Six 3's "
+                "Missions page does edit, because its counts live in the level "
+                "packages and those have been."),
+            confidence="broken"))
+    return out
+
+
 PROFILE = GameProfile(
     id="lockdown_slus21144",
     title="Tom Clancy's Rainbow Six: Lockdown",
@@ -191,7 +266,7 @@ PROFILE = GameProfile(
     volume_hint="",
     pcsx2_crc="A80FBAAC",
     overlays=[ELF],
-    settings=_settings(),
+    settings=_settings() + _mission_settings(),
     build_edits=lambda v: [],
     build_pnach=lambda v: [],
     build_data=build_data,
@@ -199,5 +274,6 @@ PROFILE = GameProfile(
     archive_kind="nimitz",
     stock_words=STOCK,
     notes=NOTES,
+    mission_art_for=mission_art_for,
     ui_art={"archive": "iso", "raw": [r"/PS2DATA/VIDEO/LOADING\.RAW$"]},
 )

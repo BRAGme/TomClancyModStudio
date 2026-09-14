@@ -170,9 +170,52 @@ def run_lockdown(args):
 
         run_lockdown_psx(pak)
         run_upscale(pak, profile)
+        run_lockdown_missions(pak, profile, det)
 
     check("an all-default config writes nothing",
           profile.build_data(dict(profile.defaults())) == [])
+
+
+def run_lockdown_missions(pak, profile, det):
+    """Lockdown's mission page: sixteen cards, read-only, and honest about it."""
+    import re
+    from tcps2 import art
+    from tcps2.games.lockdown import MISSIONS, mission_key
+
+    print("\n[Lockdown -- the mission page]")
+    cards = [s for s in profile.settings if s.group == "Missions"]
+    check("there is a card per campaign mission",
+          len(cards) == len(MISSIONS) == 16, str(len(cards)))
+    # Nothing here edits yet, so every card must SAY so rather than offer a
+    # dial that quietly does nothing.
+    check("every card is switched off with a reason",
+          all(not s.enabled and s.disabled_reason for s in cards))
+    check("and none of them writes anything",
+          profile.build_data({mission_key(m[0]): 300 for m in MISSIONS}) == [])
+
+    # the figures on the cards come off the disc, so they have to match it
+    titles, spawns = {}, {}
+    for name in pak.files:
+        m = re.match(r"^/PS2DATA/MISSION/(M\d\d)_SEC_\d\d(_SMG)?\.MIS$",
+                     name, re.I)
+        if not m:
+            continue
+        mid = m.group(1).upper()
+        blob = pak.read_entry(pak.files[name])
+        spawns[mid] = spawns.get(mid, 0) + len(re.findall(rb"[a-z0-9_]+\.cms", blob))
+        if mid not in titles:
+            t = re.search(rb"M\d\d - ([A-Za-z .]+) - Section", blob)
+            if t:
+                titles[mid] = t.group(1).decode().strip()
+    wrong = [m[0] for m in MISSIONS if titles.get(m[0]) != m[1]]
+    check("the place names match the mission scripts", not wrong, str(wrong))
+    off = [m[0] for m in MISSIONS if spawns.get(m[0]) != m[3]]
+    check("the spawn-template counts match too", not off, str(off))
+
+    # and the picture each card shows really is on the disc
+    missing = [m[0] for m in MISSIONS
+               if art.mission_art(det, m[0], "A") is None]
+    check("every mission has its snapshot", not missing, str(missing))
 
 
 def run_level_packages(args):
