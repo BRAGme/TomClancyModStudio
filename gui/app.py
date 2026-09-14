@@ -367,7 +367,7 @@ class App(tk.Tk):
             child.destroy()
         self.nav_items = {}
         gap = nav_font = None
-        if theme.P.chrome == "graw":
+        if theme.P.chrome in ("graw", "lock"):
             nav_font, gap = nav_style([n.upper() for n in names],
                                       theme.px(212) - theme.px(48))
         for name in names:

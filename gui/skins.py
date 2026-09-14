@@ -1,6 +1,6 @@
 """One skin per disc, so the tool looks like the menu you would be standing in.
 
-Three chrome families cover the shelf, in six colourways:
+Four chrome families cover the shelf, in seven colourways:
 
   ``rs3``  Rainbow Six 3's gunmetal HUD -- translucent slate panels with a
            hairline light edge, corners cut at 45 degrees, wide letterspaced
@@ -13,6 +13,14 @@ Three chrome families cover the shelf, in six colourways:
            with the top-right corner sheared off, each one led by a small solid
            triangle, and the selected row inverts to a pale fill with dark
            lettering. Read off the language, profile and difficulty screens.
+
+  ``lock`` Lockdown's Nimitz shell. Square, banded and horizontal: a page
+           title in white letterspaced caps on a dark plate whose right end is
+           sheared off, with a bright blue rule running the FULL width of the
+           screen through it; menu entries as full-width bands rather than
+           buttons, the selected one a pale grey plate; and every section
+           separated by another of those full-width rules. Taken from the
+           game's own menus.
 
   ``gr``   The console shell the Red Storm games use -- flat translucent panels
            inside a bright rule, rounded buttons that fill solid when selected,
@@ -203,22 +211,26 @@ SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
 #: why the shape language is not copied from the game's own shell textures.
 LOCKDOWN = replace(
     RS3,
-    bg="#05070a",
-    veil="#000000",
-    panel="#131a21",
-    panel2="#1c252d",
-    edge="#6f8497",
-    edge_dim="#293642",
-    text="#c3ced8",
-    dim="#8595a3",
-    faint="#55636e",
-    title="#eaeaea",
-    accent="#8ea3b5",
-    accent_dim="#4a5a68",
-    sel_fill="#232f3a",
-    sel_text="#f2f4f6",
-    tab="#9c1f18",
-    bad="#c8402f",
+    chrome="lock",
+    bg="#16233a",
+    veil="#0e1728",
+    panel="#1e2e47",
+    panel2="#2b3f5c",
+    edge="#7fc4ea",
+    edge_dim="#3c5878",
+    text="#dce8f4",
+    dim="#9fb6cd",
+    faint="#6a8199",
+    title="#ffffff",
+    accent="#7fc4ea",
+    accent_dim="#42648a",
+    sel_fill="#5a6b80",
+    sel_text="#ffffff",
+    tab="#7fc4ea",
+    warn="#e0b552",
+    bad="#d2604a",
+    good="#7fc14a",
+    title_track=6,
 )
 
 BY_PROFILE = {
@@ -254,7 +266,7 @@ def angular(p: Palette) -> bool:
     which is how Advanced Warfighter ended up with gold-shell toggles when it
     stopped being an alias of Rainbow Six 3.
     """
-    return p.chrome in ("rs3", "graw")
+    return p.chrome in ("rs3", "graw", "lock")
 
 
 def _hex(c):
@@ -307,11 +319,27 @@ def _graw_frame(canvas, p: Palette, x0, y0, x1, y1, px, tag, fill, stroke,
                               tags=tag)
 
 
+def _lock_rule(canvas, p: Palette, x0, x1, y, px, tag, bright=True):
+    """The full-width blue rule Lockdown runs through everything.
+
+    In the game it does not stop at the edge of the thing it belongs to -- it
+    crosses the whole screen -- which is most of what makes the menus read as
+    banded rather than boxed.
+    """
+    colour = p.edge if bright else p.edge_dim
+    canvas.create_line(x0, y, x1, y, fill=colour, width=px(1), tags=tag)
+
+
 def paint_panel(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome", raised=False):
     """Draw one content panel in the active game's style."""
     if x1 - x0 < 4 or y1 - y0 < 4:
         return
     fill = p.panel2 if raised else p.panel
+    if p.chrome == "lock":
+        canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="", tags=tag)
+        _lock_rule(canvas, p, x0, x1, y0, px, tag)
+        _lock_rule(canvas, p, x0, x1, y1, px, tag, bright=False)
+        return
     if p.chrome == "graw":
         _graw_frame(canvas, p, x0, y0, x1, y1, px, tag, fill,
                     mix(p.edge_dim, p.edge, 0.55), inner=False)
@@ -340,6 +368,12 @@ def paint_group(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome"):
     """The outer box that wraps a whole page. Ghost Recon rules it in gold."""
     if x1 - x0 < 4 or y1 - y0 < 4:
         return
+    if p.chrome == "lock":
+        canvas.create_rectangle(x0, y0, x1, y1, fill=p.panel, outline="",
+                                tags=tag)
+        _lock_rule(canvas, p, x0, x1, y0 + px(1), px, tag)
+        _lock_rule(canvas, p, x0, x1, y1 - px(1), px, tag)
+        return
     if p.chrome == "graw":
         _graw_frame(canvas, p, x0, y0, x1, y1, px, tag, p.panel, p.edge)
         return
@@ -357,6 +391,16 @@ def paint_group(canvas, p: Palette, x0, y0, x1, y1, px, tag="chrome"):
 def paint_button(canvas, p: Palette, x0, y0, x1, y1, px, selected, hover=False,
                  tag="chrome"):
     """One navigation row."""
+    if p.chrome == "lock":
+        # A full-width band with the right end sheared off, the way the game
+        # sets its own menu entries and page titles.
+        cut = int((y1 - y0) * 0.62)
+        base = p.sel_fill if selected else (p.panel2 if hover else p.panel)
+        canvas.create_polygon(shear_points(x0, y0, x1, y1, cut), fill=base,
+                              outline="", tags=tag)
+        if selected:
+            _lock_rule(canvas, p, x0, x1 - cut, y1 - px(1), px, tag)
+        return
     if p.chrome == "graw":
         cut = int((y1 - y0) * 0.55)
         base = p.sel_fill if selected else (p.panel2 if hover else p.panel)
@@ -530,6 +574,24 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
 
     right = p.title_align != "left"
     tx = width - px(30) if right else pad
+
+    if p.chrome == "lock":
+        # the game's signature: a dark plate with a sheared right end carrying
+        # the title, and a bright rule crossing the entire width through it
+        plate_h = px(46)
+        top = px(14)
+        pts = [0, top, width - px(150), top, width - px(150) + plate_h // 2,
+               top + plate_h, 0, top + plate_h]
+        d.polygon(pts, fill=_hex(p.panel2) + (235,))
+        rule_y = top + plate_h + px(3)
+        d.line([(0, rule_y), (width, rule_y)], fill=p.edge, width=px(2))
+        tx = width - px(30)
+        draw_tracked(d, (tx, top + px(6)), label, big, p.title,
+                     track=px(p.title_track), anchor_right=True)
+        if subtitle:
+            draw_tracked(d, (tx, height - px(30)), subtitle, small, p.dim,
+                         track=px(1), anchor_right=True)
+        return ImageTk.PhotoImage(img)
 
     if angular(p):
         # the angled rule the game runs under its title

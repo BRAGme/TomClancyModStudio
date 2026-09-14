@@ -266,7 +266,18 @@ class NavItem(tk.Canvas):
             return
         skins.paint_button(self, p, 1, 1, w - 2, h - 2, theme.px,
                            self.selected, self.hovered)
-        if p.chrome == "graw":
+        if p.chrome == "lock":
+            # white letterspaced caps, ranged left with a wide indent, like the
+            # game's LOAD GAME / SINGLE PLAYER / MULTIPLAYER column
+            fg = p.sel_text if self.selected else (p.text if self.hovered
+                                                   else p.dim)
+            font = self.nav_font or theme.F("title", 11)
+            x = theme.px(22)
+            self.create_text(x, h // 2,
+                             text=_tracked(self.text.upper(), font,
+                                           w - x - theme.px(26), self.gap),
+                             anchor="w", fill=fg, font=font)
+        elif p.chrome == "graw":
             # Ranged left behind the wedge and letterspaced, like the game's
             # rows -- but measured. A full space between every letter turns
             # "ENEMY WAVES" into something wider than the row and it loses its
