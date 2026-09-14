@@ -49,40 +49,49 @@ def colour(name):
 _FAMILIES = {}
 
 
-def family(pref: str) -> str:
-    """The first family in a comma-separated preference list that Tk actually has.
+def family(pref: str):
+    """(family, style) for the first name in a preference list that Tk has.
 
     A palette names the face the game itself uses; if this machine does not have
     it, Tk silently substitutes something arbitrary and the skin quietly stops
     looking like the game. Resolving here means the fallback is the one the
     palette chose rather than whatever Tk felt like.
+
+    "Arial Bold" is not a family -- Windows registers it as Arial with a bold
+    style -- while "Arial Black" IS one. So a trailing style word is only split
+    off when the full name is not itself an installed family.
     """
     if pref in _FAMILIES:
         return _FAMILIES[pref]
     wanted = [n.strip() for n in pref.split(",") if n.strip()]
-    chosen = wanted[-1] if wanted else "Segoe UI"
+    have = set()
     try:
         import tkinter.font as tkfont
-        have = {n.lower() for n in tkfont.families(_root)} if _root else set()
-        for name in wanted:
-            if name.lower() in have:
-                chosen = name
-                break
+        if _root is not None:
+            have = {n.lower() for n in tkfont.families(_root)}
     except Exception:                            # noqa: BLE001
         pass
+
+    chosen = (wanted[-1] if wanted else "Segoe UI", None)
+    for name in wanted:
+        if name.lower() in have:
+            chosen = (name, None)
+            break
+        base, _, tail = name.rpartition(" ")
+        if base and tail.lower() == "bold" and base.lower() in have:
+            chosen = (base, "bold")
+            break
     _FAMILIES[pref] = chosen
     return chosen
 
 
 def F(kind="body", size=10):
     """A tk font tuple in the active skin's faces."""
-    if kind == "title":
-        return (family(P.title_font), size)
-    if kind == "bold":
-        return (family(P.bold_font), size)
     if kind == "mono":
         return ("Consolas", size)
-    return (family(P.body_font), size)
+    pref = {"title": P.title_font, "bold": P.bold_font}.get(kind, P.body_font)
+    fam, style = family(pref)
+    return (fam, size, style) if style else (fam, size)
 
 
 def set_dpi_aware():

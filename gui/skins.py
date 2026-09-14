@@ -62,9 +62,9 @@ class Palette:
     title_align: str = "right"
     title_track: int = 7         # extra pixels between letters
     title_upper: bool = True
-    title_font: str = "Bahnschrift Light"
-    body_font: str = "Segoe UI"
-    bold_font: str = "Segoe UI Semibold"
+    title_font: str = "Unispace Bold, Bahnschrift SemiBold, Segoe UI Semibold"
+    body_font: str = "Bahnschrift, Segoe UI"
+    bold_font: str = "Bahnschrift SemiBold, Segoe UI Semibold"
 
     #: PS2 face-button glyph colours, used on the action bar
     glyph_cross: str = "#5b93de"
@@ -96,9 +96,9 @@ GR = Palette(
     title_align="right",
     title_track=0,
     title_upper=False,
-    title_font="Verdana",
-    body_font="Segoe UI",
-    bold_font="Verdana Bold",
+    title_font="Arial Black, Segoe UI Black",
+    body_font="Arial, Segoe UI",
+    bold_font="Arial Bold, Segoe UI Semibold",
     glyph_cross="#5b93de",
     glyph_triangle="#46b79c",
 )
@@ -126,9 +126,9 @@ JS = Palette(
     title_align="right",
     title_track=0,
     title_upper=False,
-    title_font="Verdana",
-    body_font="Segoe UI",
-    bold_font="Verdana Bold",
+    title_font="Arial Black, Segoe UI Black",
+    body_font="Arial, Segoe UI",
+    bold_font="Arial Bold, Segoe UI Semibold",
     glyph_cross="#5b93de",
     glyph_triangle="#46b79c",
 )
@@ -182,11 +182,18 @@ GR2 = replace(
     tab="#b4e198",
     warn="#e2d05a",
     good="#9fe57a",
+    title_font="Bahnschrift SemiBold SemiConden, Bahnschrift SemiBold, "
+               "Segoe UI Semibold",
+    body_font="Franklin Gothic Medium, Segoe UI",
+    bold_font="Franklin Gothic Medium, Segoe UI Semibold",
 )
 
 SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
                panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#5a7d60",
-               sel_text="#16241a")
+               sel_text="#16241a",
+               title_font="Impact, Arial Black",
+               body_font="Corbel, Segoe UI",
+               bold_font="Corbel Bold, Segoe UI Semibold")
 
 BY_PROFILE = {
     "r6_3_slus20883": RS3,
@@ -377,38 +384,76 @@ def paint_button(canvas, p: Palette, x0, y0, x1, y1, px, selected, hover=False,
 #: by filename, Tk by family name, so a palette's preference string has to be
 #: translatable both ways.
 FONT_FILES = {
-    "Bahnschrift": ["bahnschrift.ttf"],
-    "Bahnschrift Light": ["bahnschrift.ttf", "segoeuil.ttf"],
-    "Bahnschrift SemiBold": ["bahnschrift.ttf", "seguisb.ttf"],
-    "Bahnschrift SemiCondensed": ["bahnschrift.ttf", "segoeui.ttf"],
+    # Rainbow Six 3 and Advanced Warfighter declare BankGothic Md BT Medium for
+    # titles and a face called RainBow6 for body -- neither is installable, and
+    # neither ships on the disc as a file: they are baked pixmap fonts inside
+    # MENU*.LIN. Unispace Bold is the closest squared, evenly-spaced face on a
+    # stock Windows; Bahnschrift is the closest DIN-ish body.
+    "Unispace": ["unispace bd.ttf"],
+    "Unispace Bold": ["unispace bd.ttf"],
+    # Ghost Recon and Jungle Storm ship the same new_font_revised atlas, and it
+    # IS Arial -- so this is the real face, not an approximation.
+    "Arial": ["arial.ttf"],
+    "Arial Bold": ["arialbd.ttf", "arial.ttf"],
+    "Arial Black": ["ariblk.ttf", "arialbd.ttf"],
+    # Ghost Recon 2's menus declare Chainlink Semi-Bold and Franklin Gothic
+    # Demi. Franklin Gothic Medium is the same family one step lighter;
+    # Bahnschrift's SemiBold SemiCondensed instance stands in for Chainlink.
+    "Franklin Gothic Medium": ["framd.ttf", "segoeui.ttf"],
+    "Bahnschrift": [("bahnschrift.ttf", None)],
+    "Bahnschrift Light": [("bahnschrift.ttf", "Light"), "segoeuil.ttf"],
+    "Bahnschrift SemiBold": [("bahnschrift.ttf", "SemiBold"), "seguisb.ttf"],
+    "Bahnschrift SemiCondensed": [("bahnschrift.ttf", "SemiCondensed")],
+    # Windows truncates the family name at 31 characters, which is how it is
+    # registered and therefore how Tk asks for it. Kept verbatim on purpose.
+    "Bahnschrift SemiBold SemiConden":
+        [("bahnschrift.ttf", "SemiBold SemiCondensed"), "seguisb.ttf"],
+    # Sum of All Fears' atlas is a Gill Sans-class humanist; Gill Sans is not
+    # installed anywhere, so Corbel is the nearest humanist. The logo is a
+    # heavy condensed grotesque, which Impact matches.
+    "Corbel": ["corbel.ttf"],
+    "Corbel Bold": ["corbelb.ttf", "corbel.ttf"],
+    "Impact": ["impact.ttf"],
     "Verdana": ["verdana.ttf", "segoeui.ttf"],
     "Verdana Bold": ["verdanab.ttf", "segoeuib.ttf"],
     "Segoe UI": ["segoeui.ttf"],
     "Segoe UI Light": ["segoeuil.ttf", "segoeui.ttf"],
     "Segoe UI Semibold": ["seguisb.ttf", "segoeuib.ttf"],
     "Segoe UI Bold": ["segoeuib.ttf"],
+    "Segoe UI Black": ["seguibl.ttf", "segoeuib.ttf"],
     "Tahoma": ["tahoma.ttf"],
     "Tahoma Bold": ["tahomabd.ttf", "tahoma.ttf"],
     "Trebuchet MS": ["trebuc.ttf"],
     "Trebuchet MS Bold": ["trebucbd.ttf", "trebuc.ttf"],
-    "Franklin Gothic Medium": ["framd.ttf", "segoeui.ttf"],
-    "Impact": ["impact.ttf"],
     "Consolas": ["consola.ttf"],
 }
 
 
 def _font(name, size):
-    """Load the first face of a comma-separated preference list that exists."""
+    """Load the first face of a comma-separated preference list that exists.
+
+    An entry may be a filename or a `(filename, variationName)` pair; Bahnschrift
+    is a single variable font whose weights and widths are named instances
+    rather than separate files, and the instance is what makes it match the
+    game rather than look like a generic UI face.
+    """
     from PIL import ImageFont
     tried = []
     for want in [n.strip() for n in str(name).split(",") if n.strip()]:
         tried += FONT_FILES.get(want, [])
     tried.append("segoeui.ttf")
-    for f in tried:
+    for entry in tried:
+        fname, variation = entry if isinstance(entry, tuple) else (entry, None)
         try:
-            return ImageFont.truetype(f, size)
+            font = ImageFont.truetype(fname, size)
         except OSError:
             continue
+        if variation:
+            try:
+                font.set_variation_by_name(variation)
+            except Exception:                     # noqa: BLE001
+                pass                              # a static build: still fine
+        return font
     try:
         return ImageFont.load_default(size)
     except TypeError:
