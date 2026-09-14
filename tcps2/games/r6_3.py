@@ -120,17 +120,27 @@ CAVE_WORDS = [
     (0x005BA590, 0x00000000),
 ]
 
+#: Counted rather than recalled: every `OFF` level package on the disc was
+#: decompressed and its `R6DZoneWave` and `R6DZonePoint` placements tallied.
+#: An earlier version of this note listed five levels as the only ones with
+#: zones; the disc actually places them in 24 of the 27 campaign parts, and in
+#: none of the multiplayer or training maps at all.
 WAVE_MAPS = (
-    "Maps with deployment zones, best host first:\n"
-    "  SHIPYARD   2 zones, 27 points in a 111 x 114 m box that wraps the "
-    "insertion point -- the only level with fighting from the first minute.\n"
-    "  ALCATRAZ   2 zones 19 m apart but 6 spawn points and authored 8/8 and "
-    "4/4; indoors, so it holds framerate.\n"
-    "  TRIESTE    3 zones 54-83 m apart, the widest spread, but the heaviest "
-    "level in the game.\n"
-    "  ISLAND     2 zones, and every zone sits past the halfway point.\n"
-    "  OIL REFINERY  3 zones but only 4 spawn points between them.\n"
-    "No zones at all: Alpine Village A, Import/Export A, Penthouse, Training."
+    "Waves are a campaign thing. 24 of the game's 27 mission parts place "
+    "deployment zones -- 568 spawn points between them -- and the wave "
+    "settings on this page reach every one of them at once.\n\n"
+    "Widest choice of spawn points, which is what map-wide spawning feeds on:\n"
+    "  IMPORT/EXPORT B   4 zones, 30 points\n"
+    "  TRIESTE A         4 zones, 30 points\n"
+    "  OIL REFINERY A    4 zones, 28 points\n"
+    "  OFFICE COMPLEX A  2 zones, 28 points\n"
+    "  ISLAND A          3 zones, 27 points\n"
+    "  SHIPYARD A        3 zones, 19 points -- the only level with fighting "
+    "from the first minute, since its zones wrap the insertion point.\n\n"
+    "No zones, so nothing here changes them: Alpine Village A, Import/Export "
+    "A, Penthouse A.\n"
+    "No zones anywhere in multiplayer or training either -- every MP and "
+    "training package places zero, so adversarial modes are untouched."
 )
 
 
