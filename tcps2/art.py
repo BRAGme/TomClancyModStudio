@@ -172,8 +172,13 @@ EMBLEM_MODE = {
 #: around is all there is to badge the header with. These are drawn into the
 #: middle of it, in the skin's own colour, so the header reads as a game rather
 #: than as a circle.
+#: (lines, colour, font files). Jungle Storm's own lettering is the
+#: `new_font_revised` atlas it shares with Ghost Recon, and that atlas IS
+#: Arial -- so setting the ring's text in Arial is the game's real face rather
+#: than a lookalike, and it stops the mark reading as a caption pasted on.
 EMBLEM_WORDMARK = {
-    "jungle_storm_slus20820": (("GHOST RECON", "JUNGLE STORM"), "#d8efe9"),
+    "jungle_storm_slus20820": (("GHOST RECON", "JUNGLE STORM"), "#d8efe9",
+                               ("arialbd.ttf", "ariblk.ttf", "segoeuib.ttf")),
 }
 
 #: the game's own menu art, by name, inside its archives
@@ -353,7 +358,8 @@ def emblem_image(detection, cache_dir=None):
             px[x, y] = (r, g, b, max(0, min(255, int((lum - floor) * gain))))
     mark = EMBLEM_WORDMARK.get(profile.id)
     if mark:
-        rgba = _stamp_wordmark(rgba, mark[0], mark[1])
+        rgba = _stamp_wordmark(rgba, mark[0], mark[1],
+                               mark[2] if len(mark) > 2 else None)
     # Trim the fully transparent margin the key leaves behind. Without this a
     # mark that does not fill its own source -- Jungle Storm's ring sits in a
     # square of empty space -- is scaled to fit that empty space rather than to
@@ -371,7 +377,7 @@ def emblem_image(detection, cache_dir=None):
     return rgba
 
 
-def _stamp_wordmark(rgba, lines, colour):
+def _stamp_wordmark(rgba, lines, colour, faces=None):
     """Set `lines` into the clear middle of a keyed emblem.
 
     The size is fitted rather than fixed: whatever the mark's own resolution
@@ -387,7 +393,7 @@ def _stamp_wordmark(rgba, lines, colour):
     per_line = max(8, budget_h // len(lines))
 
     def load(size):
-        for name in ("bahnschrift.ttf", "seguisb.ttf", "segoeuib.ttf"):
+        for name in (faces or ("bahnschrift.ttf", "seguisb.ttf", "segoeuib.ttf")):
             try:
                 return ImageFont.truetype(name, size)
             except OSError:

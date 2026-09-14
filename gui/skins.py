@@ -67,6 +67,12 @@ class Palette:
     good: str = "#7fc14a"
 
     #: title treatment
+    #: the ink the page title is set in, when the game's own lettering is not
+    #: simply white -- Sum of All Fears' wordmark is gold, Lockdown's is red
+    #: over white. Empty means "use `title`".
+    title_ink: str = ""
+    #: a colour drawn behind the title, offset, the way the game's logo is
+    title_shadow: str = ""
     title_align: str = "right"
     title_track: int = 7         # extra pixels between letters
     title_upper: bool = True
@@ -199,6 +205,8 @@ GR2 = replace(
 SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
                panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#5a7d60",
                sel_text="#16241a",
+               title_ink="#d2a047",
+               title_shadow="#4a3208",
                title_font="Impact, Arial Black",
                body_font="Corbel, Segoe UI",
                bold_font="Corbel Bold, Segoe UI Semibold")
@@ -227,6 +235,7 @@ LOCKDOWN = replace(
     sel_fill="#5a6b80",
     sel_text="#ffffff",
     tab="#7fc4ea",
+    title_shadow="#8c1c16",
     warn="#e0b552",
     bad="#d2604a",
     good="#7fc14a",
@@ -531,12 +540,22 @@ def _font(name, size):
         return ImageFont.load_default()
 
 
-def draw_tracked(draw, xy, text, font, fill, track=0, anchor_right=False):
-    """Letterspaced text. Pillow has no tracking, so step glyph by glyph."""
+def draw_tracked(draw, xy, text, font, fill, track=0, anchor_right=False,
+                 shadow=""):
+    """Letterspaced text. Pillow has no tracking, so step glyph by glyph.
+
+    `shadow` draws the same lettering once behind and below, which is how both
+    Sum of All Fears' and Lockdown's own wordmarks are set.
+    """
     x, y = xy
     if anchor_right:
         total = sum(draw.textlength(ch, font=font) + track for ch in text) - track
         x -= total
+    if shadow:
+        sx = x
+        for ch in text:
+            draw.text((sx + 2, y + 2), ch, font=font, fill=shadow)
+            sx += draw.textlength(ch, font=font) + track
     for ch in text:
         draw.text((x, y), ch, font=font, fill=fill)
         x += draw.textlength(ch, font=font) + track
@@ -579,6 +598,7 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         lock_shear_x = width - _plate_h
 
     label = text.upper() if p.title_upper else text
+    ink = p.title_ink or p.title
     big = _font(p.title_font, px(30))
     small = _font(p.body_font, px(11))
 
@@ -600,8 +620,13 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         if abs(scale - 1.0) > 0.01:
             em = em.resize((max(1, int(em.width * scale)),
                             max(1, int(em.height * scale))), Image.LANCZOS)
-        img.alpha_composite(em, (left + (box_w - em.width) // 2,
-                                 (height - em.height) // 2))
+        # Lockdown's plate does not fill the band -- it starts at px(6) and
+        # stops short of the bottom -- so centring on the band puts the logo
+        # visibly low inside it.
+        mid = (height - em.height) // 2
+        if p.chrome == "lock":
+            mid = px(6) + ((height - px(30)) - em.height) // 2
+        img.alpha_composite(em, (left + (box_w - em.width) // 2, mid))
     pad = left + box_w + px(22)
 
     right = p.title_align != "left"
@@ -618,8 +643,9 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         # ranged to the LEFT of where the diagonal starts, so the cut falls
         # away to the right of the word rather than through it
         tx = lock_shear_x - px(18)
-        draw_tracked(d, (tx, px(16)), label, big, p.title,
-                     track=px(p.title_track), anchor_right=True)
+        draw_tracked(d, (tx, px(16)), label, big, ink,
+                     track=px(p.title_track), anchor_right=True,
+                     shadow=p.title_shadow)
         if subtitle:
             draw_tracked(d, (tx, rule_y - px(24)), subtitle, small, p.dim,
                          track=px(1), anchor_right=True)
@@ -631,8 +657,9 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         cut = px(14)
         d.line([(pad, y), (width - px(26) - cut, y), (width - px(26), y - cut)],
                fill=p.edge_dim, width=px(2))
-        draw_tracked(d, (tx, px(10)), label, big, p.title,
-                     track=px(p.title_track), anchor_right=right)
+        draw_tracked(d, (tx, px(10)), label, big, ink,
+                     track=px(p.title_track), anchor_right=right,
+                     shadow=p.title_shadow)
         if subtitle:
             draw_tracked(d, (tx, height - px(40)), subtitle, small, p.dim,
                          track=px(1), anchor_right=right)
@@ -644,7 +671,9 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
         sd.text((sx + px(2), px(8)), label, font=big, fill=(0, 0, 0, 210))
         shadow = shadow.filter(ImageFilter.GaussianBlur(px(3)))
         img.alpha_composite(shadow)
-        d.text((sx, px(6)), label, font=big, fill=p.title)
+        if p.title_shadow:
+            d.text((sx + px(2), px(8)), label, font=big, fill=p.title_shadow)
+        d.text((sx, px(6)), label, font=big, fill=ink)
         if subtitle:
             ux = tx - d.textlength(subtitle, font=small) if right else tx + px(3)
             d.text((ux, height - px(34)), subtitle, font=small, fill=p.dim)
