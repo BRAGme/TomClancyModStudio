@@ -199,13 +199,14 @@ class App(tk.Tk):
         self.update_idletasks()
         y += max(px(52), self.disc.winfo_reqheight()) + px(4)
 
-        # Line the serial up with the disc path above it. The indent is not a
-        # guess: it is measured from where the entry actually sits, because it
-        # depends on the chrome padding, the DISC label's width in whatever
-        # face this skin uses, and the entry's own gutter -- three things that
-        # move per skin and per DPI.
-        self.status.place(x=x + self._path_indent(), y=y,
-                          width=width, height=px(20))
+        # The strip stays flush with the panel above it -- moving the whole
+        # label left a gap where the backdrop showed through -- and only the
+        # LETTERING is indented, using the label's own padding. The indent is
+        # measured rather than guessed: it depends on the chrome padding, the
+        # DISC label's width in whatever face this skin uses, and the entry's
+        # own gutter, three things that move per skin and per DPI.
+        self.status.configure(padx=self._path_indent())
+        self.status.place(x=x, y=y, width=width, height=px(20))
         y += px(26)
 
         bottom = h - px(GUTTER)
