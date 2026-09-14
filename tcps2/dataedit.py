@@ -88,6 +88,11 @@ def _op_grenade_carry(plain, params):
     return transforms.set_grenade_carry(plain, params.get("percent", 20))
 
 
+def _op_zone_counts(plain, params):
+    from . import r6zones
+    return r6zones.scale(plain, float(params.get("factor", 1.0)))[0]
+
+
 def _op_ws_slot(plain, params):
     return transforms.set_ws_slot(plain, int(params["slot"]),
                                   bool(params.get("using", True)))
@@ -107,6 +112,7 @@ OPS = {
     "xml_values": _op_xml_values,
     "nimitz_skills": _op_nimitz_skills,
     "nimitz_guns": _op_nimitz_guns,
+    "zone_counts": _op_zone_counts,
 }
 
 

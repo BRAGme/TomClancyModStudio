@@ -120,28 +120,89 @@ CAVE_WORDS = [
     (0x005BA590, 0x00000000),
 ]
 
-#: Counted rather than recalled: every `OFF` level package on the disc was
-#: decompressed and its `R6DZoneWave` and `R6DZonePoint` placements tallied.
-#: An earlier version of this note listed five levels as the only ones with
-#: zones; the disc actually places them in 24 of the 27 campaign parts, and in
-#: none of the multiplayer or training maps at all.
+#: Counted from the recovered export table, which names each object's class --
+#: not from a byte search, which also counts the class name itself and reads
+#: one high on every level. 41 wave actors and 541 spawn points across the 27
+#: campaign parts. See research/rs3ai/zones.md.
 WAVE_MAPS = (
     "Waves are a campaign thing. 24 of the game's 27 mission parts place "
-    "deployment zones -- 568 spawn points between them -- and the wave "
-    "settings on this page reach every one of them at once.\n\n"
+    "deployment zones -- 41 zones and 541 spawn points between them -- and the "
+    "settings on this page reach every one of them at once. To move a single "
+    "mission instead, use the Missions page.\n\n"
     "Widest choice of spawn points, which is what map-wide spawning feeds on:\n"
-    "  IMPORT/EXPORT B   4 zones, 30 points\n"
-    "  TRIESTE A         4 zones, 30 points\n"
-    "  OIL REFINERY A    4 zones, 28 points\n"
-    "  OFFICE COMPLEX A  2 zones, 28 points\n"
-    "  ISLAND A          3 zones, 27 points\n"
-    "  SHIPYARD A        3 zones, 19 points -- the only level with fighting "
+    "  TRIESTE A         3 zones, 29 points\n"
+    "  IMPORT/EXPORT B   3 zones, 29 points\n"
+    "  OIL REFINERY A    3 zones, 27 points\n"
+    "  OFFICE COMPLEX A  1 zone,  27 points\n"
+    "  PARADE B          2 zones, 26 points\n"
+    "  SHIPYARD A        2 zones, 18 points -- the only level with fighting "
     "from the first minute, since its zones wrap the insertion point.\n\n"
     "No zones, so nothing here changes them: Alpine Village A, Import/Export "
     "A, Penthouse A.\n"
     "No zones anywhere in multiplayer or training either -- every MP and "
     "training package places zero, so adversarial modes are untouched."
 )
+
+
+#: The campaign, as the disc actually lays it out: a stem, the name the game
+#: uses for it, and which parts exist. Most missions are two levels; Island,
+#: Penthouse and Trieste are one. Every part ships twice -- `<STEM>OFF.LIN` and
+#: `<STEM>_SS.LIN` -- and both have to be edited or half the copies stay stock.
+#:
+#: `waves` is the number of R6DZoneWave actors the level places, read off the
+#: recovered export table rather than estimated; see research/rs3ai/zones.md.
+MISSIONS = (
+    ("AIRPORT", "Airport", "AB", 3),
+    ("ALCATRAZ", "Alcatraz", "AB", 3),
+    ("ALPINES", "Alpine Village", "AB", 2),
+    ("GARAGE", "Parking Garage", "AB", 2),
+    ("IMPORT_EXPORT", "Import/Export", "AB", 3),
+    ("ISLAND", "Island Estate", "A", 2),
+    ("MEATPACKING", "Meat Packing", "AB", 4),
+    ("MOUNTAIN_HIGHWAY", "Mountain Highway", "AB", 3),
+    ("OFFICE_COMPLEX", "Office Complex", "AB", 3),
+    ("OIL_REFINERY", "Oil Refinery", "AB", 5),
+    ("OLDCITY", "Old City", "AB", 2),
+    ("PARADE", "Parade", "AB", 3),
+    ("PENTHOUSE", "Penthouse", "A", 0),
+    ("SHIPYARD", "Shipyard", "AB", 3),
+    ("TRIESTE", "Trieste", "A", 3),
+)
+
+MISSION_GROUP = "Missions"
+
+
+def mission_key(stem):
+    return "mission_" + stem.lower()
+
+
+def mission_select(stem, parts):
+    """A regex matching every package this mission ships, both copies."""
+    return r"/%s_[%s](OFF|_SS)\.LIN$" % (stem, parts)
+
+
+def _mission_settings():
+    """One enemy-count dial per mission.
+
+    These are the counts the designers authored into the level itself, so
+    unlike everything on the Enemy Waves page they move one mission and leave
+    the rest of the campaign alone. What they scale is every authored spawner
+    count in that level -- the wave zones and the story spawners both -- which
+    is why the label says enemies rather than waves.
+    """
+    out = []
+    for stem, title, parts, waves in MISSIONS:
+        where = "part A and B" if len(parts) == 2 else "one part"
+        zones = ("%d deployment zone%s" % (waves, "" if waves == 1 else "s")
+                 if waves else "no deployment zones -- story spawners only")
+        out.append(Setting(
+            mission_key(stem), title, INT, 100, MISSION_GROUP,
+            minimum=25, maximum=400, unit="%",
+            help="Scales every enemy count authored into %s (%s; %s). "
+                 "100%% leaves the mission exactly as it shipped."
+                 % (title, where, zones),
+            touches="data", confidence="applied"))
+    return out
 
 
 def _settings():
@@ -404,7 +465,7 @@ def _settings():
                 help="Two separate paths hide and destroy a corpse. The timed "
                      "options skip the first and widen the second's window.",
                 confidence="verified"),
-    ]
+    ] + _mission_settings()
 
 
 def build_edits(v: dict) -> list:
@@ -490,6 +551,18 @@ def build_data(v: dict) -> list:
     compressor, so the edits do not have to preserve length.
     """
     out = []
+
+    # One edit per mission whose dial has been moved. These rewrite counts
+    # inside the level packages themselves, so they reach one mission only --
+    # everything else on this profile is a global code patch.
+    for stem, title, parts, _waves in MISSIONS:
+        pct = int(v.get(mission_key(stem), 100))
+        if pct == 100:
+            continue
+        out.append(FileEdit("zone_counts", mission_select(stem, parts), "",
+                            {"factor": pct / 100.0},
+                            note="%s: enemy counts to %d%%" % (title, pct)))
+
     ini = {}
 
     if int(v.get("grenade_dist", 500)) != 500:

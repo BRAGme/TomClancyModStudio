@@ -235,6 +235,63 @@ def run_level_packages(args):
 
         run_zone_counts(data, raw_for(iso, "/SHIPYARD_AOFF.LIN"),
                         lin.decompress(raw_for(iso, "/TRIESTE_AOFF.LIN")))
+        run_missions(iso)
+
+
+def run_missions(iso):
+    """The per-mission dials: what they emit, and what they reach.
+
+    Applied in memory against the real disc through a read-only archive; the
+    ISO is never written.
+    """
+    from tcps2 import dataedit, lin, r6zones
+    from tcps2.games.r6_3 import MISSIONS, PROFILE, mission_key
+    from tcps2.vokes import open_archives
+
+    print("\n[Rainbow Six 3 -- per-mission enemy counts]")
+    per_mission = [s for s in PROFILE.settings if s.group == "Missions"]
+    check("every mission has a dial", len(per_mission) == len(MISSIONS) == 15,
+          "%d settings, %d missions" % (len(per_mission), len(MISSIONS)))
+    check("they are data edits, not code patches",
+          all(s.touches == "data" for s in per_mission))
+
+    vals = dict(PROFILE.defaults())
+    check("leaving them alone writes nothing", PROFILE.build_data(vals) == [])
+
+    vals[mission_key("SHIPYARD")] = 200
+    vals[mission_key("ISLAND")] = 50
+    edits = PROFILE.build_data(vals)
+    check("moving two dials emits two edits", len(edits) == 2, str(len(edits)))
+
+    # The levels ship twice, OFF and _SS. Matching only one leaves half the
+    # copies stock, which is the mistake this selector exists to avoid.
+    hits = {}
+    for arc in open_archives(iso, r"\.IMG$"):
+        for name in arc.files:
+            for e in edits:
+                if e.matches(name):
+                    hits.setdefault(e.params["factor"], set()).add(name)
+    check("Shipyard's edit reaches both parts and both copies",
+          len(hits.get(2.0, ())) == 4, str(sorted(hits.get(2.0, ()))))
+    check("Island has only an A part, so its edit reaches two files",
+          len(hits.get(0.5, ())) == 2, str(sorted(hits.get(0.5, ()))))
+
+    # and the values actually move, without the container moving
+    name = sorted(hits[2.0])[0]
+    for arc in open_archives(iso, r"\.IMG$"):
+        ent = arc.files.get(name)
+        if not ent:
+            continue
+        raw = arc.read_entry(ent)
+        before = sorted(v for _a, _p, v in r6zones.sites(lin.decompress(raw)))
+        fn = dataedit.OPS["zone_counts"]
+        new, _touched = lin.substitute(raw, lambda pl: fn(pl, {"factor": 2.0}))
+        after = sorted(v for _a, _p, v in r6zones.sites(lin.decompress(new)))
+        check("the counts double", after == [v * 2 for v in before],
+              "%s -> %s" % (before[:4], after[:4]))
+        check("the container does not move", len(new) == len(raw),
+              "%d vs %d" % (len(new), len(raw)))
+        break
 
 
 def raw_for(iso, name):
