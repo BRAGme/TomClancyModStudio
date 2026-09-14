@@ -93,9 +93,7 @@ NOTES = (
     "decoded: the .psx container splits exactly (a 70-byte header, a 1,024-byte "
     "palette, then one byte per pixel) and the palette is plainly right -- the "
     "game's reds and steels come out -- but the pixel order is a swizzle that "
-    "resisted every variant tried, so the menus themselves were never seen.
-
-"
+    "resisted every variant tried, so the menus themselves were never seen.\n\n"
     "One caveat worth stating plainly: none of this has been run in the game. "
     "The record layouts were established from the disc, and the skill reading "
     "was checked against every ordering the shipped profile names imply -- six "
