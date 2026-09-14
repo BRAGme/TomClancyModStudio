@@ -110,8 +110,13 @@ def cmd_plan(args):
     print("%s -- pristine overlay recovered via %s" % (pl.game_title, pl.pristine_source))
     for e in pl.edits:
         print("  %08x  %08x -> %08x   %s" % (e.va, e.stock, e.value, e.note))
-    print("  %d word(s) into the disc, %d in the cheat file"
-          % (len(pl.edits), len(pl.pnach)))
+    for d in pl.data:
+        extra = (" " + str(d.params)) if d.params else ""
+        scope = (" [%s]" % d.scope) if d.scope else ""
+        print("  data   %-16s %-14s%s%s   %s"
+              % (d.op, d.select, scope, extra, d.note))
+    print("  %d word(s) into the disc, %d data edit(s), %d in the cheat file"
+          % (len(pl.edits), len(pl.data), len(pl.pnach)))
     for w in pl.warnings:
         print("  ! %s" % w)
     return 0
@@ -123,6 +128,13 @@ def cmd_apply(args):
     r = engine.apply(args.iso, det.profile, vals, progress=lambda m: print("  " + m))
     print("%d of %d words verified by reading the disc back"
           % (r["verified"], r["applied"]))
+    if r.get("data"):
+        d = r["data"]
+        print("%d data file(s) rewritten, %d read back cleanly%s"
+              % (d.get("files", 0), d.get("verified", 0),
+                 (", %d BROKEN" % d["broken"]) if d.get("broken") else ""))
+        for op, n in sorted(d.get("changes", {}).items()):
+            print("   %-18s %d change(s)" % (op, n))
     print("backup: %s" % r["backup"])
     pn = det.profile.build_pnach(vals) if det.profile.build_pnach else []
     if pn:
