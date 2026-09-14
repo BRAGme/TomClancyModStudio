@@ -201,23 +201,32 @@ def build_data(v: dict) -> list:
 #: Every one of the sixteen ships all four modes -- campaign, co-op and
 #: Terrorist Hunt in both directions -- as separate .MIS files.
 #: (id, place, sections, spawn templates)
+#: The sixteen campaign missions in the order the game plays them.
+#:
+#: This is not a guess and not alphabetical: `MISSIONSTRING.RES` on the disc
+#: is the mission-select screen's own table, and it lists M01 through M16 with
+#: dates that climb from March 29th to August 23rd. The codenames, locations
+#: and dates below are copied from it verbatim (title-cased for the cards),
+#: and a test re-reads the file and checks every one of them still matches.
+#:
+#: (id, codename, location, date, sections, enemy templates)
 MISSIONS = (
-    ("M01", "South Africa", 3, 28),
-    ("M02", "Amsterdam", 3, 41),
-    ("M03", "Parliament", 2, 20),
-    ("M04", "University", 3, 30),
-    ("M05", "Distillery", 3, 38),
-    ("M06", "Paris Hospital", 2, 18),
-    ("M07", "Catacombs", 3, 32),
-    ("M08", "Calais Docks", 3, 42),
-    ("M09", "Channel Ferry", 3, 38),
-    ("M10", "Marseilles", 2, 29),
-    ("M11", "Algeria", 3, 51),
-    ("M12", "Sahara Desert", 3, 31),
-    ("M13", "Estate", 3, 35),
-    ("M14", "NATO Summit", 2, 26),
-    ("M15", "Mercenary Base", 3, 31),
-    ("M16", "Castle", 4, 56),
+    ("M01", "Deadline", "Pretoria, South Africa", "March 29th", 3, 28),
+    ("M02", "Backlash", "Amsterdam, Netherlands", "May 12th", 3, 41),
+    ("M03", "Dragon Hammer", "Edinburgh, Scotland", "June 10th", 2, 20),
+    ("M04", "Ricochet", "Edinburgh, Scotland", "June 10th", 3, 30),
+    ("M05", "Chimera", "Olivet, France", "June 27th", 3, 38),
+    ("M06", "Bloodline", "Paris, France", "June 27th", 2, 18),
+    ("M07", "Bone Yard", "Paris, France", "July 10th", 3, 32),
+    ("M08", "Breakpoint", "Calais, France", "July 11th", 3, 42),
+    ("M09", "Leviathan", "Calais, France", "July 11th", 3, 38),
+    ("M10", "Lowlife", "Marseilles, France", "August 7th", 2, 29),
+    ("M11", "Sandstorm", "Malzir, Algeria", "August 19th", 3, 51),
+    ("M12", "Archer", "Djaskra, Algeria", "August 20th", 3, 31),
+    ("M13", "Catalyst", "Catalan Bay, Gibraltar", "August 22nd", 3, 35),
+    ("M14", "Red Scythe", "Barcelona, Spain", "August 22nd", 2, 26),
+    ("M15", "Citadel", "Cala Brescana, Menorca", "August 23rd", 3, 31),
+    ("M16", "Lockdown", "Cala Brescana, Menorca", "August 23rd", 4, 56),
 )
 
 MISSION_GROUP = "Missions"
@@ -233,9 +242,9 @@ def mission_art_for(key):
     Lockdown keeps one picture per mission rather than one per section, so
     this is always a single name.
     """
-    for mid, _place, _secs, _spawns in MISSIONS:
-        if key == mission_key(mid):
-            return [mid]
+    for mission in MISSIONS:
+        if key == mission_key(mission[0]):
+            return [mission[0]]
     return []
 
 
@@ -252,13 +261,14 @@ def _mission_settings():
     offering a slider that quietly does nothing.
     """
     out = []
-    for mid, place, secs, spawns in MISSIONS:
+    for mid, codename, place, date, secs, spawns in MISSIONS:
         out.append(Setting(
-            mission_key(mid), "%s  %s" % (mid, place), INT, 100, MISSION_GROUP,
-            minimum=25, maximum=400, unit="%",
-            help="%d section%s, referencing %d enemy templates. Ships in all "
-                 "four modes: campaign, co-op and Terrorist Hunt both ways."
-                 % (secs, "" if secs == 1 else "s", spawns),
+            mission_key(mid), "%s  %s" % (mid, codename), INT, 100,
+            MISSION_GROUP, minimum=25, maximum=400, unit="%",
+            help="%s, %s. %d section%s, referencing %d enemy templates. Ships "
+                 "in all four modes: campaign, co-op and Terrorist Hunt both "
+                 "ways."
+                 % (place, date, secs, "" if secs == 1 else "s", spawns),
             touches="data", enabled=False,
             disabled_reason=(
                 "Reading only. The .MIS format has been read, and it holds no "

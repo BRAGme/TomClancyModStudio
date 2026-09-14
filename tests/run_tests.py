@@ -254,28 +254,52 @@ def run_lockdown_missions(pak, profile, det):
     check("and none of them writes anything",
           profile.build_data({mission_key(m[0]): 300 for m in MISSIONS}) == [])
 
-    # the figures on the cards come off the disc, so they have to match it
-    titles, spawns = {}, {}
+    # The order and the names are the disc's, not mine: MISSIONSTRING.RES is
+    # the mission-select screen's own table. It has to parse exactly, line up
+    # with the table card for card, and -- the point of the exercise -- run in
+    # date order, which is what makes M01..M16 chronological rather than just
+    # numbered.
+    from tcps2 import nimitz_mis
+    shell = nimitz_mis.mission_strings(
+        pak.read_entry(pak.files[nimitz_mis.STRINGS]))
+    check("the disc's own mission table reads back",
+          len(shell) == len(MISSIONS), str(len(shell)))
+    wrong = [m[0] for m, d in zip(MISSIONS, shell)
+             if (m[1].upper(), m[2].upper(), m[3].upper()) != d[:3]]
+    check("every card's name, place and date are the disc's",
+          not wrong, str(wrong))
+    order = [d[3] for d in shell]
+    check("and they are listed M01 to M16",
+          order == ["m%02d_snapshot.rsb" % (i + 1) for i in range(16)],
+          str(order[:3]))
+
+    MONTHS = ("JANUARY FEBRUARY MARCH APRIL MAY JUNE JULY AUGUST SEPTEMBER "
+              "OCTOBER NOVEMBER DECEMBER").split()
+
+    def when(text):
+        month, day = text.split()
+        return MONTHS.index(month), int(day[:-2])
+
+    dates = [when(d[2]) for d in shell]
+    check("which is chronological -- the dates never go backwards",
+          all(a <= b for a, b in zip(dates, dates[1:])),
+          "%s -> %s" % (shell[0][2], shell[-1][2]))
+
+    # the enemy-template figure on each card comes off the disc too
+    spawns = {}
     for name in pak.files:
         m = re.match(r"^/PS2DATA/MISSION/(M\d\d)_SEC_\d\d(_SMG)?\.MIS$",
                      name, re.I)
         if not m:
             continue
-        mid = m.group(1).upper()
         blob = pak.read_entry(pak.files[name])
+        mid = m.group(1).upper()
         spawns[mid] = spawns.get(mid, 0) + len(re.findall(rb"[a-z0-9_]+\.cms", blob))
-        if mid not in titles:
-            t = re.search(rb"M\d\d - ([A-Za-z .]+) - Section", blob)
-            if t:
-                titles[mid] = t.group(1).decode().strip()
-    wrong = [m[0] for m in MISSIONS if titles.get(m[0]) != m[1]]
-    check("the place names match the mission scripts", not wrong, str(wrong))
-    off = [m[0] for m in MISSIONS if spawns.get(m[0]) != m[3]]
+    off = [m[0] for m in MISSIONS if spawns.get(m[0]) != m[5]]
     check("the spawn-template counts match too", not off, str(off))
 
     # and the picture each card shows really is on the disc
-    missing = [m[0] for m in MISSIONS
-               if art.mission_art(det, m[0], "A") is None]
+    missing = [m[0] for m in MISSIONS if art.mission_art(det, m[0]) is None]
     check("every mission has its snapshot", not missing, str(missing))
 
 

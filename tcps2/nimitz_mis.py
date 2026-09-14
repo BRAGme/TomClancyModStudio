@@ -123,3 +123,31 @@ def hunt_census(pak):
         out.append((m.group(1).upper(), m.group(2), m.group(3).upper(),
                     count, profiles))
     return out
+
+
+#: `/PS2DATA/SHELL/<lang>/MISSIONSTRING.RES` -- what the mission-select screen
+#: prints. A u16 count, then that many strings as (u32 length, bytes, u16 0),
+#: four per mission in campaign order: codename, location, date, snapshot.
+STRINGS = "/PS2DATA/SHELL/ENGLISH/MISSIONSTRING.RES"
+
+
+def mission_strings(data):
+    """[(codename, location, date, snapshot)] straight off the disc.
+
+    The parse has to consume the file exactly -- a declared count that agrees
+    with what was read and no bytes left over -- or the layout is wrong and
+    nothing here should be trusted.
+    """
+    declared = struct.unpack_from("<H", data, 0)[0]
+    out, off = [], 2
+    while off < len(data):
+        (n,) = struct.unpack_from("<I", data, off)
+        off += 4
+        if not n or off + n + 2 > len(data) or data[off + n:off + n + 2] != b"\0\0":
+            raise ValueError("MISSIONSTRING.RES: bad record at %d" % off)
+        out.append(data[off:off + n].decode("latin-1"))
+        off += n + 2
+    if len(out) != declared or len(out) % 4:
+        raise ValueError("MISSIONSTRING.RES: %d strings, %d declared"
+                         % (len(out), declared))
+    return [tuple(out[i:i + 4]) for i in range(0, len(out), 4)]
