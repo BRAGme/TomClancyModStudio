@@ -138,7 +138,7 @@ def run_lockdown(args):
               by.get("terrorist_super_easy.cgs") == [1, 1, 1, 1, 1, 1],
               str(by.get("terrorist_super_easy.cgs")))
 
-        bumped, n = transforms.bump_nimitz_skills(cg, 4)
+        bumped, wide_skill_bytes = transforms.bump_nimitz_skills(cg, 4)
         check("a skill bump keeps the file length", len(bumped) == len(cg))
         after = {n2: s for n2, _o, s in transforms.read_nimitz_skills(bumped)}
         moved = [k for k in by if by[k] != after.get(k)]
@@ -167,6 +167,34 @@ def run_lockdown(args):
                        transforms.read_nimitz_guns(scaled))
         check("scaling is applied", after_g["m249.gun"] == (300, 1000),
               str(after_g["m249.gun"]))
+
+        # -- Terrorist Hunt, scoped ------------------------------------
+        hunt, nh = transforms.bump_nimitz_skills(
+            cg, 4, only=transforms.NIMITZ_HUNT)
+        after_h = {n2: s2 for n2, _o, s2 in transforms.read_nimitz_skills(hunt)}
+        moved_h = [k for k in by if by[k] != after_h.get(k)]
+        check("scoping the skill shift moves only the three Hunt profiles",
+              sorted(moved_h) == sorted(transforms.NIMITZ_HUNT), str(moved_h))
+        check("the campaign tiers are untouched by it",
+              after_h["terrorist-01.cgs"] == by["terrorist-01.cgs"])
+        check("and it still preserves the file length", len(hunt) == len(cg))
+        # `n` has been reused for the weapon scale by this point, so compare
+        # against the skill count captured above or this proves nothing.
+        check("the scoped edit is genuinely narrower",
+              nh == 18 and wide_skill_bytes == 217,
+              "%d scoped vs %d wide" % (nh, wide_skill_bytes))
+
+        prof_ld = BY_ID["lockdown_slus21144"]
+        vals = dict(prof_ld.defaults())
+        vals["ld_enemy_skill"] = 4
+        wide_edit = prof_ld.build_data(vals)[0]
+        vals["ld_hunt_only"] = "hunt"
+        scoped_edit = prof_ld.build_data(vals)[0]
+        check("the switch adds a scope to the edit rather than a second one",
+              "only" not in wide_edit.params
+              and scoped_edit.params.get("only") == list(transforms.NIMITZ_HUNT))
+        check("and it does nothing on its own",
+              prof_ld.build_data({"ld_hunt_only": "hunt"}) == [])
 
         run_lockdown_psx(pak)
         run_upscale(pak, profile)

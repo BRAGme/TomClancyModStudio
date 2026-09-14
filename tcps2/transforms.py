@@ -613,17 +613,32 @@ def read_nimitz_skills(blob: bytes):
     return out
 
 
-def bump_nimitz_skills(blob: bytes, steps: int, hostile_only: bool = True):
+#: The three profiles the Terrorist Hunt modes draw from. Named in full rather
+#: than matched on a `th_` prefix: the archive also holds `timothy_hanely.cgs`,
+#: and a prefix rule is the kind of thing that silently grows a fourth member
+#: the day someone adds a profile.
+NIMITZ_HUNT = ("th_terrorist.cgs", "th_militia.cgs", "th_merc.cgs")
+
+
+def bump_nimitz_skills(blob: bytes, steps: int, hostile_only: bool = True,
+                       only=None):
     """Shift hostile AI profiles' six skills, clamped to 1-20.
 
     One byte per skill, so the length never moves -- which matters more here
     than usual, because this archive is never relocated.
+
+    `only` narrows the edit to a named set of profiles -- `NIMITZ_HUNT` to
+    retune Terrorist Hunt without touching the campaign. It is applied as well
+    as `hostile_only`, not instead of it.
     """
     if not steps:
         return blob, 0
+    wanted = set(only) if only else None
     out = bytearray(blob)
     changed = 0
     for name, start, end in _nimitz_records(blob, b".cgs"):
+        if wanted is not None and name not in wanted:
+            continue
         if hostile_only:
             faction = struct.unpack_from("<I", blob, _nimitz_body(blob, start))[0]
             if not NIMITZ_HOSTILE.get(faction, False):

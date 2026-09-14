@@ -44,6 +44,7 @@ command-line switch.
 
 from __future__ import annotations
 
+from .. import transforms
 from ..model import CHOICE, INT, Choice, FileEdit, GameProfile, Overlay, Setting
 
 BOOT = "SLUS_211.44"
@@ -124,23 +125,23 @@ def _settings():
                         "not read and are left alone. Values clamp at 20, so "
                         "the mercenaries barely move."),
         Setting("ld_hunt_only", "Only change Terrorist Hunt", CHOICE, "all",
-                "Enemies", confidence="broken", touches="data",
+                "Enemies", confidence="applied", touches="data",
                 choices=[
                     Choice("all", "Every hostile profile", ""),
                     Choice("hunt", "Terrorist Hunt profiles only",
                            "th_terrorist, th_militia and th_merc -- the three "
                            "the Hunt modes draw from."),
                 ],
-                help="Terrorist Hunt draws from its own three profiles, so the "
-                     "mode can be retuned without touching the campaign.",
-                enabled=False,
-                disabled_reason=(
-                    "Not wired up yet. The three th_* profiles are identified "
-                    "and editable, but restricting an edit to a named subset "
-                    "needs a scope mechanism this archive does not have yet, "
-                    "and shipping it as a switch that silently does the same "
-                    "thing as the option above would be worse than leaving it "
-                    "off.")),
+                help="Terrorist Hunt draws from its own three profiles -- "
+                     "th_terrorist, th_militia and th_merc -- so the mode can "
+                     "be retuned without touching the campaign. Scoped, the "
+                     "skill shift above moves 3 profiles instead of 39, and "
+                     "every campaign tier is left exactly as it ships.",
+                # `requires` compares values, so "any non-zero" has to be
+                # spelled as the values themselves -- the skill dial runs
+                # -8..8 and this switch does nothing at 0.
+                requires={"ld_enemy_skill":
+                          [n for n in range(-8, 9) if n != 0]}),
         Setting("ld_mag_size", "Magazine capacity", INT, 100, "Weapons",
                 minimum=25, maximum=400, unit="%", confidence="experimental",
                 touches="data",
@@ -169,9 +170,14 @@ def build_data(v: dict) -> list:
     out = []
     steps = int(v.get("ld_enemy_skill", 0))
     if steps:
-        out.append(FileEdit("nimitz_skills", CGSB, "",
-                            {"steps": steps, "hostile_only": True},
-                            "%+d skill on every hostile AI profile" % steps))
+        hunt = v.get("ld_hunt_only", "all") == "hunt"
+        params = {"steps": steps, "hostile_only": True}
+        if hunt:
+            params["only"] = list(transforms.NIMITZ_HUNT)
+        out.append(FileEdit(
+            "nimitz_skills", CGSB, "", params,
+            "%+d skill on %s" % (steps, "the three Terrorist Hunt profiles"
+                                 if hunt else "every hostile AI profile")))
     mag = int(v.get("ld_mag_size", 100)) / 100.0
     rpm = int(v.get("ld_fire_rate", 100)) / 100.0
     if abs(mag - 1.0) > 0.001 or abs(rpm - 1.0) > 0.001:

@@ -67,7 +67,8 @@ def _op_xml_values(plain, params):
 def _op_nimitz_skills(plain, params):
     return transforms.bump_nimitz_skills(
         plain, int(params.get("steps", 0)),
-        hostile_only=bool(params.get("hostile_only", True)))
+        hostile_only=bool(params.get("hostile_only", True)),
+        only=params.get("only"))
 
 
 def _op_nimitz_guns(plain, params):
