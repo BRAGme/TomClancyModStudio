@@ -94,6 +94,7 @@ def main():
         run_lockdown(args)
         run_pack_emblem(args)
         run_level_packages(args)
+        run_withdrawn_options(args, work)
         run_gr2_missions(args)
         run_graw_missions(args)
         run_rse_missions(args)
@@ -1062,6 +1063,51 @@ def run(args, work):
           engine.pcsx2_crc(b"\x01\x00\x00\x00\x02\x00\x00\x00") == "00000003")
 
 
+
+
+def run_withdrawn_options(args, work):
+    """Options that were switched off after play-testing must stay inert.
+
+    A disabled setting still has a key, and anything that reads the values dict
+    without checking `enabled` would happily emit its edit again. The engine
+    checks, but this is the cheap standing guard that says so.
+    """
+    from tcps2.games import BY_ID
+
+    print("\n[withdrawn options stay withdrawn]")
+    profile = BY_ID["r6_3_slus20883"]
+    s = profile.setting("p2_look_parity")
+    check("player 2 look parity is switched off", not s.enabled)
+    check("and says why", "play-test" in s.disabled_reason.lower(),
+          s.disabled_reason[:60])
+    vals = dict(profile.defaults())
+    vals["p2_look_parity"] = True
+    words = [w for w in profile.build_edits(vals) if w.va == 0x00142048]
+    check("asking for it anyway emits no word", not words, str(words))
+    pn = [w for w in profile.build_pnach(vals) if w.va == 0x00142048]
+    check("and no cheat line either", not pn, str(pn))
+    check("the stock word is still recorded, so a patched disc can be healed",
+          profile.stock_words.get(0x00142048) == 0x4483A800,
+          hex(profile.stock_words.get(0x00142048, 0)))
+
+    # ...and healing it must not need Restore disc. A disc that already
+    # carries the withdrawn patch has to come back with one ordinary Apply,
+    # because that is what a player who used the old build will reach for.
+    if not (args.soz or args.iso):
+        return
+    from tcps2.overlay import open_overlay
+    fx = os.path.join(work, "withdrawn.iso")
+    build(fx, [("SP.SOZ", stock_container(args)),
+               ("SLUS_208.83", boot_elf(args))])
+    with Iso(fx, writable=True) as iso:
+        ov = open_overlay(iso, profile.overlays[0])
+        ov.write_word(0x00142048, 0x00000000)       # as the old build wrote it
+        ov.store()
+    engine.apply(fx, profile, dict(profile.defaults()))
+    with Iso(fx) as iso:
+        healed = open_overlay(iso, profile.overlays[0]).read_word(0x00142048)
+    check("a disc carrying it is healed by one plain Apply",
+          healed == 0x4483A800, hex(healed))
 
 
 def run_gr2_missions(args):

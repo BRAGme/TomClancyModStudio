@@ -140,7 +140,20 @@ WAVE_MAPS = (
     "No zones, so nothing here changes them: Alpine Village A, Import/Export "
     "A, Penthouse A.\n"
     "No zones anywhere in multiplayer or training either -- every MP and "
-    "training package places zero, so adversarial modes are untouched."
+    "training package places zero, so adversarial modes are untouched.\n\n"
+    "Withdrawn: \"Match player 2's look speed to player 1\". The clamp it "
+    "targeted is real -- at 0x00142048 the routine forces its frame delta to "
+    "0.05 whenever the true frame is under 33 ms -- but play-testing it made "
+    "player 2 about four times more sensitive with no acceleration ramp at "
+    "all, which is not parity. Two things are settled and worth keeping: that "
+    "delta is computed at 0x00141d54 as a timer over 2^32, capped at 0.04 for "
+    "a long frame, so it IS a real frame time; and the clamp raises it, which "
+    "at 60 fps makes it three times larger than player 1's rather than "
+    "smaller. The card used to claim the opposite. What is still unknown is "
+    "the path from that register to the camera: inside its own routine it "
+    "feeds an accumulator at gp-32008 and a countdown at +0x304, both plain "
+    "`+= dt` / `-= dt`, neither of them a look rate. Until that path is "
+    "traced there is nothing honest to switch on."
 )
 
 
@@ -441,17 +454,26 @@ def _settings():
                      "they are always the fire and water next to the players.",
                 confidence="verified"),
         Setting("p2_look_parity", "Match player 2's look speed to player 1",
-                BOOL, False, "Split Screen", confidence="applied",
-                help="Player 2's input timestep is clamped to a fixed 0.05 "
-                     "seconds whenever the real frame time is under 33 ms. "
-                     "Player 1 keeps the true frame delta. At 60 fps that makes "
-                     "player 2 about three times slower at the same slider "
-                     "setting, which is why 10 never feels like 10. This "
-                     "removes the clamp so both players use the same timestep.",
-                caution="The same clamped value also drives player 2's movement "
-                        "rate and button auto-repeat, so those become correct "
-                        "too. If player 2 feels different to move after this, "
-                        "that is why."),
+                BOOL, False, "Split Screen", enabled=False,
+                confidence="broken",
+                help="The clamp is real and the patch lands on it cleanly. "
+                     "What it does to the game is not what this card used to "
+                     "claim, so the switch is off until that is understood.",
+                disabled_reason=(
+                    "Withdrawn after play-testing. Turning this on made "
+                    "player 2 roughly four times more sensitive with no "
+                    "acceleration ramp at all -- an instant top turn rate -- "
+                    "rather than matching player 1. Two things are certain "
+                    "from the disassembly: $f21 really is this routine's "
+                    "frame delta (it is computed as a timer over 2^32 and "
+                    "capped at 0.04 for a long frame), and the stock clamp "
+                    "raises it TO 0.05 when the real frame is under 33 ms, "
+                    "which at 60 fps makes it three times LARGER, not "
+                    "smaller. So the old card had the direction backwards. "
+                    "The delta feeds accumulators and countdowns rather than "
+                    "a look rate directly, and until the path from it to the "
+                    "camera is traced this stays off."),
+                caution=""),
         Setting("p2_settings_persist", "Keep player 2's settings between "
                 "missions", BOOL, False, "Split Screen", enabled=False,
                 confidence="broken",
@@ -559,10 +581,10 @@ def build_edits(v: dict) -> list:
         w(0x003531D0, NOP, "split screen: rain and snow")
     if v.get("fx_hidden_emitters"):
         w(0x002375E0, NOP, "split screen: stop disabling flagged emitters")
-    if v.get("p2_look_parity"):
-        # the guard above it is `dt < 0.033f`, so at 60 fps this substitution is
-        # always taken; removing the store leaves $f21 holding the real delta
-        w(0x00142048, NOP, "player 2 uses the real frame delta, like player 1")
+    # p2_look_parity is deliberately absent: the setting is disabled, and
+    # `engine` would refuse a disabled setting's edit anyway, but leaving the
+    # write here would put it one uncommented line away from shipping again.
+    # What it did, and why it is off, is on the card and in the notes.
 
     ring = int(v.get("decal_ring", 32))
     if ring != 32:

@@ -31,7 +31,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "2.2"
+VERSION = "2.3"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
