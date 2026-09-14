@@ -64,6 +64,18 @@ def _op_xml_values(plain, params):
     return transforms.set_xml_values(plain, params.get("values", {}))
 
 
+def _op_nimitz_skills(plain, params):
+    return transforms.bump_nimitz_skills(
+        plain, int(params.get("steps", 0)),
+        hostile_only=bool(params.get("hostile_only", True)))
+
+
+def _op_nimitz_guns(plain, params):
+    return transforms.scale_nimitz_guns(plain,
+                                        mag=float(params.get("mag", 1.0)),
+                                        rpm=float(params.get("rpm", 1.0)))
+
+
 def _op_gtf_variables(plain, params):
     return transforms.set_gtf_variables(plain, params.get("values", {}))
 
@@ -93,6 +105,8 @@ OPS = {
     "scale_ballistics": _op_scale_ballistics,
     "scale_xml": _op_scale_xml,
     "xml_values": _op_xml_values,
+    "nimitz_skills": _op_nimitz_skills,
+    "nimitz_guns": _op_nimitz_guns,
 }
 
 
@@ -100,8 +114,15 @@ OPS = {
 # containers
 # ---------------------------------------------------------------------------
 
-def _unpack(original):
+#: files that are raw binary and must never be run through a container sniffer
+_RAW_SUFFIXES = (".GUNS", ".CGSB", ".PROJS", ".ITEMS", ".PROS", ".WSFB",
+                 ".CMSB", ".CGSB", ".ACMS", ".MISSIONS")
+
+
+def _unpack(original, path=""):
     """(kind, plainBytes) for whichever container this file uses."""
+    if path and path.upper().endswith(_RAW_SUFFIXES):
+        return "plain", original
     if lin.is_lin(original):
         return "lin", lin.decompress(original)
     if rselzo.is_compressed(original):
@@ -192,7 +213,7 @@ def enemy_template_set(arc):
         if not key.endswith(".MIS"):
             continue
         try:
-            _kind, plain = _unpack(arc.read_entry(ent))
+            _kind, plain = _unpack(arc.read_entry(ent), ent.path)
         except Exception:                       # noqa: BLE001
             continue
         names |= transforms.enemy_templates(plain)
@@ -209,7 +230,18 @@ def _scope_filter(arc, edit, cache):
 
 
 def _archives(iso, profile):
+    """Every archive this profile edits, keyed by name.
+
+    Lockdown's container is a different format entirely, but it presents the
+    same handful of methods, so everything downstream -- the backup store, the
+    relocation check, verify and revert -- runs unchanged.
+    """
     out = {}
+    if getattr(profile, "archive_kind", "vokes") == "nimitz":
+        from .nimitz import open_pak
+        for arc in open_pak(iso):
+            out[arc.r.name.upper()] = arc
+        return out
     for arc in open_archives(iso, profile.archive_pattern or
                              r"/(VOKES\d|GR|MENU)\.IMG$"):
         out[arc.r.name.upper()] = arc
@@ -264,14 +296,14 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                 else:
                     original = arc.read_entry(ent)
                     store.remember(arc_name, ent.path, original, ent.offset)
-                    _kind, plain = _unpack(original)
+                    _kind, plain = _unpack(original, ent.path)
                 new, n = op(plain, edit.params)
                 # Only a compressed container has to keep its length. A LIN's
                 # packages carry relaid offsets and an rselzo chunk chain has
                 # fixed boundaries, so either would be corrupted by a size
                 # change; a plain-text INI can grow or shrink freely, because
                 # the archive writer will relocate it.
-                kind, _ = _unpack(arc.read_entry(ent))
+                kind, _ = _unpack(arc.read_entry(ent), ent.path)
                 if len(new) != len(plain) and kind != "plain":
                     raise DataEditError(
                         "%s: %s changed the file length, which a %s container "
@@ -285,7 +317,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
     for (arc_name, path), (arc, ent, plain) in pending.items():
         original = store.original(arc_name, path)
         source = original[0] if original else arc.read_entry(ent)
-        kind, was = _unpack(source)
+        kind, was = _unpack(source, path)
         if was == plain:
             continue                       # nothing actually changed
         packed = _repack(kind, source, plain)
@@ -344,7 +376,7 @@ def verify_data(iso, profile, store):
             bad += 1
             continue
         try:
-            _unpack(arc.read_entry(ent))
+            _unpack(arc.read_entry(ent), ent.path)
             ok += 1
         except Exception:                       # noqa: BLE001
             bad += 1

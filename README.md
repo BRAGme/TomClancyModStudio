@@ -30,10 +30,19 @@ disc at run time and cached -- no game data ships with the tool.
 | Ghost Recon: Jungle Storm | SLUS-20820 | **Defend wave counts**, full count, skill points | pool size, lifetime, every-surface | effect gates |
 | Ghost Recon 2 | SLUS-21105 | grenade carry, throw range, reaction, opening-fire delay, skill, never-miss range, sight radius | — | — |
 | Ghost Recon Advanced Warfighter | SLUS-21422 | Survival release rate and batch size | — | — |
-| The Sum of All Fears | SLES-51180 | full count, script-held reinforcements, skill points | — | — |
+| The Sum of All Fears | SLES-51180 | full count, script-held reinforcements, skill points, marksmanship, lethality, spotting range, **per-difficulty aim / reaction / skill** | — | — |
+| Rainbow Six: Lockdown | SLUS-21144 | AI skill across 70 profiles, hostile factions only | — | — |
 
-The six discs run two different engines, so what is possible differs sharply
-and the tool says which is which on every option.
+The seven discs run **three** different engines, so what is possible differs
+sharply and the tool says which is which on every option.
+
+* **Lockdown is Red Storm's Nimitz engine**, and neither of the other two.
+  No overlays -- one 7.2 MB boot ELF -- and no vokes archive: its data is a
+  single 3.94 GB stream across four ISO files, indexed by a separate
+  `PS2DATA.BIN`. That index parses to 173 directories and 4,671 files and
+  consumes every one of its 150,048 bytes. No index file carries a content
+  hash, so an in-place edit needs no repair, and an edit that would change a
+  file's length is refused.
 
 * **Rainbow Six 3, Advanced Warfighter and Ghost Recon 2 are Unreal builds.**
   Rainbow Six 3's enemies come from a deployment-zone system inside the

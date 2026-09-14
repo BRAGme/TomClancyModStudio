@@ -81,6 +81,7 @@ def main():
     ap.add_argument("--rs3data", help="Rainbow Six 3 ISO, for its INI data path")
     ap.add_argument("--gr2", help="Ghost Recon 2 ISO, same engine, data only")
     ap.add_argument("--graw", help="Advanced Warfighter ISO, for its INI")
+    ap.add_argument("--lockdown", help="Lockdown ISO, for its Nimitz archive")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -88,12 +89,85 @@ def main():
     try:
         run(args, work)
         run_raw_and_data(args, work)
+        run_lockdown(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
+
+
+def run_lockdown(args):
+    """Lockdown's Nimitz archive, against the real disc, writing nothing."""
+    if not args.lockdown:
+        return
+    from tcps2 import nimitz, transforms
+    from tcps2.games import BY_ID
+
+    print("\n[Lockdown -- the Nimitz archive, read-only]")
+    profile = BY_ID["lockdown_slus21144"]
+    det = identify(args.lockdown)
+    check("the disc is recognised as Lockdown",
+          det.ok and det.profile is profile, det.message)
+    check("its PCSX2 CRC matches the profile", det.crc_matches,
+          "%s vs %s" % (det.crc, profile.pcsx2_crc))
+
+    with Iso(args.lockdown) as iso:
+        pak = nimitz.NimitzPak(iso)
+        check("the index parses to 4,671 files", len(pak.files) == 4671,
+              str(len(pak.files)))
+
+        cg = pak.read_file("/PS2DATA/BINARY/NIMITZ.CGSB")
+        skills = transforms.read_nimitz_skills(cg)
+        check("70 of the 72 AI profiles decode", len(skills) == 70,
+              str(len(skills)))
+
+        by = {n: s for n, _o, s in skills}
+        ladders = [("terrorist-0%d.cgs", (1, 2, 3)),
+                   ("militia-0%d.cgs", (1, 2, 3)),
+                   ("mercenary-0%d.cgs", (1, 2, 3))]
+        rising = True
+        for fmt, tiers in ladders:
+            got = [sum(by[fmt % t]) for t in tiers if fmt % t in by]
+            rising = rising and all(a <= b for a, b in zip(got, got[1:]))
+        check("every named difficulty ladder ascends", rising)
+        check("terrorist_super_easy really is the softest",
+              by.get("terrorist_super_easy.cgs") == [1, 1, 1, 1, 1, 1],
+              str(by.get("terrorist_super_easy.cgs")))
+
+        bumped, n = transforms.bump_nimitz_skills(cg, 4)
+        check("a skill bump keeps the file length", len(bumped) == len(cg))
+        after = {n2: s for n2, _o, s in transforms.read_nimitz_skills(bumped)}
+        moved = [k for k in by if by[k] != after.get(k)]
+        kept = [k for k in by if by[k] == after.get(k)]
+        check("the bump changes hostiles and spares the operatives",
+              len(moved) == 39 and "ding_chavez.cgs" in kept,
+              "%d moved, %d kept" % (len(moved), len(kept)))
+
+        gu = pak.read_file("/PS2DATA/BINARY/NIMITZ.GUNS")
+        guns = dict((a, (b, c)) for a, b, c in transforms.read_nimitz_guns(gu))
+        check("all 48 weapons decode", len(guns) == 48, str(len(guns)))
+        known = {"glock_enemy.gun": 17, "92fs.gun": 15, "meu.gun": 7,
+                 "p90.gun": 50, "m249.gun": 200, "m870.gun": 5,
+                 "pp90.gun": 32}
+        wrong = [k for k, v in known.items()
+                 if k in guns and guns[k][0] != v]
+        check("magazine capacities match the real weapons", not wrong,
+              str(wrong))
+        check("the launchers are excluded rather than corrupted",
+              guns.get("rpg7.gun", (None, None))[1] is None,
+              str(guns.get("rpg7.gun")))
+
+        scaled, n = transforms.scale_nimitz_guns(gu, mag=1.5, rpm=1.25)
+        check("a weapon scale keeps the file length", len(scaled) == len(gu))
+        after_g = dict((a, (b, c)) for a, b, c in
+                       transforms.read_nimitz_guns(scaled))
+        check("scaling is applied", after_g["m249.gun"] == (300, 1000),
+              str(after_g["m249.gun"]))
+
+    check("an all-default config writes nothing",
+          profile.build_data(dict(profile.defaults())) == [])
 
 
 def run_raw_and_data(args, work):

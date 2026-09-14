@@ -229,6 +229,18 @@ PRESETS = {
               gr2_skill="down", gr2_perfect_dist=200, gr2_sight=3000,
               gr2_sens_steps=15, gr2_sens_boost=130)),
     ],
+    "lockdown_slus21144": [
+        ("Stock — nothing changed",
+         dict(ld_enemy_skill=0, ld_mag_size=100, ld_fire_rate=100)),
+        ("Sharper enemies",
+         dict(ld_enemy_skill=3, ld_mag_size=100, ld_fire_rate=100)),
+        ("Brutal — everyone fights like a mercenary",
+         dict(ld_enemy_skill=8, ld_mag_size=100, ld_fire_rate=100)),
+        ("Gentler",
+         dict(ld_enemy_skill=-4, ld_mag_size=100, ld_fire_rate=100)),
+        ("Bigger magazines",
+         dict(ld_enemy_skill=0, ld_mag_size=200, ld_fire_rate=100)),
+    ],
     "ghost_recon_slus20613": GHOST_RECON,
     "jungle_storm_slus20820": JUNGLE_STORM,
 }

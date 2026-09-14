@@ -514,3 +514,164 @@ def read_xml_floats(plain: bytes, prefix: bytes = b""):
     return {m.group(2).decode("latin1"): float(m.group(3))
             for m in XML_FLOAT.finditer(plain)
             if m.group(2).startswith(prefix)}
+
+
+# ---------------------------------------------------------------------------
+# Rainbow Six Lockdown: the Nimitz cooked databases
+# ---------------------------------------------------------------------------
+#
+# `nimitz.cgsb` holds 72 AI profiles and `nimitz.guns` 48 weapons, in the same
+# record grammar: a u16 count, then per record a name string, a version float,
+# the name again, and a body whose length varies -- 43 to 707 bytes -- so record
+# starts are found structurally, by a name immediately repeated after a float,
+# rather than by a stride.
+#
+# Inside an AI profile the skill block is a u32 count of 6, one flag byte, then
+# **six (u8 skill, u8 modifier) pairs**. That last part was the trap: in most
+# records the modifier byte is zero, so the block reads convincingly as six
+# u16 -- and then 18 of the 72 records, including the three main campaign
+# terrorist profiles, decode as nonsense. Reading the first byte of each pair
+# instead locates the vector in 70 of 72, and the values satisfy every ordering
+# the shipped names imply: terrorist-01/02/03 run 12/12/16, militia-01/02/03
+# run 1/8/12, mercenary-01/02/03 run 14/18/20, terrorist_super_easy is all 1s.
+# Six independent ladder checks, none failed.
+
+NIMITZ_SKILL_LO, NIMITZ_SKILL_HI = 1, 20
+
+#: faction id -> hostile to the player
+NIMITZ_HOSTILE = {0: False, 1: True, 2: True, 3: True, 4: False}
+
+#: field offsets inside a weapon record body, located by scoring every
+#: candidate against real magazine capacities: +29 explained 12 of 19 known
+#: weapons where the next best offset explained 2. Rate of fire sits beside it
+#: and reads as clean 300/450/600/750/800/900/1000 on 44 of the 48 weapons --
+#: the four that read zero are the RPG variants and the grenade launcher.
+NIMITZ_GUN_MAG, NIMITZ_GUN_RPM = 29, 31
+
+#: The four launchers -- rpg7, rpg7_sniper, rpg7_virus and gl69 -- use a SHORTER
+#: stat block, so these offsets land somewhere else entirely in them: rpg7 reads
+#: 16256 for rate of fire, which is 0x3F80, the top half of the float 1.0. A
+#: plausibility gate is therefore not belt-and-braces, it is the thing that
+#: stops a scale factor from corrupting four weapons.
+NIMITZ_GUN_RANGE = {NIMITZ_GUN_MAG: (1, 400), NIMITZ_GUN_RPM: (100, 1500)}
+
+
+def _nimitz_records(blob: bytes, suffix: bytes):
+    """(name, recordStart, recordEnd) per record, by the repeated name."""
+    found = []
+    o = 2
+    n = len(blob)
+    while o < n - 8:
+        ln = struct.unpack_from("<I", blob, o)[0]
+        if 4 <= ln <= 64 and o + 4 + ln <= n and blob[o + 4:o + 4 + ln].endswith(suffix):
+            if blob[o + 4 + ln + 4:o + 4 + ln + 4 + 4 + ln] == blob[o:o + 4 + ln]:
+                found.append((blob[o + 4:o + 4 + ln].decode("latin1"), o))
+                o += 4 + ln
+                continue
+        o += 1
+    return [(nm, st, found[i + 1][1] if i + 1 < len(found) else n)
+            for i, (nm, st) in enumerate(found)]
+
+
+def _nimitz_body(blob, start):
+    """Offset of a record's body: past the name, the float and the name again."""
+    ln = struct.unpack_from("<I", blob, start)[0]
+    p = start + 4 + ln + 4
+    return p + 4 + struct.unpack_from("<I", blob, p)[0]
+
+
+def _nimitz_gun_body(blob, start):
+    """A weapon record carries a THIRD string -- its "WPN_" message key --
+    between the repeated name and the stat block. An AI record does not, and
+    forgetting that reads the stats one string early: magazine capacities come
+    out as 0, 6 and 1024 instead of 17, 30 and 200."""
+    p = _nimitz_body(blob, start)
+    return p + 4 + struct.unpack_from("<I", blob, p)[0]
+
+
+def _nimitz_skill_offset(blob, start, end):
+    """Offset of the six (skill, modifier) pairs inside one AI record."""
+    hit = None
+    for o in range(start, end - 17):
+        if struct.unpack_from("<I", blob, o)[0] != 6:
+            continue
+        p = o + 5
+        if p + 12 <= end and all(
+                NIMITZ_SKILL_LO <= blob[p + 2 * i] <= NIMITZ_SKILL_HI
+                for i in range(6)):
+            hit = p
+    return hit
+
+
+def read_nimitz_skills(blob: bytes):
+    """[(name, offset, [six skills])] for every AI profile that decodes."""
+    out = []
+    for name, start, end in _nimitz_records(blob, b".cgs"):
+        p = _nimitz_skill_offset(blob, start, end)
+        if p is not None:
+            out.append((name, p, [blob[p + 2 * i] for i in range(6)]))
+    return out
+
+
+def bump_nimitz_skills(blob: bytes, steps: int, hostile_only: bool = True):
+    """Shift hostile AI profiles' six skills, clamped to 1-20.
+
+    One byte per skill, so the length never moves -- which matters more here
+    than usual, because this archive is never relocated.
+    """
+    if not steps:
+        return blob, 0
+    out = bytearray(blob)
+    changed = 0
+    for name, start, end in _nimitz_records(blob, b".cgs"):
+        if hostile_only:
+            faction = struct.unpack_from("<I", blob, _nimitz_body(blob, start))[0]
+            if not NIMITZ_HOSTILE.get(faction, False):
+                continue
+        p = _nimitz_skill_offset(blob, start, end)
+        if p is None:
+            continue
+        for i in range(6):
+            cur = out[p + 2 * i]
+            new = max(NIMITZ_SKILL_LO, min(NIMITZ_SKILL_HI, cur + steps))
+            if new != cur:
+                out[p + 2 * i] = new
+                changed += 1
+    return bytes(out), changed
+
+
+def scale_nimitz_guns(blob: bytes, mag: float = 1.0, rpm: float = 1.0):
+    """Scale magazine capacity and rate of fire in place, u16 each."""
+    if abs(mag - 1.0) < 1e-6 and abs(rpm - 1.0) < 1e-6:
+        return blob, 0
+    out = bytearray(blob)
+    changed = 0
+    for name, start, end in _nimitz_records(blob, b".gun"):
+        base = _nimitz_gun_body(blob, start)
+        for off, factor in ((NIMITZ_GUN_MAG, mag), (NIMITZ_GUN_RPM, rpm)):
+            p = base + off
+            if p + 2 > end or abs(factor - 1.0) < 1e-6:
+                continue
+            cur = struct.unpack_from("<H", out, p)[0]
+            lo, hi = NIMITZ_GUN_RANGE[off]
+            if not (lo <= cur <= hi):             # a launcher, or not this field
+                continue
+            new = max(1, min(0xFFFF, int(round(cur * factor))))
+            if new != cur:
+                struct.pack_into("<H", out, p, new)
+                changed += 1
+    return bytes(out), changed
+
+
+def read_nimitz_guns(blob: bytes):
+    out = []
+    for name, start, end in _nimitz_records(blob, b".gun"):
+        base = _nimitz_gun_body(blob, start)
+        if base + NIMITZ_GUN_RPM + 2 <= end:
+            vals = []
+            for off in (NIMITZ_GUN_MAG, NIMITZ_GUN_RPM):
+                v = struct.unpack_from("<H", blob, base + off)[0]
+                lo, hi = NIMITZ_GUN_RANGE[off]
+                vals.append(v if lo <= v <= hi else None)
+            out.append((name, vals[0], vals[1]))
+    return out

@@ -149,6 +149,10 @@ class GameProfile:
     build_data: Callable[[dict], list] = None
     #: which archives this game's data edits live in
     archive_pattern: str = ""
+    #: which archive format those are. "vokes" is the Red Storm / Unreal family
+    #: container every other disc here uses; "nimitz" is Lockdown's four-volume
+    #: PS2DATA archive, which is indexed by a separate file and never relocated.
+    archive_kind: str = "vokes"
     #: crc32 PCSX2 uses for the cheat filename, e.g. "21CC1EC3"
     pcsx2_crc: str = ""
     #: {virtual address: stock 32-bit word} for every site the profile touches

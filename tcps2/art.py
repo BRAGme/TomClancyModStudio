@@ -113,6 +113,19 @@ BANNER_PREFERENCE = {
                        r"/NTSC_CD/LE/LANG_BG\.FBZ$"],
 }
 
+#: Lockdown ships no FBZ and no RSB: its loading art is a raw framebuffer dump.
+#: 688,128 bytes is exactly 512 x 448 x 3, and decoding it on that assumption
+#: produces the game's logo on black rather than noise, which is the check.
+RAW_ART = {
+    "lockdown_slus21144": (r"/PS2DATA/VIDEO/LOADING\.RAW$", 512, 448, "RGB"),
+}
+
+#: and the part of that frame the logo actually occupies, measured from the
+#: non-black bounding box rather than guessed
+RAW_EMBLEM = {
+    "lockdown_slus21144": (0.020, 0.020, 0.580, 0.450),
+}
+
 #: where each game keeps the mark that sits in the corner of its menus, and the
 #: fraction of that image the mark occupies (left, top, right, bottom)
 EMBLEM = {
@@ -148,6 +161,10 @@ EMBLEM_MODE = {
     # the wordmark is white over a lit olive plate, so the floor has to sit
     # above the plate rather than above black
     "gr2_slus21105": ("key", 150, 4.0),
+    # Lockdown's wordmark is a dark red "Rainbow Six" over a bright white
+    # "LOCKDOWN". Keying at the usual floor deletes the red half, so it is
+    # lifted first and then keyed low.
+    "lockdown_slus21144": ("lift", 28, 2.2),
 }
 
 #: Jungle Storm ships no lettering anywhere -- no wordmark texture on the disc,
@@ -167,6 +184,27 @@ ARCHIVE_BANNERS = {
                                "/LOAD_NEW_2.RSB"],
     "soaf_sles51180": ["/MAIN_MENU_PS2.RSB"],
 }
+
+
+def raw_image(iso, profile_id):
+    """A PIL image from a raw framebuffer dump, or None."""
+    spec = RAW_ART.get(profile_id)
+    if spec is None:
+        return None
+    pattern, w, h, mode = spec
+    ent = iso.find(pattern)
+    if ent is None:
+        return None
+    depth = 3 if mode == "RGB" else 4
+    want = w * h * depth
+    data = iso.read(ent.lba, max(ent.size, want))[:want]
+    if len(data) < want:
+        return None
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    return Image.frombytes(mode, (w, h), data)
 
 
 def find_fbz(iso, pattern, archive_pattern=None):
@@ -217,7 +255,9 @@ def banner_image(detection, cache_dir=None):
     try:
         from .iso import Iso
         with Iso(detection.path) as iso:
-            for pat in BANNER_PREFERENCE.get(profile.id, []):
+            img = raw_image(iso, profile.id)
+            for pat in ([] if img is not None
+                        else BANNER_PREFERENCE.get(profile.id, [])):
                 img = find_fbz(iso, pat, profile.archive_pattern)
                 if img is not None:
                     break
@@ -257,7 +297,12 @@ def emblem_image(detection, cache_dir=None):
     img = None
     try:
         with Iso(detection.path) as iso:
+            raw = raw_image(iso, profile.id)
+            if raw is not None and profile.id in RAW_EMBLEM:
+                img = _crop_frac(raw, RAW_EMBLEM[profile.id])
             pats, box = EMBLEM.get(profile.id, (None, None))
+            if img is not None:
+                pats = None
             if pats:
                 for pat in pats:
                     src = find_fbz(iso, pat, profile.archive_pattern)

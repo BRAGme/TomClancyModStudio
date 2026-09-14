@@ -195,6 +195,27 @@ SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
                body_font="Corbel, Segoe UI",
                bold_font="Corbel Bold, Segoe UI Semibold")
 
+#: Lockdown's shell is the Nimitz HUD -- a colder, bluer slate than Rainbow
+#: Six 3's, with the same cut-cornered idiom. It keeps the gunmetal chrome.
+LOCKDOWN = replace(
+    RS3,
+    bg="#0a0d12",
+    veil="#070a0e",
+    panel="#141a24",
+    panel2="#1c2432",
+    edge="#7f96b8",
+    edge_dim="#33405a",
+    text="#c6d2e4",
+    dim="#8290a8",
+    faint="#5a6578",
+    title="#dde6f4",
+    accent="#8fa8d0",
+    accent_dim="#4f6288",
+    sel_fill="#27314a",
+    sel_text="#eaf0fa",
+    tab="#c8452f",
+)
+
 BY_PROFILE = {
     "r6_3_slus20883": RS3,
     "ghost_recon_slus20613": GR,
@@ -202,6 +223,7 @@ BY_PROFILE = {
     "graw_slus21422": GRAW,
     "soaf_sles51180": SOAF,
     "gr2_slus21105": GR2,
+    "lockdown_slus21144": LOCKDOWN,
 }
 
 DEFAULT = RS3
