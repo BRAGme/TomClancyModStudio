@@ -613,11 +613,21 @@ def read_nimitz_skills(blob: bytes):
     return out
 
 
-#: The three profiles the Terrorist Hunt modes draw from. Named in full rather
-#: than matched on a `th_` prefix: the archive also holds `timothy_hanely.cgs`,
-#: and a prefix rule is the kind of thing that silently grows a fourth member
-#: the day someone adds a profile.
-NIMITZ_HUNT = ("th_terrorist.cgs", "th_militia.cgs", "th_merc.cgs")
+#: The profiles Terrorist Hunt actually draws on, read out of the 32 hunt
+#: `.MIS` scripts rather than inferred from their names.
+#:
+#: The obvious guess is wrong and was shipped once: `th_terrorist.cgs`,
+#: `th_militia.cgs` and `th_merc.cgs` are defined in `NIMITZ.CGSB` and
+#: referenced by **nothing at all** -- not one of the 32 hunt missions names
+#: them -- so scoping an edit to those three changes bytes the game never
+#: reads. What the hunt maps really place is these four.
+#:
+#: `mercenary-03.cgs` is deliberately NOT here. M13's hunt does use it, but so
+#: do the campaign and co-op, so including it would quietly retune the campaign
+#: from a switch that says it will not. The cost is that M13's hunt keeps its
+#: stock mercenaries; that is stated on the option.
+NIMITZ_HUNT = ("terrorist_basic.cgs", "merc_basic.cgs", "mob_basic.cgs",
+               "medina.cgs")
 
 
 def bump_nimitz_skills(blob: bytes, steps: int, hostile_only: bool = True,

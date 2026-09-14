@@ -129,14 +129,19 @@ def _settings():
                 choices=[
                     Choice("all", "Every hostile profile", ""),
                     Choice("hunt", "Terrorist Hunt profiles only",
-                           "th_terrorist, th_militia and th_merc -- the three "
-                           "the Hunt modes draw from."),
+                           "terrorist_basic, merc_basic, mob_basic and "
+                           "medina -- the four the 32 hunt maps actually "
+                           "place, and which the campaign never uses."),
                 ],
-                help="Terrorist Hunt draws from its own three profiles -- "
-                     "th_terrorist, th_militia and th_merc -- so the mode can "
-                     "be retuned without touching the campaign. Scoped, the "
-                     "skill shift above moves 3 profiles instead of 39, and "
-                     "every campaign tier is left exactly as it ships.",
+                help="Read out of the 32 hunt mission scripts, not guessed "
+                     "from names: the hunt maps place terrorist_basic, "
+                     "merc_basic, mob_basic and medina, none of which the "
+                     "campaign or co-op touch. Scoped, the skill shift above "
+                     "moves those four instead of 39 profiles.",
+                caution="Mission 13's hunt uses mercenary-03, which the "
+                        "campaign uses too, so it is left out rather than "
+                        "retune the campaign from a switch that says it will "
+                        "not. That one map keeps its stock mercenaries.",
                 # `requires` compares values, so "any non-zero" has to be
                 # spelled as the values themselves -- the skill dial runs
                 # -8..8 and this switch does nothing at 0.

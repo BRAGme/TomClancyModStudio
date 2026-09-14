@@ -11,6 +11,7 @@ stock `SP.SOZ` container, or at a Rainbow Six 3 disc it can take one from:
 from __future__ import annotations
 
 import argparse
+import re
 import hashlib
 import os
 import shutil
@@ -173,15 +174,47 @@ def run_lockdown(args):
             cg, 4, only=transforms.NIMITZ_HUNT)
         after_h = {n2: s2 for n2, _o, s2 in transforms.read_nimitz_skills(hunt)}
         moved_h = [k for k in by if by[k] != after_h.get(k)]
-        check("scoping the skill shift moves only the three Hunt profiles",
+        check("scoping the skill shift moves only the Hunt profiles",
               sorted(moved_h) == sorted(transforms.NIMITZ_HUNT), str(moved_h))
+
+        # The scope must be DERIVED from the missions, not trusted. The obvious
+        # guess -- the th_* profiles -- is referenced by nothing at all, and
+        # was shipped once before this check existed.
+        from tcps2 import nimitz_mis
+        used = {}
+        for mname in pak.files:
+            mm = re.match(r"^/PS2DATA/MISSION/M\d\d_SEC_\d\d(?:_SMG)?"
+                          r"(_COOP|_TH_NOR|_TH_REV)?\.MIS$", mname, re.I)
+            if not mm:
+                continue
+            tag = (mm.group(1) or "_CAMPAIGN").lstrip("_").upper()
+            tag = "HUNT" if tag.startswith("TH_") else tag
+            blob = pak.read_entry(pak.files[mname])
+            for _g, _md, prof, _l in nimitz_mis.templates(blob):
+                if prof and not any(r in prof for r in nimitz_mis.RAINBOW):
+                    used.setdefault(prof, set()).add(tag)
+        hunt_only = sorted(p2 for p2, tags in used.items() if tags == {"HUNT"})
+        check("the scope is exactly the profiles only hunt uses",
+              sorted(transforms.NIMITZ_HUNT) == hunt_only, str(hunt_only))
+        check("the th_* profiles are referenced by no mission at all",
+              not any(p2.startswith("th_") for p2 in used), str(sorted(used)))
+        check("mercenary-03 is shared, so stays out of the scope",
+              used.get("mercenary-03.cgs") == {"CAMPAIGN", "COOP", "HUNT"}
+              and "mercenary-03.cgs" not in transforms.NIMITZ_HUNT,
+              str(used.get("mercenary-03.cgs")))
+
+        census = nimitz_mis.hunt_census(pak)
+        check("32 hunt maps are read", len(census) == 32, str(len(census)))
+        check("each places a sane number of enemies",
+              all(15 <= c <= 40 for _m, _s, _d, c, _p in census),
+              str(sorted(c for _m, _s, _d, c, _p in census)[:4]))
         check("the campaign tiers are untouched by it",
               after_h["terrorist-01.cgs"] == by["terrorist-01.cgs"])
         check("and it still preserves the file length", len(hunt) == len(cg))
         # `n` has been reused for the weapon scale by this point, so compare
         # against the skill count captured above or this proves nothing.
         check("the scoped edit is genuinely narrower",
-              nh == 18 and wide_skill_bytes == 217,
+              nh == 24 and wide_skill_bytes == 217,
               "%d scoped vs %d wide" % (nh, wide_skill_bytes))
 
         prof_ld = BY_ID["lockdown_slus21144"]
