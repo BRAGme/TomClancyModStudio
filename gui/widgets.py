@@ -9,6 +9,7 @@ gold-ruled box while still holding ordinary widgets.
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 
 from tcps2.model import BOOL, CHOICE, INT
@@ -65,7 +66,14 @@ class ScrollArea(ttk.Frame):
 
     def __init__(self, master, **kw):
         super().__init__(master, **kw)
-        self.canvas = tk.Canvas(self, bg=theme.P.bg, highlightthickness=0, bd=0)
+        # An explicit scroll increment matters more than it looks. With the
+        # default of 0 a "unit" is a TENTH OF THE WINDOW, so one wheel notch
+        # jumps ~80px and drags every embedded child window with it; Windows
+        # does not always invalidate what moved, and the result is torn rows
+        # and duplicated text. A fixed small increment keeps each step inside
+        # what the compositor repaints cleanly.
+        self.canvas = tk.Canvas(self, bg=theme.P.bg, highlightthickness=0,
+                                bd=0, yscrollincrement=theme.px(18))
         self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
                                  style="Vertical.TScrollbar")
         self.body = tk.Frame(self.canvas, bg=theme.P.bg)
@@ -112,7 +120,12 @@ class ScrollArea(ttk.Frame):
             return
         box = self.canvas.bbox("all")
         if box and (box[3] - box[1]) > self.canvas.winfo_height():
-            self.canvas.yview_scroll(-1 * (e.delta // 120), "units")
+            # three increments per notch: enough travel to feel right, small
+            # enough that the embedded canvases repaint in step with it
+            self.canvas.yview_scroll(-3 * (e.delta // 120), "units")
+            # force the move to be painted before the next notch arrives,
+            # which is what stops a fast scroll from leaving stale rows behind
+            self.canvas.update_idletasks()
 
     def clear(self):
         for child in self.body.winfo_children():
@@ -120,11 +133,57 @@ class ScrollArea(ttk.Frame):
         self.canvas.yview_moveto(0)
 
 
+#: letterspacing candidates, widest first: en quad, four-per-em, thin, none
+_GAPS = ("\u2002", "\u2005", "\u2009", "")
+
+
+def nav_style(labels, avail, sizes=(11, 10, 9)):
+    """(font, gap) for a whole nav column: keep the letterspacing, shrink type.
+
+    Advanced Warfighter's menus letterspace every row, and a long label there
+    is set smaller rather than set solid. So rather than let one long label
+    collapse the tracking for the entire column, step the type size down until
+    a real gap fits everything -- and only give up on tracking if even the
+    smallest size cannot take it.
+    """
+    for size in sizes:
+        font = theme.F("title", size)
+        gap = shared_gap(labels, font, avail)
+        if gap:
+            return font, gap
+    return theme.F("title", sizes[0]), ""
+
+
+def shared_gap(labels, font, avail):
+    """The widest letterspacing that fits EVERY label in a column.
+
+    Picking per row would letterspace the short ones more than the long ones
+    and the column would look ragged, so the whole nav agrees on one gap.
+    """
+    if avail <= 0 or not labels:
+        return ""
+    measure = tkfont.Font(font=font).measure
+    for gap in _GAPS:
+        if all(measure(gap.join(t) if gap else t) <= avail for t in labels):
+            return gap
+    return ""
+
+
+def _tracked(text, font, avail, gap=None):
+    """`text` letterspaced, either with a given gap or the widest that fits."""
+    if gap is None:
+        gap = shared_gap([text], font, avail)
+    return gap.join(text) if gap else text
+
+
 class NavItem(tk.Canvas):
     """One row of the left-hand menu, drawn the way the game draws it."""
 
-    def __init__(self, master, text, command, height=None):
+    def __init__(self, master, text, command, height=None, gap=None,
+                 font=None):
         h = height or theme.px(40)
+        self.gap = gap
+        self.nav_font = font
         super().__init__(master, height=h, bg=theme.P.bg, highlightthickness=0,
                          bd=0, cursor="hand2")
         self.text = text
@@ -154,12 +213,20 @@ class NavItem(tk.Canvas):
         skins.paint_button(self, p, 1, 1, w - 2, h - 2, theme.px,
                            self.selected, self.hovered)
         if p.chrome == "graw":
-            # ranged left behind the wedge, letterspaced, like the game's rows
+            # Ranged left behind the wedge and letterspaced, like the game's
+            # rows -- but measured. A full space between every letter turns
+            # "ENEMY WAVES" into something wider than the row and it loses its
+            # last word off the sheared edge, so the gap steps down through
+            # four-per-em and thin spaces to none until the label fits.
             fg = p.sel_text if self.selected else (p.text if self.hovered
                                                    else p.dim)
-            self.create_text(theme.px(30), h // 2,
-                             text=" ".join(self.text.upper()), anchor="w",
-                             fill=fg, font=theme.F("title", 11))
+            font = self.nav_font or theme.F("title", 11)
+            x = theme.px(30)
+            avail = w - x - theme.px(18)
+            self.create_text(x, h // 2,
+                             text=_tracked(self.text.upper(), font, avail,
+                                           self.gap),
+                             anchor="w", fill=fg, font=font)
         elif p.chrome == "rs3":
             fg = p.sel_text if self.selected else (p.text if self.hovered else p.dim)
             font = theme.F("title", 12)

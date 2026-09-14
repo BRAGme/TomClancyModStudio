@@ -26,7 +26,8 @@ from tcps2.model import BOOL, INT  # noqa: E402
 
 from . import skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
-from .widgets import ActionButton, Chrome, NavItem, ScrollArea, SettingCard  # noqa: E402
+from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
+                      SettingCard, nav_style)  # noqa: E402
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
@@ -365,8 +366,13 @@ class App(tk.Tk):
         for child in self.nav.winfo_children():
             child.destroy()
         self.nav_items = {}
+        gap = nav_font = None
+        if theme.P.chrome == "graw":
+            nav_font, gap = nav_style([n.upper() for n in names],
+                                      theme.px(212) - theme.px(48))
         for name in names:
-            item = NavItem(self.nav, name, lambda n=name: self._show_group(n))
+            item = NavItem(self.nav, name, lambda n=name: self._show_group(n),
+                           gap=gap, font=nav_font)
             item.pack(fill="x", pady=(0, theme.px(6)))
             self.nav_items[name] = item
 
