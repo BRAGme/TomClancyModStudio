@@ -397,3 +397,73 @@ def read_grenade_carry(plain: bytes):
     """[(carryPercent, className)] for every two-entry template table."""
     return [(int(m.group(2)), m.group(3).strip(b", \r\n").decode("latin1"))
             for m in GRENADE_TABLE.finditer(plain)]
+
+
+# ---------------------------------------------------------------------------
+# CMBTMODL.XML -- the Red Storm ballistic model
+# ---------------------------------------------------------------------------
+#
+# Ghost Recon, Jungle Storm and Sum of All Fears each ship one small XML file
+# holding the whole hit model as named floats:
+#
+#     <BallisticHeadFactor>10.000000</BallisticHeadFactor>
+#     <BallisticChestFactor>100.000000</BallisticChestFactor>
+#     <BallisticArmoredChestFactor0..3>0 / 150 / 350 / 750</...>
+#     <BallisticAbdomenFactor>400.000000</...>
+#     <BallisticUpperArmFactor>700.000000</...>   LowerArm 1000
+#     <BallisticUpperLegFactor>500.000000</...>   LowerLeg  800
+#
+# The file lives inside the rselzo container, so an edit must not change its
+# length by a single byte. Every value ships as `%f` -- six decimals -- which
+# leaves room to move: a new number is written to exactly the width the old one
+# occupied by trading decimal places for integer digits. `100.000000` is ten
+# characters, so 1500 becomes `1500.00000` and 7.5 becomes `7.50000000`. Both
+# are ordinary decimal floats; nothing has to tolerate a funny spelling.
+
+XML_FLOAT = re.compile(rb"(<(\w+)>)\s*(-?\d+(?:\.\d+)?)\s*(</\2>)")
+
+
+def _same_width(value: float, width: int) -> bytes:
+    """`value` as a decimal float occupying exactly `width` characters."""
+    for decimals in range(width, -1, -1):
+        text = ("%.*f" % (decimals, value)).encode("latin1")
+        if len(text) == width:
+            return text
+        if len(text) < width:
+            # too short only happens with 0 decimals; pad the fraction back out
+            continue
+    raise ValueError("%r does not fit %d characters" % (value, width))
+
+
+def scale_xml_floats(plain: bytes, factor: float, prefix: bytes = b"Ballistic",
+                     lo: float = 0.0, hi: float = 100000.0):
+    """Multiply every `<prefix...>` float by `factor`, preserving byte length.
+
+    Returns (bytes, changed). A tag whose new value will not fit the width the
+    old one occupied is left alone rather than silently truncated -- which
+    cannot happen for the shipped values, but the check is cheap and the
+    alternative is a corrupt archive.
+    """
+    changed = [0]
+
+    def sub(m):
+        if not m.group(2).startswith(prefix):
+            return m.group(0)
+        old = m.group(3)
+        want = max(lo, min(hi, float(old) * factor))
+        try:
+            new = _same_width(want, len(old))
+        except ValueError:
+            return m.group(0)
+        if new == old:
+            return m.group(0)
+        changed[0] += 1
+        return m.group(1) + new + m.group(4)
+
+    return XML_FLOAT.sub(sub, plain), changed[0]
+
+
+def read_xml_floats(plain: bytes, prefix: bytes = b"Ballistic"):
+    return {m.group(2).decode("latin1"): float(m.group(3))
+            for m in XML_FLOAT.finditer(plain)
+            if m.group(2).startswith(prefix)}

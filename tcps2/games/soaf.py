@@ -24,6 +24,7 @@ transforms run on it unmodified.
 from __future__ import annotations
 
 from ..model import BOOL, INT, FileEdit, GameProfile, Overlay, Setting
+from . import rstuning
 
 BOOT = "SLES_511.80"
 
@@ -79,7 +80,7 @@ def _settings():
                      "leadership in every hostile template. Only templates used "
                      "by non-allied companies are touched, so your own side is "
                      "left alone."),
-    ]
+    ] + rstuning.cards("soaf_")
 
 
 def build_data(v: dict) -> list:
@@ -96,6 +97,7 @@ def build_data(v: dict) -> list:
                             {"steps": skill},
                             "+%d to every hostile template's skills" % skill,
                             scope="enemy_templates"))
+    out += rstuning.edits("soaf_", v, "SOAF.IMG")
     return out
 
 

@@ -150,6 +150,10 @@ def run_raw_and_data(args, work):
                 vals[s.key] = True
             elif s.kind == "int" and s.key.endswith("_skill"):
                 vals[s.key] = 2
+            elif s.kind == "int" and s.key.endswith("_accuracy"):
+                vals[s.key] = 3
+            elif s.kind == "choice" and s.key.endswith("_lethality"):
+                vals[s.key] = "deadlier"
         vals = profile.normalise(vals)
         code_only = {k: v for k, v in vals.items()}
         edits = profile.build_edits(code_only)

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
+from . import rstuning
 
 BASE = 0x00100000
 FILE_DELTA = 0x80          # ELF PT_LOAD: VA 0x00100000 lives at file 0x80
@@ -217,7 +218,7 @@ def _settings():
                 help="The camera cycle wraps at 3 of the 5 camera modes the "
                      "engine defines. This raises the wrap so chase and ghost "
                      "join the rotation."),
-    ]
+    ] + rstuning.cards("gr_")
 
 
 def build_edits(v: dict) -> list:
@@ -284,6 +285,7 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("bump_stats", r"\.ATR$", "GR.IMG", {"steps": skill},
                             "+%d to every hostile template's skills" % skill,
                             scope="enemy_templates"))
+    out += rstuning.edits("gr_", v, "GR.IMG")
     return out
 
 

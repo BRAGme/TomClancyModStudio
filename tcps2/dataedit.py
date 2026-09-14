@@ -49,6 +49,10 @@ def _op_bump_stats(plain, params):
                                      stats=params.get("stats", transforms.ATR_STATS))
 
 
+def _op_scale_ballistics(plain, params):
+    return transforms.scale_xml_floats(plain, float(params.get("factor", 1.0)))
+
+
 def _op_gtf_variables(plain, params):
     return transforms.set_gtf_variables(plain, params.get("values", {}))
 
@@ -75,6 +79,7 @@ OPS = {
     "ini_values": _op_ini_values,
     "ws_slot": _op_ws_slot,
     "grenade_carry": _op_grenade_carry,
+    "scale_ballistics": _op_scale_ballistics,
 }
 
 
