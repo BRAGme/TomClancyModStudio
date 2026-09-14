@@ -82,6 +82,35 @@ def tex0(filename):
     return bits & 63, 1 << ((bits >> 6) & 15), 1 << ((bits >> 10) & 15)
 
 
+def pinned(serial, prefix, root=None):
+    """One named pack entry, by the leading hash of its filename.
+
+    For the cases where the right texture cannot be found by matching, because
+    it is not an upscale of anything we already load -- a different screen that
+    happens to carry better art. `better()` declines those correctly, so they
+    are named on purpose instead.
+    """
+    folder = pack_dir(serial, root)
+    if folder is None or not prefix:
+        return None
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        names = [n for n in os.listdir(folder) if n.startswith(prefix)]
+    except OSError:
+        return None
+    for name in sorted(names):
+        try:
+            img = Image.open(os.path.join(folder, name))
+            img.load()
+        except Exception:                         # noqa: BLE001
+            continue
+        return _normalise_alpha(img.convert("RGBA"))
+    return None
+
+
 def _thumb(img):
     from PIL import Image
     return list(img.convert("L").resize((_THUMB, _THUMB), Image.LANCZOS).getdata())

@@ -210,6 +210,35 @@ PSX_CHROME = {
 }
 
 
+#: A mark taken deliberately out of the user's replacement pack, rather than
+#: found by matching. Ghost Recon 2's own loading screens carry its wordmark
+#: small, dark and stamped into the art, which is why lifting it needs a hard
+#: key; its memory-card screen carries the same wordmark large and lit, and the
+#: pack holds that screen at 2048x2048. `upscale.better` declines it -- rightly,
+#: it is a DIFFERENT screen rather than an upscale of the banner -- so it is
+#: named here instead. The box was measured off the texture, not guessed.
+#: (leading hash of the pack filename, crop as fractions of the texture)
+PACK_EMBLEM = {
+    "gr2_slus21105": ("b895175da311ea2e", (0.1040, 0.0366, 0.8955, 0.1738)),
+}
+
+
+def pack_emblem(profile):
+    """The pinned mark from the user's pack, or None when they have no pack."""
+    spec = PACK_EMBLEM.get(getattr(profile, "id", None))
+    if spec is None:
+        return None
+    try:
+        from . import upscale
+    except ImportError:
+        return None
+    prefix, box = spec
+    img = upscale.pinned(profile.serial, prefix)
+    if img is None:
+        return None
+    return _crop_frac(img.convert("RGB"), box)
+
+
 def chrome_images(detection, cache_dir=None):
     """The game's own shell pieces, for the skin to build its chrome out of.
 
@@ -425,6 +454,10 @@ def emblem_image(detection, cache_dir=None):
         with Iso(detection.path) as iso:
             img = psx_image(iso, profile, PSX_EMBLEM.get(profile.id))
             already_cut = img is not None
+            if img is None:
+                # a pinned mark out of the user's pack, when they have one;
+                # it is opaque, so it still goes through the key below
+                img = pack_emblem(profile)
             raw = None if img is not None else raw_image(iso, profile.id)
             if raw is not None and profile.id in RAW_EMBLEM:
                 img = _crop_frac(raw, RAW_EMBLEM[profile.id])

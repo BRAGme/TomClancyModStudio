@@ -90,6 +90,7 @@ def main():
         run(args, work)
         run_raw_and_data(args, work)
         run_lockdown(args)
+        run_pack_emblem(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -171,6 +172,47 @@ def run_lockdown(args):
 
     check("an all-default config writes nothing",
           profile.build_data(dict(profile.defaults())) == [])
+
+
+def run_pack_emblem(args):
+    """Ghost Recon 2's wordmark, pinned to one entry of the user's pack.
+
+    Skipped when there is no pack, or no disc to identify against.
+    """
+    if not args.gr2:
+        return
+    from tcps2 import art, upscale
+    from tcps2.games import BY_ID
+
+    profile = BY_ID["gr2_slus21105"]
+    if upscale.pack_dir(profile.serial) is None:
+        return
+    print("\n[Ghost Recon 2 -- the pinned mark from the pack]")
+
+    prefix, _box = art.PACK_EMBLEM[profile.id]
+    whole = upscale.pinned(profile.serial, prefix)
+    check("the pinned pack entry is found", whole is not None,
+          str(whole.size if whole else None))
+    if whole is None:
+        return
+
+    mark = art.pack_emblem(profile)
+    check("it crops to a wordmark, not a screen",
+          mark is not None and mark.width > 3 * mark.height,
+          str(mark.size if mark else None))
+
+    # The whole point of pinning this one is resolution: the disc's own copy
+    # of the mark is small and stamped into the loading art.
+    det = identify(args.gr2)
+    if det.ok and det.profile is profile:
+        keyed = art.emblem_image(det)
+        check("it beats the mark lifted off the disc",
+              keyed is not None and keyed.width > 1000,
+              str(keyed.size if keyed else None))
+
+    # A prefix nothing matches must come back empty rather than pick something
+    check("an unknown pinned hash returns nothing",
+          upscale.pinned(profile.serial, "ffffffffffffffff") is None)
 
 
 def run_upscale(pak, profile):
