@@ -78,12 +78,43 @@ not where the data ended up:
 So `export -> property bytes` is unsolved, and with it the last of the actor
 attribution.
 
-**The next thing to try** does not need offsets at all: the export table gives
-each wave actor's serial SIZE (Shipyard A: 221 and 226). Property blocks can be
-walked to their terminators wherever they are, and a block whose length matches
-a wave export's size, in a level with that many wave exports, is very likely
-that actor. Length-matching rather than offset-following.
+### Length-matching, and why it also failed
 
-A plausibility bound is needed regardless -- a few false positives survive the
-property walk, giving values like `1660731008` on Trieste A and Parade B. Real
-squad sizes on this disc are 1..15.
+Tried, since the export table gives each wave actor's serial size:
+
+* **Matching a block's length to a wave export's size.** For every validated
+  `m_iMaxTerrorist` site, walk forward to the terminator for the end, then try
+  every start in the preceding 800 bytes that walks to exactly that end, and
+  keep one whose length equals a wave size. Shipyard A wants 221 or 226:
+  **0 matches**.
+* **Chaining blocks forward.** If blocks were contiguous, the end of one would
+  begin the next. Walking from the terminator at +690010 parses **no** further
+  block, so they are not contiguous there either.
+
+So a serial size is not simply the length of a property list, and the data
+region is not a plain run of them. Something frames or pads the objects, and
+that framing is the real unknown.
+
+### Per-map does not actually need any of this
+
+Worth stating plainly, because it changes what is blocked. Per-map means per
+`.LIN`, and each level is already its own file: editing the counts inside
+`SHIPYARD_AOFF.LIN` touches Shipyard A and nothing else. Attribution is only
+needed to name an individual zone, or to tell a wave zone from a story spawner
+within one level.
+
+What that would tune is every authored spawner count in a mission, wave and
+story alike -- which is arguably the more useful knob, but it should be
+labelled as what it is.
+
+### What still gates writing
+
+The locator is not clean enough to write to someone's disc yet. Across the 27
+campaign parts it finds 498 candidate sites; requiring `m_TerroristAITag` among
+the following properties rejects 40, and a 1..20 plausibility bound then
+rejects **148 more**. Those 148 have the right structure around them but a
+nonsense value, so the search is still landing a few bytes off in cases the
+property walk does not catch -- most likely a size code other than the `0x22`
+the search assumes.
+
+Reading is solid; writing needs that last third explained, not filtered away.
