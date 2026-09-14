@@ -295,13 +295,17 @@ def title_image(text, p: Palette, px, width, height, subtitle="", emblem=None):
     big = _font(p.title_font, px(30))
     small = _font(p.body_font, px(11))
 
-    pad = px(26)
+    # A fixed mark box, so the title lands in the same place whether or not a
+    # given disc actually has a badge -- Jungle Storm's has to line up with
+    # Ghost Recon's or the two skins look unrelated side by side.
+    left = px(26)
+    box_w, box_h = px(250), height - px(30)
     if emblem is not None:
         em = emblem.convert("RGBA")
-        side = height - px(18)
-        em.thumbnail((side, side), Image.LANCZOS)
-        img.alpha_composite(em, (pad, (height - em.height) // 2))
-        pad += em.width + px(18)
+        em.thumbnail((box_w, box_h), Image.LANCZOS)
+        img.alpha_composite(em, (left + (box_w - em.width) // 2,
+                                 (height - em.height) // 2))
+    pad = left + box_w + px(22)
 
     if p.chrome == "rs3":
         # the angled rule the game runs under its title

@@ -36,7 +36,7 @@ R6_3 = [
      dict(_wave(False, "stock", 30, 1, 2, False, False), **FX_ON,
           decal_ring=32, bodies="stock")),
 
-    ("Waves — light  (~3 enemies per zone)",
+    ("Waves — light  (~3 per zone)",
      dict(_wave(True, "always", 20, 1, 2), **FX_ON,
           decal_ring=32, bodies="stock")),
 
@@ -44,15 +44,15 @@ R6_3 = [
      dict(_wave(True, "always", 30, 2, 3), **FX_ON,
           decal_ring=64, bodies="15")),
 
-    ("Waves — heavy  (~7 per zone, expect a framerate cost)",
+    ("Waves — heavy  (~7 per zone)",
      dict(_wave(True, "always", 60, 3, 4), **FX_ON,
           decal_ring=64, bodies="15")),
 
-    ("Waves — flanking  (feeds from where you are not)",
+    ("Waves — flanking  (feeds from behind)",
      dict(_wave(True, "away", 40, 2, 3), **FX_ON,
           decal_ring=64, bodies="15")),
 
-    ("Waves — onslaught  (Shipyard or Alcatraz only)",
+    ("Waves — onslaught  (Shipyard/Alcatraz)",
      dict(_wave(True, "always", 150, 4, 6), **FX_ON,
           decal_ring=96, bodies="stock")),
 ]
@@ -70,35 +70,35 @@ GHOST_RECON = [
           gr_weather="stock", gr_first_person_body=False,
           gr_extra_cameras=False)),
 
-    ("Full enemy count on every difficulty",
+    ("Full count on every difficulty",
      dict(gr_all_difficulties=True, gr_reveal_hidden=False, gr_tier="stock",
           gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
           gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
           gr_weather="stock", gr_first_person_body=False,
           gr_extra_cameras=False)),
 
-    ("Harder — full count and a tier up",
+    ("Harder — full count, one tier up",
      dict(gr_all_difficulties=True, gr_reveal_hidden=False, gr_tier="up1",
           gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
           gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
           gr_weather="stock", gr_first_person_body=False,
           gr_extra_cameras=False)),
 
-    ("Brutal — everything, everywhere, elite",
+    ("Brutal — everything, elite",
      dict(gr_all_difficulties=True, gr_reveal_hidden=True, gr_tier="elite",
           gr_skill=1, gr_decal_pool=20, gr_decal_life="stock",
           gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=False,
           gr_weather="stock", gr_first_person_body=False,
           gr_extra_cameras=False)),
 
-    ("Bullet holes that stay (experimental)",
+    ("Bullet holes that stay",
      dict(gr_all_difficulties=False, gr_reveal_hidden=False, gr_tier="stock",
           gr_skill=0, gr_decal_pool=120, gr_decal_life="120",
           gr_decal_short=True, gr_decal_everywhere=False, gr_ss_effects=False,
           gr_weather="stock", gr_first_person_body=False,
           gr_extra_cameras=False)),
 
-    ("Split-screen effects (experimental)",
+    ("Split-screen effects",
      dict(gr_all_difficulties=False, gr_reveal_hidden=False, gr_tier="stock",
           gr_skill=0, gr_decal_pool=20, gr_decal_life="stock",
           gr_decal_short=False, gr_decal_everywhere=False, gr_ss_effects=True,
@@ -114,7 +114,7 @@ JUNGLE_STORM = [
           js_decal_everywhere=False, js_ss_effects=False,
           js_extra_cameras=False)),
 
-    ("Full enemy count on every difficulty",
+    ("Full count on every difficulty",
      dict(js_defend_enable=False, js_all_difficulties=True,
           js_reveal_hidden=False, js_skill=0, js_decal_pool=20,
           js_decal_life="stock", js_decal_short=False,
@@ -137,7 +137,7 @@ JUNGLE_STORM = [
           js_decal_everywhere=False, js_ss_effects=False,
           js_extra_cameras=False)),
 
-    ("Brutal — full count, skilled enemies",
+    ("Brutal — full count, skilled",
      dict(js_defend_enable=True, js_defend_recruit=50, js_defend_veteran=70,
           js_defend_elite=100, js_all_difficulties=True,
           js_reveal_hidden=True, js_skill=2, js_decal_pool=20,
@@ -145,7 +145,7 @@ JUNGLE_STORM = [
           js_decal_everywhere=False, js_ss_effects=False,
           js_extra_cameras=False)),
 
-    ("Bullet holes that stay (experimental)",
+    ("Bullet holes that stay",
      dict(js_defend_enable=False, js_all_difficulties=False,
           js_reveal_hidden=False, js_skill=0, js_decal_pool=120,
           js_decal_life="120", js_decal_short=True,

@@ -92,6 +92,20 @@ NOTES = (
 
 def _settings():
     return [
+        # ---- why there is no wave dial here -----------------------------
+        Setting("gr_no_wave_dial", "Wave-count dial", BOOL, False,
+                "Enemies", enabled=False, confidence="broken", touches="data",
+                disabled_reason=(
+                    "Ghost Recon has no Defend mode, and none of its eleven "
+                    "game types carries an enemy count as a named script "
+                    "variable -- their variable tables hold text ids and two "
+                    "Siege timers, nothing else. Jungle Storm added Defend "
+                    "along with Recruit/Veteran/Elite enemy counts, which is "
+                    "why that game gets a wave page and this one does not."),
+                help="Where Jungle Storm's wave numbers would be. Ghost Recon "
+                     "does all of its enemy scaling through the placed order of "
+                     "battle instead, which is what the options below edit."),
+
         # ---- enemies ----------------------------------------------------
         Setting("gr_all_difficulties", "Every soldier on every difficulty", BOOL,
                 False, "Enemies", confidence="applied",

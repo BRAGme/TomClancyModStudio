@@ -111,14 +111,22 @@ EMBLEM = {
 }
 EMBLEM_ARCHIVE = {
     "ghost_recon_slus20613": ("/MAIN_MENU_PS2.RSB", (0.02, 0.035, 0.80, 0.255)),
+    # Jungle Storm ships no wordmark anywhere on the disc -- its own menus have
+    # no corner mark either -- so it borrows the reticle ring its shell is built
+    # around, which is the closest thing it has to a badge.
+    "jungle_storm_slus20820": ("/LOAD_NEW_1.RSB", (0.02, 0.02, 0.98, 0.98)),
 }
 
-#: how to lift each mark off its background.
-#:   "lift" -- it is stamped dark into dark art, so raise it first, then key
-#:   "key"  -- it is already bright on dark, so key hard and leave it alone
+#: how to lift each mark off its background, as (mode, floor, gain).
+#:   "lift" -- stamped dark into dark art, so raise it first, then key
+#:   "key"  -- already bright on dark, so key straight off
+#: The floor is the luminance below which a pixel becomes transparent. Jungle
+#: Storm's ring is a dim teal on near-black and disappears entirely at the
+#: threshold Ghost Recon's white wordmark needs.
 EMBLEM_MODE = {
-    "r6_3_slus20883": "lift",
-    "ghost_recon_slus20613": "key",
+    "r6_3_slus20883": ("lift", 62, 2.6),
+    "ghost_recon_slus20613": ("key", 118, 3.2),
+    "jungle_storm_slus20820": ("key", 46, 3.0),
 }
 
 #: the game's own menu art, by name, inside its archives
@@ -247,16 +255,12 @@ def emblem_image(detection, cache_dir=None):
     if img is None:
         return None
 
-    mode = EMBLEM_MODE.get(profile.id, "key")
+    mode, floor, gain = EMBLEM_MODE.get(profile.id, ("key", 118, 3.2))
     img = img.convert("RGB")
     if mode == "lift":
         # stamped dark into dark art: raise it before keying or nothing survives
         img = ImageOps.autocontrast(img, cutoff=2)
         img = ImageEnhance.Brightness(img).enhance(1.25)
-        floor, gain = 62, 2.6
-    else:
-        # already bright on dark: key hard so only the mark itself survives
-        floor, gain = 118, 3.2
     rgba = img.convert("RGBA")
     px = rgba.load()
     for y in range(rgba.height):

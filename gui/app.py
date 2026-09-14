@@ -111,9 +111,11 @@ class App(tk.Tk):
         self.path_entry = tk.Entry(row, textvariable=self.path_var, bg=p.bg,
                                    fg=p.text, bd=0, insertbackground=p.text,
                                    font=theme.F("body", 10), highlightthickness=0)
-        self.path_entry.pack(side="left", fill="x", expand=True, ipady=theme.px(5))
+        self.path_entry.pack(side="left", fill="x", expand=True,
+                             ipady=theme.px(6), ipadx=theme.px(10),
+                             padx=(0, theme.px(4)))
         self.path_entry.bind("<Return>", lambda _e: self._load_iso(self.path_var.get()))
-        self.browse = ActionButton(row, "Browse", "triangle", self._browse)
+        self.browse = ActionButton(row, "Browse", self._browse)
         self.browse.pack(side="left", padx=(theme.px(10), 0))
 
         self.status = tk.Label(self.stage, text="", bg=p.bg, fg=p.dim,
@@ -138,12 +140,10 @@ class App(tk.Tk):
         self.preset_box.pack(side="left", pady=theme.px(6))
         self.preset_box.bind("<<ComboboxSelected>>", self._apply_preset)
 
-        self.apply_btn = ActionButton(self.bar, "Apply to disc", "cross",
-                                      self._apply, accent=True)
-        self.cheat_btn = ActionButton(self.bar, "Cheat file", "triangle",
-                                      self._save_pnach)
-        self.revert_btn = ActionButton(self.bar, "Restore disc", "triangle",
-                                       self._revert)
+        self.apply_btn = ActionButton(self.bar, "Apply to disc", self._apply,
+                                      accent=True)
+        self.cheat_btn = ActionButton(self.bar, "Cheat file", self._save_pnach)
+        self.revert_btn = ActionButton(self.bar, "Restore disc", self._revert)
         for b in (self.apply_btn, self.cheat_btn, self.revert_btn):
             b.pack(side="right", padx=(theme.px(10), 0))
             b.set_enabled(False)
@@ -348,7 +348,10 @@ class App(tk.Tk):
         if p.notes:
             names.append(NOTES_TAB)
         names_p = [n for n, _ in PRESETS.get(p.id, [])]
-        self.preset_box.configure(values=names_p)
+        # ttk sizes the drop-down from the entry, so widen it to the longest
+        # entry or Rainbow Six 3's names get clipped mid-word
+        widest = max((len(n) for n in names_p), default=24)
+        self.preset_box.configure(values=names_p, width=min(60, widest + 2))
         self.preset_var.set(PRESET_HINT if names_p else "")
 
         for child in self.nav.winfo_children():

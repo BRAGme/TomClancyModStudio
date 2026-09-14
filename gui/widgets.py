@@ -166,12 +166,12 @@ class NavItem(tk.Canvas):
 
 
 class ActionButton(tk.Canvas):
-    """A bottom-bar action: a PlayStation face button and a label."""
+    """A bottom-bar action: a skinned button with a label."""
 
-    def __init__(self, master, text, glyph, command, accent=False):
+    def __init__(self, master, text, command, accent=False):
         super().__init__(master, height=theme.px(38), bg=theme.P.bg,
                          highlightthickness=0, bd=0, cursor="hand2")
-        self.text, self.glyph, self.command = text, glyph, command
+        self.text, self.command = text, command
         self.accent = accent
         self.enabled = True
         self.hovered = False
@@ -192,7 +192,7 @@ class ActionButton(tk.Canvas):
     def width_needed(self):
         f = theme.F("bold" if self.accent else "body", 11)
         import tkinter.font as tkfont
-        return tkfont.Font(font=f).measure(self.text.upper()) + theme.px(62)
+        return tkfont.Font(font=f).measure(self.text.upper()) + theme.px(44)
 
     def _draw(self):
         p = theme.P
@@ -210,11 +210,8 @@ class ActionButton(tk.Canvas):
                 skins.paint_button(self, p, 1, 1, w - 2, h - 2, theme.px,
                                    False, True)
             fg = p.text if self.enabled else p.faint
-        r = theme.px(11)
-        cx = theme.px(20)
-        skins.glyph(self, p, self.glyph, cx, h // 2, r)
-        self.create_text(cx + r + theme.px(11), h // 2, anchor="w",
-                         text=self.text.upper(), fill=fg,
+        self.create_text(w // 2, h // 2, anchor="c", text=self.text.upper(),
+                         fill=fg,
                          font=theme.F("bold" if self.accent else "body", 11))
 
 
