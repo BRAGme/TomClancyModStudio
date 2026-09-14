@@ -9,6 +9,7 @@ a red-lit travel in Rainbow Six 3, a gold one in the two Ghost Recons.
 
 from __future__ import annotations
 
+import re
 import tkinter as tk
 
 from . import skins, theme
@@ -214,6 +215,14 @@ class Slider(tk.Frame):
                                   width=13, anchor="e")
         self.value_lbl.pack(side="right", padx=(theme.px(12), 0))
 
+        # Double-click the number to type one. Dragging to a particular value
+        # on a range like 25..4000 is hopeless, and the keyboard is the obvious
+        # answer -- the label is the thing you are looking at, so it is the
+        # thing that takes the click.
+        self._entry = None
+        self.value_lbl.bind("<Double-Button-1>", self._begin_typing)
+        self.value_lbl.configure(cursor="xterm")
+
         self.canvas.bind("<Configure>", lambda _e: self._draw())
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._move)
@@ -253,8 +262,53 @@ class Slider(tk.Frame):
         else:
             self._draw()
 
+    # -- typing a value ----------------------------------------------------
+    #: leading number in whatever the field holds, so "1100 units" and "110%"
+    #: both work -- the label shows a unit, so people will type one back
+    _TYPED = re.compile(r"^\s*(-?\d+)")
+
+    def _begin_typing(self, _e=None):
+        """Swap the label for an entry carrying the current number."""
+        if not self._enabled or self._entry is not None:
+            return
+        p = theme.P
+        self.value_lbl.pack_forget()
+        self._entry = tk.Entry(self, width=11, justify="right",
+                               bg=p.panel2, fg=p.text, relief="flat",
+                               insertbackground=p.text, highlightthickness=1,
+                               highlightbackground=p.edge_dim,
+                               highlightcolor=p.edge, font=theme.F("bold", 10))
+        self._entry.insert(0, str(self.var.get()))
+        self._entry.select_range(0, "end")
+        self._entry.pack(side="right", padx=(theme.px(12), 0))
+        self._entry.focus_set()
+        for seq in ("<Return>", "<KP_Enter>", "<FocusOut>"):
+            self._entry.bind(seq, self._commit_typing)
+        self._entry.bind("<Escape>", lambda _e2: self._end_typing())
+
+    def _commit_typing(self, _e=None):
+        if self._entry is None:
+            return
+        raw = self._entry.get()
+        self._end_typing()
+        m = self._TYPED.match(raw)
+        # Nonsense leaves the value alone rather than snapping it to zero;
+        # `_set` still clamps, so a number past the end lands on the end.
+        if m:
+            self._set(int(m.group(1)))
+
+    def _end_typing(self):
+        if self._entry is None:
+            return
+        entry, self._entry = self._entry, None
+        entry.destroy()
+        self.value_lbl.pack(side="right", padx=(theme.px(12), 0))
+        self._draw()
+
     def set_enabled(self, on):
         self._enabled = on
+        if not on:
+            self._end_typing()
         self.canvas.configure(cursor="hand2" if on else "")
         self.value_lbl.configure(fg=theme.P.text if on else theme.P.faint)
         self._draw()

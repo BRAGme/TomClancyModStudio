@@ -151,23 +151,39 @@ WAVE_MAPS = (
 #:
 #: `waves` is the number of R6DZoneWave actors the level places, read off the
 #: recovered export table rather than estimated; see research/rs3ai/zones.md.
+#: Campaign order, taken from the disc: `PSX2GAME.INI` names
+#: `Campaign=RavenShieldCampaign.ini`, and that file lists its missions in the
+#: order they are played. Alphabetical order put Airport first and Oil Refinery
+#: tenth, which is nobody's campaign.
+#:
+#: Four of the disc's fifteen are absent from that list -- Alcatraz, Office
+#: Complex, Old City and Trieste -- and they follow the eleven it names. They
+#: are fully present as level packages; the campaign file simply does not call
+#: them, which is the same story as the missions delisted from the menu. Four
+#: entries in the list point the other way, at levels this disc does not carry
+#: (Bank, MeatPacking_Day, Island_Dawn, Airport_Night), so it is a Raven Shield
+#: list the PS2 build inherited rather than one written for it.
 MISSIONS = (
-    ("AIRPORT", "Airport", "AB", 3),
-    ("ALCATRAZ", "Alcatraz", "AB", 3),
+    ("OIL_REFINERY", "Oil Refinery", "AB", 5),
     ("ALPINES", "Alpine Village", "AB", 2),
-    ("GARAGE", "Parking Garage", "AB", 2),
-    ("IMPORT_EXPORT", "Import/Export", "AB", 3),
+    ("MOUNTAIN_HIGHWAY", "Mountain Highway", "AB", 3),
+    ("SHIPYARD", "Shipyard", "AB", 3),
+    ("AIRPORT", "Airport", "AB", 3),
     ("ISLAND", "Island Estate", "A", 2),
     ("MEATPACKING", "Meat Packing", "AB", 4),
-    ("MOUNTAIN_HIGHWAY", "Mountain Highway", "AB", 3),
-    ("OFFICE_COMPLEX", "Office Complex", "AB", 3),
-    ("OIL_REFINERY", "Oil Refinery", "AB", 5),
-    ("OLDCITY", "Old City", "AB", 2),
-    ("PARADE", "Parade", "AB", 3),
+    ("IMPORT_EXPORT", "Import/Export", "AB", 3),
     ("PENTHOUSE", "Penthouse", "A", 0),
-    ("SHIPYARD", "Shipyard", "AB", 3),
+    ("GARAGE", "Parking Garage", "AB", 2),
+    ("PARADE", "Parade", "AB", 3),
+    # not named by the campaign file, but on the disc in full
+    ("ALCATRAZ", "Alcatraz", "AB", 3),
+    ("OFFICE_COMPLEX", "Office Complex", "AB", 3),
+    ("OLDCITY", "Old City", "AB", 2),
     ("TRIESTE", "Trieste", "A", 3),
 )
+
+#: how many of MISSIONS the campaign file actually lists, in order
+CAMPAIGN_LISTED = 11
 
 MISSION_GROUP = "Missions"
 
@@ -199,16 +215,19 @@ def _mission_settings():
     is why the label says enemies rather than waves.
     """
     out = []
-    for stem, title, parts, waves in MISSIONS:
+    for n, (stem, title, parts, waves) in enumerate(MISSIONS):
         where = "part A and B" if len(parts) == 2 else "one part"
         zones = ("%d deployment zone%s" % (waves, "" if waves == 1 else "s")
                  if waves else "no deployment zones -- story spawners only")
+        listed = ("" if n < CAMPAIGN_LISTED else
+                  " The campaign file does not list this one, so it is here "
+                  "after the eleven it does; the level itself is complete.")
         out.append(Setting(
             mission_key(stem), title, INT, 100, MISSION_GROUP,
             minimum=25, maximum=400, unit="%",
             help="Scales every enemy count authored into %s (%s; %s). "
-                 "100%% leaves the mission exactly as it shipped."
-                 % (title, where, zones),
+                 "100%% leaves the mission exactly as it shipped.%s"
+                 % (title, where, zones, listed),
             touches="data", confidence="applied"))
     return out
 

@@ -362,6 +362,33 @@ def run_missions(iso):
     vals = dict(PROFILE.defaults())
     check("leaving them alone writes nothing", PROFILE.build_data(vals) == [])
 
+    # The page order is the campaign's, taken off the disc -- alphabetical put
+    # Oil Refinery tenth. Read the campaign file and compare rather than
+    # trusting the table.
+    from tcps2.games.r6_3 import CAMPAIGN_LISTED
+    campaign = None
+    for arc in open_archives(iso, r"\.IMG$"):
+        ent = arc.files.get("/MAPS/RAVENSHIELDCAMPAIGN.INI")
+        if ent:
+            campaign = arc.read_entry(ent).decode("latin-1")
+            break
+    check("the disc carries a campaign definition", campaign is not None)
+    if campaign:
+        listed = [m.strip().upper() for m in
+                  re.findall(r"^missions=(.+)$", campaign, re.M)]
+        stems = [m[0] for m in MISSIONS]
+        # only the entries whose level this disc actually ships
+        wanted = [L for L in listed
+                  if any(L == s2 or (L == "MOUNTAIN_HIGH" and s2 == "MOUNTAIN_HIGHWAY")
+                         for s2 in stems)]
+        got = stems[:CAMPAIGN_LISTED]
+        norm = ["MOUNTAIN_HIGHWAY" if w == "MOUNTAIN_HIGH" else w for w in wanted]
+        check("the first eleven are in campaign order", got == norm,
+              "%s vs %s" % (got[:4], norm[:4]))
+        check("the rest are the ones the campaign never names",
+              all(st not in norm for st in stems[CAMPAIGN_LISTED:]),
+              str(stems[CAMPAIGN_LISTED:]))
+
     vals[mission_key("SHIPYARD")] = 200
     vals[mission_key("ISLAND")] = 50
     edits = PROFILE.build_data(vals)
