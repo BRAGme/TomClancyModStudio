@@ -438,7 +438,8 @@ class App(tk.Tk):
         for s in self.profile.settings:
             if s.group != name:
                 continue
-            card = SettingCard(body, s, self.vars[s.key], self._changed)
+            card = SettingCard(body, s, self.vars[s.key], self._changed,
+                               images=self._mission_art(s))
             card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
             self.cards[s.key] = card
         if not self.cards:
@@ -463,6 +464,23 @@ class App(tk.Tk):
                      anchor="w", font=theme.F("body", 8)).pack(side="left")
             tk.Label(r, text=str(v), bg=theme.P.panel, fg=theme.P.text,
                      anchor="w", font=theme.F("mono", 9)).pack(side="left")
+
+    def _mission_art(self, setting):
+        """The disc's own loading screens for a mission card, or nothing.
+
+        Only Rainbow Six 3 and Lockdown ship per-level art; everything else
+        gets an ordinary card, which is why this returns a list rather than
+        insisting on a picture.
+        """
+        spec = getattr(self.profile, "mission_art_for", None)
+        if spec is None or self.detection is None:
+            return ()
+        out = []
+        for stem, part in spec(setting.key):
+            img = art.mission_art(self.detection, stem, part, theme.cache_dir())
+            if img is not None:
+                out.append(img)
+        return out
 
     def _values(self):
         return {k: v.get() for k, v in self.vars.items()}

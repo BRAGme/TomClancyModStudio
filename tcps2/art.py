@@ -329,6 +329,55 @@ ARCHIVE_BANNERS = {
 }
 
 
+#: Where each disc keeps the picture it shows while a mission loads, as a
+#: format string taking the level stem and part. Only two discs have per-level
+#: art at all -- Ghost Recon, Jungle Storm, Ghost Recon 2 and Advanced
+#: Warfighter ship one generic loading screen between them, so a mission page
+#: for those would be the same picture fifteen times.
+MISSION_ART = {
+    "r6_3_slus20883": ("fbz", "/NTSC_DI/LE/LOADING/LVL/%s_%s.FBZ"),
+    "lockdown_slus21144": ("psx", "/PS2DATA/SHELL/ART/%s_SNAPSHOT.PSX"),
+}
+
+
+def mission_art(detection, stem, part="A", cache_dir=None):
+    """The game's own loading screen for one mission part, or None."""
+    import os
+    profile = getattr(detection, "profile", None)
+    spec = MISSION_ART.get(getattr(profile, "id", None))
+    if spec is None:
+        return None
+    kind, pattern = spec
+    name = pattern % (stem, part) if "%s_%s" in pattern else pattern % stem
+    cached = (os.path.join(cache_dir, "%s.%s.png"
+                           % (profile.id, name.strip("/").replace("/", "_")))
+              if cache_dir else None)
+    if cached and os.path.exists(cached):
+        try:
+            from PIL import Image
+            return Image.open(cached).convert("RGB")
+        except Exception:                         # noqa: BLE001
+            pass
+    img = None
+    try:
+        from .iso import Iso
+        with Iso(detection.path) as iso:
+            if kind == "psx":
+                img = psx_image(iso, profile, name)
+                img = img.convert("RGB") if img is not None else None
+            else:
+                img = find_fbz(iso, name.replace(".", r"\.") + "$",
+                               profile.archive_pattern)
+    except Exception:                             # noqa: BLE001
+        return None
+    if img is not None and cached:
+        try:
+            img.save(cached, "PNG")
+        except Exception:                         # noqa: BLE001
+            pass
+    return img
+
+
 def psx_image(iso, profile, name):
     """Decode one `.PSX` out of Lockdown's PS2DATA.PAK, or None."""
     if not name:

@@ -172,6 +172,14 @@ MISSIONS = (
 MISSION_GROUP = "Missions"
 
 
+def mission_art_for(key):
+    """[(stem, part)] for a mission dial, so its card can show the real thing."""
+    for stem, _title, parts, _waves in MISSIONS:
+        if key == mission_key(stem):
+            return [(stem, p) for p in parts]
+    return []
+
+
 def mission_key(stem):
     return "mission_" + stem.lower()
 
@@ -632,6 +640,7 @@ PROFILE = GameProfile(
     build_data=build_data,
     archive_pattern=r"/VOKES\d\.IMG$",
     notes=WAVE_MAPS,
+    mission_art_for=mission_art_for,
     ui_art={
         "archive": "iso",
         "fbz": [r"/NTSC_CD/LE/SC\.FBZ$", r"/NTSC_CD/LE/LANG_BG\.FBZ$",

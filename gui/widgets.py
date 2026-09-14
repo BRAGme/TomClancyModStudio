@@ -363,14 +363,44 @@ def badge(master, kind):
 class SettingCard(Chrome):
     """One option: a control, its help, and whatever caveats apply to it."""
 
-    def __init__(self, master, setting, var, on_change):
+    def __init__(self, master, setting, var, on_change, images=()):
         super().__init__(master, kind="panel", pad=theme.px(16))
         self.setting = setting
         self.var = var
         self.on_change = on_change
         self._controls = []
         self._gate_lbl = None
+        #: the game's own art for this entry, if the caller had any. Tk drops
+        #: a PhotoImage the moment nothing references it, so the cards hold
+        #: their own.
+        self._photos = []
+        self._images = list(images or ())
         self._build()
+
+    def _picture_strip(self):
+        """The game's own loading screens for this mission, side by side."""
+        if not self._images:
+            return
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            return
+        p = theme.P
+        strip = tk.Frame(self.body, bg=p.panel)
+        strip.pack(fill="x", pady=(0, theme.px(10)))
+        height = theme.px(96)
+        for img in self._images[:3]:
+            try:
+                shot = img.convert("RGB")
+                scale = height / float(shot.height)
+                shot = shot.resize((max(1, int(shot.width * scale)), height),
+                                   Image.LANCZOS)
+                photo = ImageTk.PhotoImage(shot)
+            except Exception:                      # noqa: BLE001
+                continue
+            self._photos.append(photo)
+            tk.Label(strip, image=photo, bg=p.panel, bd=0).pack(
+                side="left", padx=(0, theme.px(8)))
 
     def _text(self, text, colour, size=8, wrap=560, pady=(8, 0)):
         lbl = tk.Label(self.body, text=text, bg=theme.P.panel, fg=colour,
@@ -381,6 +411,7 @@ class SettingCard(Chrome):
 
     def _build(self):
         p, s = theme.P, self.setting
+        self._picture_strip()
         head = tk.Frame(self.body, bg=p.panel)
         head.pack(fill="x")
 

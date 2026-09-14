@@ -160,6 +160,10 @@ class GameProfile:
     notes: str = ""
     #: art paths inside the game's own archives, used to skin the UI
     ui_art: dict = field(default_factory=dict)
+    #: key -> [(levelStem, part)], so a settings page can show the game's own
+    #: art beside the option it belongs to. Left unset for the discs that ship
+    #: no per-level pictures.
+    mission_art_for: Any = None
 
     def defaults(self) -> dict:
         return {s.key: s.default for s in self.settings}
