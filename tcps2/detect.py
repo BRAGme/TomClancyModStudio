@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from .engine import backup_dir_for, iso_crc
+from .engine import backup_dir_for, iso_crc, own_crc_shift
 from .games import BY_BOOT, PROFILES
 from .iso import Iso, IsoError
 
@@ -21,6 +21,8 @@ class Detection:
     volume: str = ""
     message: str = ""
     crc_matches: bool = True
+    #: True when the CRC differs from stock only because of our own code patches
+    crc_is_ours: bool = False
     has_backup: bool = False
 
     @property
@@ -55,6 +57,7 @@ def identify(path) -> Detection:
                                          "volume %r). Supported: %s."
                                          % (boot or "?", volume, names))
             crc = iso_crc(iso, profile.boot)
+            shift = own_crc_shift(iso, profile)
             missing = [o.name for o in profile.overlays
                        if iso.find(o.iso_pattern) is None]
     except IsoError as exc:
@@ -65,9 +68,24 @@ def identify(path) -> Detection:
     except OSError as exc:
         return Detection(path, False, message="Could not read the image: %s" % exc)
 
+    # A disc whose boot executable we have patched no longer has its stock CRC.
+    # That is not a different revision, and refusing to patch it again would
+    # strand anyone who used a code option once -- so undo our own words first
+    # and compare against that.
     crc_ok = (not profile.pcsx2_crc) or crc.upper() == profile.pcsx2_crc.upper()
+    ours = False
+    if not crc_ok and shift:
+        stock_crc = "%08X" % (int(crc, 16) ^ shift)
+        ours = stock_crc == profile.pcsx2_crc.upper()
+        crc_ok = crc_ok or ours
     msgs = []
-    if not crc_ok:
+    if ours:
+        msgs.append("This disc already carries this tool's code patches, which "
+                    "is why its CRC reads %s rather than the stock %s. That is "
+                    "expected, and it is still the right revision. The cheat "
+                    "file is named for the CRC the emulator sees, %s."
+                    % (crc, profile.pcsx2_crc, crc))
+    elif not crc_ok:
         msgs.append("This is a different revision or region than the profile "
                     "was built for (disc CRC %s, expected %s). Options that "
                     "patch code are unsafe here." % (crc, profile.pcsx2_crc))
@@ -81,7 +99,7 @@ def identify(path) -> Detection:
                   for o in profile.overlays))
     return Detection(path, True, profile=profile, boot=profile.boot, crc=crc,
                      volume=volume, message=" ".join(msgs),
-                     crc_matches=crc_ok, has_backup=bak)
+                     crc_matches=crc_ok, crc_is_ours=ours, has_backup=bak)
 
 
 def scan_folder(folder, limit=200) -> list:

@@ -125,6 +125,43 @@ def iso_crc(iso: Iso, boot_name: str) -> str:
     return pcsx2_crc(iso.read(ent.lba, ent.size))
 
 
+def own_crc_shift(iso: Iso, profile) -> int:
+    """How far this tool's own code patches have moved the disc's CRC.
+
+    Two of the seven discs keep their patchable code in the BOOT executable
+    itself -- Ghost Recon and Jungle Storm both list their ELF as the overlay --
+    and the CRC is an XOR over that file's words. So applying a render option to
+    one of those discs changes its CRC, and a plain equality check then reports
+    the disc as a different revision and disables the very button that wrote it.
+
+    The XOR makes the correction exact rather than approximate: a word changed
+    from `stock` to `value` shifts the CRC by `stock ^ value` and by nothing
+    else, wherever in the file it sits. This returns the accumulated shift for
+    every word the profile owns that is not currently at its stock value, so a
+    caller can XOR it out and compare against the pristine CRC.
+
+    Zero when nothing is patched, and zero for the discs whose overlay is not
+    the boot file, since none of their words is inside it.
+    """
+    stock = profile.stock_words or {}
+    boot = [o for o in profile.overlays if o.name.upper() == profile.boot.upper()]
+    if not stock or not boot:
+        return 0
+    try:
+        ov = open_overlay(iso, boot[0])
+    except Exception:                                 # noqa: BLE001
+        return 0
+    shift = 0
+    for va, want in stock.items():
+        try:
+            cur = ov.read_word(va)
+        except Exception:                             # noqa: BLE001
+            return 0
+        if cur != want:
+            shift ^= cur ^ want
+    return shift
+
+
 # ---------------------------------------------------------------------------
 # recovering the pristine overlay
 # ---------------------------------------------------------------------------

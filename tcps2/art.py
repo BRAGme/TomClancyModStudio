@@ -346,6 +346,12 @@ MISSION_ART = {
     "r6_3_slus20883": ("fbz", "/NTSC_DI/LE/LOADING/LVL/%s.FBZ"),
     "lockdown_slus21144": ("psx", "/PS2DATA/SHELL/ART/%s_SNAPSHOT.PSX"),
     "gr2_slus21105": ("fbz", "/DI/EN/LOADING%s.EN"),
+    # Ghost Recon and Jungle Storm ship the briefing's tactical map per
+    # mission, as an .RSB in the same archive. The names were renamed for the
+    # PS2 port -- m09_swamp.mis asks for M09_SWAMPS.RSB -- so the profile's
+    # table carries the image name rather than deriving it.
+    "ghost_recon_slus20613": ("rsb", "/%s.RSB"),
+    "jungle_storm_slus20820": ("rsb", "/%s.RSB"),
 }
 
 
@@ -374,6 +380,8 @@ def mission_art(detection, name, cache_dir=None):
             if kind == "psx":
                 img = psx_image(iso, profile, path)
                 img = img.convert("RGB") if img is not None else None
+            elif kind == "rsb":
+                img = rsb_image(iso, profile, path)
             else:
                 img = find_fbz(iso, path.replace(".", r"\.") + "$",
                                profile.archive_pattern)
@@ -385,6 +393,22 @@ def mission_art(detection, name, cache_dir=None):
         except Exception:                         # noqa: BLE001
             pass
     return img
+
+
+def rsb_image(iso, profile, name):
+    """Decode one `.RSB` out of a Red Storm archive, or None."""
+    import re
+    from . import rsb
+    from .vokes import open_archives
+    rx = re.compile(re.escape(name) + "$", re.I)
+    for arc in open_archives(iso, profile.archive_pattern):
+        for key, e in arc.files.items():
+            if rx.search(key):
+                try:
+                    return rsb.to_image(arc.read_entry(e)).convert("RGB")
+                except Exception:                 # noqa: BLE001
+                    return None
+    return None
 
 
 def psx_image(iso, profile, name):

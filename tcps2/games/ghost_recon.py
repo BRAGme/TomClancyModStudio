@@ -262,8 +262,118 @@ def build_edits(v: dict) -> list:
     return e
 
 
+
+#: Every mission with an order of battle, in the order the disc plays it.
+#:
+#: `CAMPAIGN.XML` inside the archive lists the campaign in play order, and each
+#: `.MIS` names itself in its own `<Shell>` and `<Engine>` blocks -- codename,
+#: location, date and time. Here that order is also the file order, m01 through m15 and then the eight Desert Siege missions, and the dates climb with it.
+#:
+#: The last field is the briefing's tactical map, which the port renamed when it
+#: cooked it: `m09_swamp.mis` asks for `M09_SWAMPS.RSB`. So the image name is
+#: recorded rather than derived, and a test checks every one of them is really
+#: in the archive.
+#:
+#: (stem, number, codename, place, date, time, soldiers, held back on Easy, map)
+MISSIONS = (
+    ("M01_CAVES", "M01", "Iron Dragon", "South Ossetian Autonomous Region", "April 16, 2008", "05:45", 63, 33, "M01_CAVES"),
+    ("M02_FARM", "M02", "Eager Smoke", "South Ossetian Autonomous Region", "April 24, 2008", "02:15", 45, 23, "M02_FARM"),
+    ("M03_RRBRIDGE", "M03", "Stone Bell", "South Ossetian Autonomous Region", "May 2, 2008", "10:00", 33, 17, "M03_RRBRIDGE"),
+    ("M04_VILLAGE", "M04", "Black Needle", "Republic of Georgia", "May 7, 2008", "15:00", 48, 22, "M04_VILLAGE"),
+    ("M05_EMBASSY", "M05", "Gold Mountain", "Tbilisi, Republic of Georgia", "May 14, 2008", "09:00", 64, 30, "M05_EMBASSY"),
+    ("M06_CASTLE", "M06", "Witch Fire", "Izborsk, Russia", "June 6, 2008", "02:00", 52, 16, "M06_CASTLE"),
+    ("M07_RIVER", "M07", "Paper Angel", "Lubana River, Latvia", "June 10, 2008", "06:00", 48, 18, "M07_RIVER"),
+    ("M08_BATTLEFIELD", "M08", "Zebra Straw", "Venta, Lithuania", "June 24, 2008", "16:00", 56, 16, "M08_BATTLEFIELD"),
+    ("M09_SWAMP", "M09", "Blue Storm", "Nereta Swamp, Latvia", "July 3, 2008", "09:00", 44, 22, "M09_SWAMPS"),
+    ("M10_RUINED_CITY", "M10", "Fever Claw", "Vilnius, Lithuania", "September 1, 2008", "18:00", 47, 27, "M10_RUINEDCITY"),
+    ("M11_POW_CAMP", "M11", "Dream Knife", "Ljady, Russia", "September 16, 2008", "03:00", 47, 19, "M11_POWCAMP"),
+    ("M12_DOCKS", "M12", "Ivory Horn", "Murmansk, Russia", "September 22, 2008", "02:00", 64, 24, "M12_DOCKS"),
+    ("M13_AIRBASE", "M13", "Arctic Sun", "Arkhangel'sk, Russia", "October 3, 2008", "04:00", 37, 9, "M13_AIRBASE"),
+    ("M14_MOUNTAIN", "M14", "Willow Bow", "Toropec, Russia", "October 23, 2008", "13:00", 53, 11, "M14_MOUNTAIN"),
+    ("M15_RED_SQUARE", "M15", "White Razor", "Moscow, Russia", "November 10, 2008", "11:00", 56, 23, "M15_REDSQUARE"),
+    ("D01_BEACH", "D01", "Burning Sands", "Samhar Awraja, Eritrea", "May 16, 2009", "03:00", 42, 17, "D01_BEACH"),
+    ("D02_REFINERY", "D02", "Flame Pillar", "Massawa, Eritrea", "May 23, 2009", "11:00", 48, 13, "D02_REFINERY"),
+    ("D03_TRAINDEPOT", "D03", "Cold Steam", "Southern Denakil Awraja, Eritrea", "May 29, 2009", "15:30", 40, 14, "D03_DEPOT"),
+    ("D04_RIVERBED", "D04", "Quiet Angel", "Tigray Kilil, Ethiopia", "June 4, 2009", "16:00", 44, 16, "D04_RIVERBED"),
+    ("D05_AURORA", "D05", "Gamma Dawn", "Denakil Desert, Ethiopia", "June 11, 2009", "23:00", 44, 19, "D05_AURORA"),
+    ("D06_GHOSTTOWN", "D06", "Spectre Wind", "Adi K'eyih, Eritrea", "June 16, 2009", "19:05", 39, 7, "D06_GHOSTTOWN"),
+    ("D07_ROADBLOCK", "D07", "Subtle Keep", "Akale Guzay Awraja, Eritrea", "June 22, 2009", "18:00", 46, 17, "D07_ROADBLOCK"),
+    ("D08_TANK", "D08", "Torn Banner", "Mereb Wenz crossing, near Adi Kwala, Eritrea", "June 25, 2009", "11:00", 46, 18, "D08_TANK"),
+    ("TAC01_SHOOTING", "TAC01", "Shooting", "", "", "10:00", 15, 0, "TAC01_SHOOTING"),
+    ("TAC02_RESCUE", "TAC02", "Rescue", "", "", "15:00", 23, 6, "TAC02_RESCUE"),
+    ("TAC03_DEMOLITION", "TAC03", "Demolition", "", "", "09:00", 23, 0, "TAC03_DEMOLITION"),
+    ("TAC04_ANTIVEHICLE", "TAC04", "Anti Vehicle", "", "", "02:15", 6, 0, "TAC04_ANTIVEHICLE"),
+    ("TAC05_DEFEND", "TAC05", "Defend", "", "", "18:00", 31, 5, "TAC05_DEFEND"),
+)
+
+MISSION_GROUP = "Missions"
+
+
+def mission_key(stem):
+    return "mission_" + stem.lower()
+
+
+def mission_art_for(key):
+    """The briefing map this mission's card should show."""
+    for mission in MISSIONS:
+        if key == mission_key(mission[0]):
+            return [mission[8]]
+    return []
+
+
+def mission_select(stem):
+    """A regex matching just this mission's script inside the archive."""
+    return r"/%s\.MIS$" % stem
+
+
+def _mission_settings():
+    """One switch per mission: put that mission's full force into every
+    difficulty, without touching any other mission.
+
+    This is the global "every soldier on every difficulty" switch aimed at one
+    file. The figures on each card are counted out of the disc: how many actors
+    the mission places, and how many of them carry a flag that removes them
+    below Hard. A mission with no flags gets a card that says so and a switch
+    that is off, because there is nothing there to release.
+    """
+    out = []
+    for stem, number, title, place, date, time, actors, held, _map in MISSIONS:
+        when = ", ".join(x for x in (place, date, time) if x)
+        if held:
+            help_text = ("%s. %d soldiers placed, %d of them removed below "
+                         "Hard. This puts the full Hard force into this "
+                         "mission at every difficulty, and nothing else moves."
+                         % (when, actors, held))
+        else:
+            help_text = ("%s. %d soldiers placed, none of them suppressed on "
+                         "any difficulty -- this mission already turns out in "
+                         "full at every setting." % (when, actors))
+        out.append(Setting(
+            mission_key(stem), "%s  %s" % (number, title), BOOL, False,
+            MISSION_GROUP, help=help_text, touches="data",
+            enabled=bool(held),
+            disabled_reason=("" if held else
+                             "Nothing to release: this mission authors no "
+                             "difficulty suppression flags at all, so every "
+                             "soldier already turns out at every setting."),
+            confidence="measured"))
+    return out
+
+
 def build_data(v: dict) -> list:
     out = []
+    # Per-mission first, and skipped entirely when the global
+    # switch is on: that one already strips every .MIS, so a
+    # per-mission edit on top would be a second pass over a file
+    # with nothing left in it to strip.
+    if not v.get("gr_all_difficulties"):
+        for mission in MISSIONS:
+            if v.get(mission_key(mission[0])):
+                out.append(FileEdit(
+                    "strip_difficulty", mission_select(mission[0]),
+                    "GR.IMG",
+                    note="every soldier in %s %s"
+                         % (mission[1], mission[2])))
     if v.get("gr_all_difficulties"):
         out.append(FileEdit("strip_difficulty", r"\.MIS$", "GR.IMG",
                             note="every soldier on every difficulty"))
@@ -298,12 +408,13 @@ PROFILE = GameProfile(
     volume_hint="GHOST_RECON",
     pcsx2_crc="3E571E95",
     overlays=[ELF],
-    settings=_settings(),
+    settings=_settings() + _mission_settings(),
     build_edits=build_edits,
     build_pnach=lambda v: [],
     build_data=build_data,
     archive_pattern=r"/(GR|MENU)\.IMG$",
     stock_words=STOCK,
+    mission_art_for=mission_art_for,
     notes=NOTES,
     ui_art={"archive": "vokes", "patterns": [r"\.RSB$"]},
 )

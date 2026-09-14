@@ -95,6 +95,7 @@ def main():
         run_level_packages(args)
         run_gr2_missions(args)
         run_graw_missions(args)
+        run_rse_missions(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -763,16 +764,40 @@ def run_raw_and_data(args, work):
         code_only = {k: v for k, v in vals.items()}
         edits = profile.build_edits(code_only)
         check("%s emits code words" % profile.short, len(edits) > 0)
+        check("the stock fixture carries the profile's CRC",
+              det.crc_matches and not det.crc_is_ours,
+              "%s vs %s" % (det.crc, profile.pcsx2_crc))
+
         r = engine.apply(fx, profile, code_only)
         check("every word verifies from the fixture",
               r["applied"] == r["verified"] and r["applied"] > 0,
               "%d of %d" % (r["verified"], r["applied"]))
+
+        # Patching the boot executable moves the CRC, because the CRC is an XOR
+        # over that very file. A plain equality check calls that a different
+        # revision and then refuses to patch the disc again -- which stranded a
+        # real disc. The detector has to recognise its own work.
+        after = identify(fx)
+        check("patching the boot ELF really does move the disc CRC",
+              after.crc != det.crc, "%s -> %s" % (det.crc, after.crc))
+        check("but it is still recognised as the right revision",
+              after.crc_matches and after.crc_is_ours,
+              "%s: %s" % (after.crc, after.message))
+        check("and the message says so rather than crying wrong revision",
+              "already carries this tool" in after.message
+              and "different revision" not in after.message,
+              after.message)
+
         rv = engine.revert(fx, profile)
         check("revert puts every stock word back", rv["hash_ok"])
         with Iso(fx) as iso:
             ov = open_overlay(iso, profile.overlays[0])
             bad = [va for va, w in profile.stock_words.items() if ov.read_word(va) != w]
         check("no stock word left changed", not bad, str(bad[:3]))
+        back = identify(fx)
+        check("and the CRC is the stock one again",
+              back.crc == det.crc and back.crc_matches and not back.crc_is_ours,
+              back.crc)
 
         print("[%s -- data files, against the real disc through a shadow]"
               % profile.short)
@@ -1187,6 +1212,118 @@ def run_graw_missions(args):
         check("there is no S07, on the disc or in the table",
               not any("S07" in n for n in dmps)
               and not any(m[0].startswith("S07") for m in MISSIONS))
+
+
+def run_rse_missions(args):
+    """Ghost Recon and Jungle Storm: the mission page, checked against the disc.
+
+    These two are the only mission pages that EDIT, because these are the only
+    two discs that keep a per-mission order of battle in a form this tool can
+    rewrite. So there are two halves here: the table has to match what the disc
+    says about itself, and a per-mission switch has to reach exactly one file.
+    """
+    from tcps2 import art, dataedit, rsb, rselzo, rsemissions as rm
+    from tcps2.detect import identify
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+
+    jobs = [("ghost_recon_slus20613", args.gr, 23),
+            ("jungle_storm_slus20820", args.js, 16)]
+    for pid, iso_path, campaign_n in jobs:
+        if not iso_path:
+            continue
+        profile = BY_ID[pid]
+        mod = __import__("tcps2.games." + pid.split("_slus")[0],
+                         fromlist=["MISSIONS"])
+        MISSIONS = mod.MISSIONS
+        print("\n[%s -- the mission page]" % profile.short)
+
+        cards = [x for x in profile.settings if x.group == "Missions"]
+        check("there is a card per mission",
+              len(cards) == len(MISSIONS), str(len(cards)))
+        live = [x for x in cards if x.enabled]
+        check("the missions with nothing to release are switched off",
+              len(live) == sum(1 for m in MISSIONS if m[7]),
+              "%d live of %d" % (len(live), len(cards)))
+
+        det = identify(iso_path)
+        with Iso(iso_path) as iso:
+            files = rm.archive_files(iso, profile)
+
+            # the order is the disc's, not the filenames'
+            order = rm.campaign_order(files)
+            check("CAMPAIGN.XML lists the campaign",
+                  len(order) == campaign_n, str(len(order)))
+            check("the table opens with that campaign, in that order",
+                  [m[0] for m in MISSIONS[:campaign_n]] == order,
+                  str([m[0] for m in MISSIONS[:3]]))
+
+            # every figure on every card came off the disc
+            bad_name, bad_where, bad_count, dates = [], [], [], []
+            for stem, number, title, place, date, time, actors, held, shot in MISSIONS:
+                f = rm.mission_facts(files, stem)
+                if f is None:
+                    bad_name.append(stem)
+                    continue
+                if rm.codename(f["name"]) != (number, title):
+                    bad_name.append(stem)
+                if (f["place"], f["date"], f["time"]) != (place, date, time):
+                    bad_where.append(stem)
+                if (f["actors"], f["easy_held"]) != (actors, held):
+                    bad_count.append(stem)
+                if stem in order and f["date"]:
+                    dates.append((stem, f["date"]))
+                if ("/%s.RSB" % shot) not in files:
+                    bad_name.append(stem + " (map)")
+            check("every card's codename is the one the .MIS gives itself",
+                  not bad_name, str(bad_name))
+            check("so are its place, date and time", not bad_where,
+                  str(bad_where))
+            check("and its soldier census, counted off the disc",
+                  not bad_count, str(bad_count))
+
+            # the tactical map really decodes, not merely exists
+            first = MISSIONS[0]
+            img = art.mission_art(det, first[8], None)
+            check("the first mission's briefing map decodes",
+                  img is not None and img.width > 64, str(img.size if img else None))
+
+            # a per-mission switch reaches one file and only one
+            target = next(m for m in MISSIONS if m[7])
+            vals = dict(profile.defaults())
+            vals[mod.mission_key(target[0])] = True
+            edits = profile.build_data(vals)
+            check("switching one mission on emits one edit",
+                  len(edits) == 1, str(len(edits)))
+            hit = [k for k in files if k.endswith(".MIS")
+                   and edits[0].matches(k)]
+            check("which selects that mission's script and no other",
+                  hit == ["/%s.MIS" % target[0]], str(hit))
+
+            # and the edit itself keeps the file's length, which the
+            # compressed container requires
+            arc, ent = files[hit[0]]
+            original = arc.read_entry(ent)
+            plain = rselzo.unpack(original)
+            new, n = dataedit.OPS[edits[0].op](plain, edits[0].params)
+            facts = rm.mission_facts(files, target[0])
+            check("it clears exactly the flags that mission carries",
+                  n == facts["flags"] and n >= target[7],
+                  "%d cleared, %d counted, %d held on Easy"
+                  % (n, facts["flags"], target[7]))
+            check("and the file keeps its length exactly",
+                  len(new) == len(plain),
+                  "%d vs %d" % (len(new), len(plain)))
+
+            # the global switch still covers everything, and suppresses the
+            # per-mission pass rather than doubling it
+            vals[[x for x in profile.settings
+                  if x.key.endswith("_all_difficulties")][0].key] = True
+            both = profile.build_data(vals)
+            check("the global switch replaces the per-mission ones",
+                  sum(1 for e in both if e.op == "strip_difficulty") == 1,
+                  str([e.note for e in both if e.op == "strip_difficulty"]))
+
 
 
 if __name__ == "__main__":

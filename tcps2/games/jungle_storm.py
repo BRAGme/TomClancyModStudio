@@ -194,8 +194,111 @@ def build_edits(v: dict) -> list:
     return e
 
 
+
+#: Every mission with an order of battle, in the order the disc plays it.
+#:
+#: `CAMPAIGN.XML` inside the archive lists the campaign in play order, and each
+#: `.MIS` names itself in its own `<Shell>` and `<Engine>` blocks -- codename,
+#: location, date and time. Here the two are NOT the same: the Colombia campaign is assembled out of the `G0x` and `U0x` files in a scrambled order, so J01 is `g03_the_rock.mis` and J03 is `u05_rail.mis`. Sorting the filenames would put the campaign in the wrong sequence outright. The `<Name>` numbering and the dates both agree with CAMPAIGN.XML instead.
+#:
+#: The last field is the briefing's tactical map, which the port renamed when it
+#: cooked it: `m09_swamp.mis` asks for `M09_SWAMPS.RSB`. So the image name is
+#: recorded rather than derived, and a test checks every one of them is really
+#: in the archive.
+#:
+#: (stem, number, codename, place, date, time, soldiers, held back on Easy, map)
+MISSIONS = (
+    ("C01_PLANTATION", "C01", "Watchful Yeoman", "Punta Tabacal", "March 20, 2010", "06:30", 48, 13, "C01_PLANTATION"),
+    ("C02_MILITARY_CAMP", "C02", "Angel Rage", "Pinar del Rio", "April 3, 2010", "19:30", 50, 19, "C02_MILITARY_CAMP"),
+    ("C03_HIGH_SIERRA", "C03", "Jaguar Maze", "Sierra de los Organos", "Apr. 12, 2010", "11:20", 47, 19, "C03_HIGH_SIERRA"),
+    ("C04_SWAMP_AIRFIELD", "C04", "Hidden Spectre", "Cabo Pepe, Isla de la Juventud", "Apr. 21, 2010", "10:40", 55, 28, "C04_SWAMP_AIRFIELD"),
+    ("C05_BRIDGES", "C05", "Rapid Python", "Sierra de los Organos", "April 27, 2010", "01:00", 50, 14, "C05_BRIDGES"),
+    ("C06_POLLING_CENTER", "C06", "Liberty Storm", "Cienfuegos", "May 12, 2010", "06:45", 51, 12, "C06_POLLING_CENTER"),
+    ("C07_BEACH_RESORT", "C07", "Ocean Forge", "Northwest Cuba, Near Dimas", "May 19, 2010", "11:45", 54, 14, "C07_BEACH_RESORT"),
+    ("C08_MOUNTAIN_STRONGHOLD", "C08", "Righteous Archer", "Sierra de los Organos", "June 6, 2010", "08:20", 55, 13, "C08_MOUNTAIN_STRONGHOLD"),
+    ("G03_THE_ROCK", "J01", "Totem Ground", "Alta Magdalena", "Aug. 01, 2010", "15:20", 70, 36, "G03_THE_ROCK"),
+    ("G04_TRAIN", "J02", "Vapor Knife", "Cienaga Grande", "August 13, 2010", "08:15", 72, 20, "G04_TRAIN"),
+    ("U05_RAIL", "J03", "Ocelot Desert", "Tatacoa Desert", "Aug. 17, 2010", "22:00", 54, 3, "U05_RAIL"),
+    ("G02_VILLAGE", "J04", "Ocean Hammer", "Buenaventura, Valle de Cauca", "Aug. 28, 2010", "09:00", 72, 9, "G02_VILLAGE"),
+    ("G05_DOCK", "J05", "Titan Bolt", "Choco Department", "Sept. 03, 2010", "14:00", 57, 17, "G05_DOCK"),
+    ("U02_RIVER", "J06", "Silver Spider", "Meta Department", "Sept. 11, 2010", "20:30", 64, 17, "U02_RIVER"),
+    ("U03_RESCUE", "J07", "Whisper Shadow", "Huila Department", "Sept. 28, 2010", "07:45", 76, 39, "U03_RESCUE"),
+    ("U01_TRANSMISSION", "J08", "Eagle Clarion", "Caqueta Department", "Oct. 13, 2010", "10:00", 78, 16, "U01_TRANSMISSION"),
+    ("TAC01_SHOOTING", "TAC01", "Shooting", "Lubana River", "June 10, 2008", "10:00", 15, 0, "TAC01_SHOOTING"),
+    ("TAC02_RESCUE", "TAC02", "Rescue", "South Ossetian Autonomous Region", "May 2, 2008", "15:00", 23, 6, "TAC02_RESCUE"),
+    ("TAC03_DEMOLITION", "TAC03", "Demolition", "Severodvinsk, Russia", "Sept. 22, 2008", "09:00", 23, 0, "TAC03_DEMOLITION"),
+    ("TAC04_ANTIVEHICLE", "TAC04", "Anti Vehicle", "Venta, Lithuania", "June 24, 2008", "02:15", 6, 0, "TAC04_ANTIVEHICLE"),
+    ("TAC05_DEFEND", "TAC05", "Defend", "South Ossetian Autonomous Region", "April 16, 2008", "18:00", 31, 5, "TAC05_DEFEND"),
+)
+
+MISSION_GROUP = "Missions"
+
+
+def mission_key(stem):
+    return "mission_" + stem.lower()
+
+
+def mission_art_for(key):
+    """The briefing map this mission's card should show."""
+    for mission in MISSIONS:
+        if key == mission_key(mission[0]):
+            return [mission[8]]
+    return []
+
+
+def mission_select(stem):
+    """A regex matching just this mission's script inside the archive."""
+    return r"/%s\.MIS$" % stem
+
+
+def _mission_settings():
+    """One switch per mission: put that mission's full force into every
+    difficulty, without touching any other mission.
+
+    This is the global "every soldier on every difficulty" switch aimed at one
+    file. The figures on each card are counted out of the disc: how many actors
+    the mission places, and how many of them carry a flag that removes them
+    below Hard. A mission with no flags gets a card that says so and a switch
+    that is off, because there is nothing there to release.
+    """
+    out = []
+    for stem, number, title, place, date, time, actors, held, _map in MISSIONS:
+        when = ", ".join(x for x in (place, date, time) if x)
+        if held:
+            help_text = ("%s. %d soldiers placed, %d of them removed below "
+                         "Hard. This puts the full Hard force into this "
+                         "mission at every difficulty, and nothing else moves."
+                         % (when, actors, held))
+        else:
+            help_text = ("%s. %d soldiers placed, none of them suppressed on "
+                         "any difficulty -- this mission already turns out in "
+                         "full at every setting." % (when, actors))
+        out.append(Setting(
+            mission_key(stem), "%s  %s" % (number, title), BOOL, False,
+            MISSION_GROUP, help=help_text, touches="data",
+            enabled=bool(held),
+            disabled_reason=("" if held else
+                             "Nothing to release: this mission authors no "
+                             "difficulty suppression flags at all, so every "
+                             "soldier already turns out at every setting."),
+            confidence="measured"))
+    return out
+
+
 def build_data(v: dict) -> list:
     out = []
+    # Per-mission first, and skipped entirely when the global
+    # switch is on: that one already strips every .MIS, so a
+    # per-mission edit on top would be a second pass over a file
+    # with nothing left in it to strip.
+    if not v.get("js_all_difficulties"):
+        for mission in MISSIONS:
+            if v.get(mission_key(mission[0])):
+                out.append(FileEdit(
+                    "strip_difficulty", mission_select(mission[0]),
+                    "GR.IMG",
+                    note="every soldier in %s %s"
+                         % (mission[1], mission[2])))
     if v.get("js_defend_enable"):
         out.append(FileEdit("gtf_variables", r"DEFEND\.GTF$", "GR.IMG",
                             {"values": {
@@ -228,12 +331,13 @@ PROFILE = GameProfile(
     volume_hint="SLUS_20820",
     pcsx2_crc="DE1E4DEE",
     overlays=[ELF],
-    settings=_settings(),
+    settings=_settings() + _mission_settings(),
     build_edits=build_edits,
     build_pnach=lambda v: [],
     build_data=build_data,
     archive_pattern=r"/GR\.IMG$",
     stock_words=STOCK,
+    mission_art_for=mission_art_for,
     notes=NOTES,
     ui_art={"archive": "vokes", "patterns": [r"\.RSB$"]},
 )
