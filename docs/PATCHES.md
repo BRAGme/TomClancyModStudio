@@ -189,6 +189,50 @@ were always there — only their spawning was switched off.
 and is identical in single player and split screen. What matters is the one site
 that acts on it.
 
+
+### Player 2's look speed in split screen
+
+Player 2's input timestep is clamped. At `0x00142028`:
+
+```
+00142028  c.lt.s $f21, <0.033f>        is the real frame delta under 33 ms?
+00142030  bc1f   +6                    no -> leave it alone
+00142034  addiu  $v1, $zero, 1
+00142038  bne    $s2, $v1, +4          pad index != 1 -> leave it alone
+00142040  lui    $v1, 0x3d4c
+00142044  ori    $v1, $v1, 0xcccd      $v1 = 0.05f
+00142048  mtc1   $v1, $f21             player 2's dt := 0.05 s
+```
+
+So whenever the game runs faster than 30 fps, **player 2 alone** gets a fixed
+0.05-second timestep while player 1 keeps the true delta. At 60 fps that is
+three times slower for the same slider setting, which is exactly the reported
+symptom -- player 2 at 10 never matching player 1 at 10.
+
+| VA | stock | becomes | effect |
+|---|---|---|---|
+| `00142048` | `4483A800` | `00000000` | player 2 keeps the real frame delta |
+
+Removing the store is enough: `$f21` already holds the true delta, since that is
+what the compare two instructions earlier tested. The same value also drives
+player 2's movement rate and button auto-repeat, so those become correct too.
+
+Six other explanations were tested and refuted before this one: a different
+multiplier per player (both viewport fields have exactly one writer each, from a
+single global), a wrong settings slot (all eight writers and eight readers pair
+P1 and P2 symmetrically), a lower menu maximum (same code shape for both), a
+viewport or aspect term (the only geometric term is a shared FOV value), the
+split-screen bool gating the look path (nothing in the whole look routine reads
+it), and a different stick conversion (both run the same one).
+
+**Player 2's settings not surviving a mission load is a separate problem and has
+no patch.** Eight persistence layers and sixteen store sites are symmetric
+between the players. The one remaining candidate -- that the level-start
+settings copy runs once per level rather than once per player -- cannot be
+settled statically, and if true needs a code cave rather than a word. The
+one-word version that looks like a fix would stamp the single-player defaults
+onto both controllers every frame and break player 1 too.
+
 ---
 
 ## World

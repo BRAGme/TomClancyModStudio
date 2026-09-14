@@ -62,6 +62,7 @@ STOCK = {
     0x00317600: 0x3C034040,   # lui v1, 0x4040       3.0f despawn window
     0x00379B30: 0x24060020,   # addiu a2, zero, 32   R6DecalGroup m_MaxSize
     0x0040ACA0: 0x0C051B7C,   # jal rand             SpawnATerrorist point pick
+    0x00142048: 0x4483A800,   # mtc1 v1, $f21       player 2's input dt := 0.05f
 }
 
 # Scaffolding from the research build that produced this profile: a tracing stub
@@ -291,6 +292,34 @@ def _settings():
                      "the engine disables exactly those -- six per level, and "
                      "they are always the fire and water next to the players.",
                 confidence="verified"),
+        Setting("p2_look_parity", "Match player 2's look speed to player 1",
+                BOOL, False, "Split Screen", confidence="applied",
+                help="Player 2's input timestep is clamped to a fixed 0.05 "
+                     "seconds whenever the real frame time is under 33 ms. "
+                     "Player 1 keeps the true frame delta. At 60 fps that makes "
+                     "player 2 about three times slower at the same slider "
+                     "setting, which is why 10 never feels like 10. This "
+                     "removes the clamp so both players use the same timestep.",
+                caution="The same clamped value also drives player 2's movement "
+                        "rate and button auto-repeat, so those become correct "
+                        "too. If player 2 feels different to move after this, "
+                        "that is why."),
+        Setting("p2_settings_persist", "Keep player 2's settings between "
+                "missions", BOOL, False, "Split Screen", enabled=False,
+                confidence="broken",
+                disabled_reason=(
+                    "Not shipped, and not for want of looking: eight "
+                    "persistence layers and sixteen store sites were traced and "
+                    "every one is symmetric between the two players. The one "
+                    "remaining candidate -- that the level-start settings copy "
+                    "runs once per level rather than once per player -- cannot "
+                    "be settled without watching it run, and if it is right the "
+                    "fix is a code cave rather than a changed word. The "
+                    "obvious-looking one-word version would stamp the "
+                    "single-player defaults onto both controllers every frame "
+                    "and break player 1 as well."),
+                help="Player 2's sensitivity resets at the start of every "
+                     "mission while player 1's survives."),
         Setting("teammates", "AI teammates in split screen", BOOL, False,
                 "Split Screen", enabled=False, confidence="broken",
                 disabled_reason=(
@@ -366,6 +395,10 @@ def build_edits(v: dict) -> list:
         w(0x003531D0, NOP, "split screen: rain and snow")
     if v.get("fx_hidden_emitters"):
         w(0x002375E0, NOP, "split screen: stop disabling flagged emitters")
+    if v.get("p2_look_parity"):
+        # the guard above it is `dt < 0.033f`, so at 60 fps this substitution is
+        # always taken; removing the store leaves $f21 holding the real delta
+        w(0x00142048, NOP, "player 2 uses the real frame delta, like player 1")
 
     ring = int(v.get("decal_ring", 32))
     if ring != 32:
