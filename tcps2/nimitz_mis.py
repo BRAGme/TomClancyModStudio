@@ -151,3 +151,52 @@ def mission_strings(data):
         raise ValueError("MISSIONSTRING.RES: %d strings, %d declared"
                          % (len(out), declared))
     return [tuple(out[i:i + 4]) for i in range(0, len(out), 4)]
+
+
+#: `/PS2DATA/BINARY/NIMITZ.WSFB` -- the weapon-set table. Each `.wsf` loadout
+#: is followed by the `.gun` names it grants, so walking the readable strings in
+#: order gives {loadout: guns} without decoding the binary around them.
+LOADOUTS = "/PS2DATA/BINARY/NIMITZ.WSFB"
+
+_WSF_TOKEN = re.compile(rb"[a-z0-9_\-]{3,}\.(?:wsf|gun)")
+
+
+def loadouts(blob):
+    """{loadout.wsf: {gun.gun}} out of NIMITZ.WSFB."""
+    out, current = {}, None
+    for m in _WSF_TOKEN.finditer(blob):
+        name = m.group(0).decode()
+        if name.endswith(".wsf"):
+            current = name
+            out.setdefault(current, set())
+        elif current is not None:
+            out[current].add(name)
+    return out
+
+
+def gun_sides(pak):
+    """(yours, theirs, shared) `.gun` names, from who carries which loadout.
+
+    Every mission template names an AI profile and a `.wsf`; `RAINBOW` says
+    which profiles are the player's operatives. The two sets of loadouts come
+    out completely disjoint -- 8 the squad's against 47 the enemy's, with no
+    loadout on both -- so the weapons follow from them directly.
+
+    The disc corroborates this independently: Lockdown names most hostile
+    weapons `*_enemy.gun`, and 21 of the 24 guns this derives as the enemy's
+    carry that suffix while not one of yours does. The derivation is the
+    authority because the other three -- the RPG-7, the U100 and the USAS-12 --
+    are handed out by enemy loadouts without being named for it.
+    """
+    table = loadouts(pak.read_file(LOADOUTS))
+    ours, theirs = set(), set()
+    for name in sorted(pak.files):
+        if not name.upper().endswith(".MIS"):
+            continue
+        for _group, _model, profile, loadout in templates(
+                pak.read_entry(pak.files[name])):
+            if not loadout:
+                continue
+            side = ours if any(r in profile for r in RAINBOW) else theirs
+            side |= table.get(loadout, set())
+    return ours - theirs, theirs - ours, ours & theirs

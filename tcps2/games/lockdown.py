@@ -147,28 +147,78 @@ def _settings():
                 # -8..8 and this switch does nothing at 0.
                 requires={"ld_enemy_skill":
                           [n for n in range(-8, 9) if n != 0]}),
-        Setting("ld_mag_size", "Magazine capacity", INT, 100, "Weapons",
-                minimum=25, maximum=400, unit="%", confidence="experimental",
-                touches="data",
-                help="Scales every weapon's magazine. The field was located by "
-                     "scoring each candidate offset against real magazine "
-                     "capacities -- the winner explains the Glock at 17, the "
-                     "M9 at 15, the MEU at 7, the P90 at 50, the M249 at 200 "
-                     "and the M870 at 5, where the next best offset explains "
-                     "two weapons in nineteen.",
-                caution="Weapons are shared: this is the enemy's magazine as "
-                        "much as yours. Untested in game."),
-        Setting("ld_fire_rate", "Rate of fire", INT, 100, "Weapons",
-                minimum=25, maximum=300, unit="%", confidence="experimental",
-                touches="data",
-                help="Scales every weapon's rounds per minute. The shipped "
+        Setting("ld_ally_mag", "Your squad's magazine capacity", INT, 100,
+                "Weapons", minimum=25, maximum=400, unit="%",
+                confidence="experimental", touches="data",
+                help="Scales the magazine on the %d weapons Rainbow's own "
+                     "loadouts carry. The field was located by scoring each "
+                     "candidate offset against real magazine capacities -- the "
+                     "winner explains the Glock at 17, the M9 at 15, the MEU "
+                     "at 7, the P90 at 50, the M249 at 200 and the M870 at 5, "
+                     "where the next best offset explains two weapons in "
+                     "nineteen." % len(ALLY_GUNS),
+                caution="%d weapons are carried by both sides and are left "
+                        "alone by this and by the enemy dial, because one "
+                        "record cannot be two guns. Untested in game."
+                        % len(SHARED_GUNS)),
+        Setting("ld_ally_rate", "Your squad's rate of fire", INT, 100,
+                "Weapons", minimum=25, maximum=300, unit="%",
+                confidence="experimental", touches="data",
+                help="Rounds per minute on the same %d weapons. The shipped "
                      "values are clean -- 300 for pistols, 450 for the M870, "
                      "750 for the UMP and SPAS, 800 for the M249, 1000 for the "
                      "PKM -- on 44 of the 48 weapons; the four that read zero "
                      "are the RPG variants and the grenade launcher, and they "
-                     "are skipped.",
-                caution="Shared with the enemy, like the magazine. Untested."),
+                     "are skipped." % len(ALLY_GUNS),
+                caution="Untested in game."),
+        Setting("ld_enemy_mag", "Enemy magazine capacity", INT, 100,
+                "Weapons", minimum=25, maximum=400, unit="%",
+                confidence="experimental", touches="data",
+                help="The same edit on the %d weapons the hostile loadouts "
+                     "carry. Which weapons those are comes off the disc: every "
+                     "mission template names a loadout, NIMITZ.WSFB says what "
+                     "each loadout grants, and the two sides' loadouts do not "
+                     "overlap at all." % len(ENEMY_GUNS),
+                caution="Untested in game."),
+        Setting("ld_enemy_rate", "Enemy rate of fire", INT, 100, "Weapons",
+                minimum=25, maximum=300, unit="%",
+                confidence="experimental", touches="data",
+                help="Rounds per minute on the enemy's %d weapons. Turning it "
+                     "down is the gentlest way to make a firefight survivable "
+                     "without touching their aim." % len(ENEMY_GUNS),
+                caution="Untested in game."),
     ]
+
+
+
+#: Who carries what, derived from the disc rather than from the names.
+#:
+#: Every mission template names an AI profile and a `.wsf` loadout, and
+#: `NIMITZ.WSFB` says which guns each loadout grants. Split by whether the
+#: profile is one of Rainbow's, the loadouts come out completely disjoint -- 8
+#: the squad's against 47 the enemy's, none shared -- and the weapons follow.
+#:
+#: The disc corroborates it independently: Lockdown names most hostile weapons
+#: `*_enemy.gun`, and 21 of the 24 derived as the enemy's carry that suffix
+#: while not one of yours does. The derivation is still the authority, because
+#: the other three -- the RPG-7, the U100 and the USAS-12 -- are handed out by
+#: enemy loadouts without being named for it. `nimitz_mis.gun_sides` recomputes
+#: all of this from the disc and a test checks these lists against it.
+ALLY_GUNS = ("m73e.gun", "mag7.gun", "pp90.gun", "sa58.gun", "spas.gun",
+             "sup90.gun")
+
+ENEMY_GUNS = ("ak47_enemy.gun", "ak74_enemy.gun", "bizon_enemy.gun",
+              "fnfal_enemy.gun", "glock_enemy.gun", "groza_enemy.gun",
+              "m16_enemy.gun", "m1_shtgn_enemy.gun", "m249_enemy.gun",
+              "meu_enemy.gun", "oicw_enemy.gun", "p90_enemy.gun",
+              "pkm_enemy.gun", "psg-1_enemy.gun", "rpg7.gun", "sar_enemy.gun",
+              "spas-15_enemy.gun", "spas_enemy.gun", "spectre_enemy.gun",
+              "steyr_aug_enemy.gun", "u100.gun", "usas.gun",
+              "usas_enemy.gun", "uzi_enemy.gun")
+
+#: carried by both, so neither dial touches them: one record cannot be two guns
+SHARED_GUNS = ("92fs.gun", "five_seven_pstl.gun", "g36.gun", "meu.gun",
+               "mp10.gun")
 
 
 def build_data(v: dict) -> list:
@@ -183,13 +233,16 @@ def build_data(v: dict) -> list:
             "nimitz_skills", CGSB, "", params,
             "%+d skill on %s" % (steps, "the three Terrorist Hunt profiles"
                                  if hunt else "every hostile AI profile")))
-    mag = int(v.get("ld_mag_size", 100)) / 100.0
-    rpm = int(v.get("ld_fire_rate", 100)) / 100.0
-    if abs(mag - 1.0) > 0.001 or abs(rpm - 1.0) > 0.001:
+    for side, label, guns in (("ally", "your squad", ALLY_GUNS),
+                              ("enemy", "the enemy", ENEMY_GUNS)):
+        mag = int(v.get("ld_%s_mag" % side, 100)) / 100.0
+        rpm = int(v.get("ld_%s_rate" % side, 100)) / 100.0
+        if abs(mag - 1.0) < 0.001 and abs(rpm - 1.0) < 0.001:
+            continue
         out.append(FileEdit("nimitz_guns", GUNS, "",
-                            {"mag": mag, "rpm": rpm},
-                            "magazines %d%%, rate of fire %d%%"
-                            % (mag * 100, rpm * 100)))
+                            {"mag": mag, "rpm": rpm, "only": list(guns)},
+                            "%s: magazines %d%%, rate of fire %d%%"
+                            % (label, mag * 100, rpm * 100)))
     return out
 
 

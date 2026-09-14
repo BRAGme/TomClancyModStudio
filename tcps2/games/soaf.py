@@ -24,7 +24,7 @@ transforms run on it unmodified.
 from __future__ import annotations
 
 from ..model import BOOL, INT, FileEdit, GameProfile, Overlay, Setting
-from . import rstuning
+from . import rseweapons, rstuning
 
 BOOT = "SLES_511.80"
 
@@ -202,6 +202,7 @@ def build_data(v: dict) -> list:
                             {"steps": skill},
                             "+%d to every hostile template's skills" % skill,
                             scope="enemy_templates"))
+    out += rseweapons.edits('soaf_', v, 'SOAF.IMG')
     out += rstuning.edits("soaf_", v, "SOAF.IMG")
     out += rstuning.soaf_edits(v)
     return out
@@ -216,7 +217,8 @@ PROFILE = GameProfile(
     volume_hint="SOAF",
     pcsx2_crc="4691F6F7",
     overlays=[ELF],
-    settings=_settings() + _mission_settings(),
+    settings=(_settings() + rseweapons.cards('soaf_')
+              + _mission_settings()),
     build_edits=lambda v: [],
     build_pnach=lambda v: [],
     build_data=build_data,

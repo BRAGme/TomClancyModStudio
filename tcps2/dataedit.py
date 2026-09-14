@@ -74,7 +74,13 @@ def _op_nimitz_skills(plain, params):
 def _op_nimitz_guns(plain, params):
     return transforms.scale_nimitz_guns(plain,
                                         mag=float(params.get("mag", 1.0)),
-                                        rpm=float(params.get("rpm", 1.0)))
+                                        rpm=float(params.get("rpm", 1.0)),
+                                        only=params.get("only"))
+
+
+def _op_scale_gun(plain, params):
+    from . import rseguns
+    return rseguns.scale(plain, params)
 
 
 def _op_gtf_variables(plain, params):
@@ -114,6 +120,7 @@ OPS = {
     "nimitz_skills": _op_nimitz_skills,
     "nimitz_guns": _op_nimitz_guns,
     "zone_counts": _op_zone_counts,
+    "scale_gun": _op_scale_gun,
 }
 
 
@@ -227,7 +234,34 @@ def enemy_template_set(arc):
     return {("/" + n).upper() for n in names}
 
 
-def _scope_filter(arc, edit, cache):
+#: how a gun edit is aimed. `rseguns.sides` returns three sets; a weapon that
+#: both sides carry is in neither of these, deliberately -- one file cannot be
+#: two weapons, so neither dial touches it.
+GUN_SCOPES = {"ally_guns": 0, "enemy_guns": 1}
+
+
+def gun_scope_set(arcs, which):
+    """The archive paths of one side's `.gun` files.
+
+    Spanning EVERY archive matters: The Sum of All Fears keeps its weapons in
+    one and part of its kit and mission data in another, so working one archive
+    at a time sees no missions and decides every gun belongs to nobody.
+    """
+    from . import rseguns
+    files = {}
+    for arc in arcs:
+        for key, entry in arc.files.items():
+            files.setdefault(key.upper(), (arc, entry))
+    picked = rseguns.sides(files)[GUN_SCOPES[which]]
+    return {("/" + n).upper() for n in picked}
+
+
+def _scope_filter(arc, edit, cache, arcs=None):
+    if edit.scope in GUN_SCOPES:
+        if edit.scope not in cache:
+            cache[edit.scope] = gun_scope_set(arcs or [arc], edit.scope)
+        allowed = cache[edit.scope]
+        return lambda k: k.upper() in allowed
     if edit.scope != "enemy_templates":
         return None
     if arc.r.name not in cache:
@@ -289,7 +323,8 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
         for arc_name, arc in arcs.items():
             if edit.archive and edit.archive.upper() not in arc_name:
                 continue
-            allowed = _scope_filter(arc, edit, scopes)
+            allowed = _scope_filter(arc, edit, scopes,
+                                    list(arcs.values()))
             for key, ent in sorted(arc.files.items()):
                 if not edit.matches(key):
                     continue

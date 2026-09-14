@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
-from . import rstuning
+from . import rseweapons, rstuning
 
 BASE = 0x00100000
 FILE_DELTA = 0x80          # ELF PT_LOAD: VA 0x00100000 lives at file 0x80
@@ -395,6 +395,7 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("bump_stats", r"\.ATR$", "GR.IMG", {"steps": skill},
                             "+%d to every hostile template's skills" % skill,
                             scope="enemy_templates"))
+    out += rseweapons.edits('gr_', v, 'GR.IMG')
     out += rstuning.edits("gr_", v, "GR.IMG")
     return out
 
@@ -408,7 +409,8 @@ PROFILE = GameProfile(
     volume_hint="GHOST_RECON",
     pcsx2_crc="3E571E95",
     overlays=[ELF],
-    settings=_settings() + _mission_settings(),
+    settings=(_settings() + rseweapons.cards('gr_')
+              + _mission_settings()),
     build_edits=build_edits,
     build_pnach=lambda v: [],
     build_data=build_data,

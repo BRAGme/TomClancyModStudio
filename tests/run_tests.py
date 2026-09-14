@@ -98,12 +98,33 @@ def main():
         run_gr2_missions(args)
         run_graw_missions(args)
         run_rse_missions(args)
+        _width_cases()
+        run_rse_weapons(args)
+        run_lockdown_weapons(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
+
+
+def _stock_bytes(iso_path, arc, path):
+    """The file as it SHIPPED, even on a disc this tool has already patched.
+
+    These checks are about what the transforms do to stock data, so reading a
+    disc the player has since edited would fail them for the wrong reason. The
+    backup store beside the ISO holds the original bytes of everything the tool
+    has ever written, which is exactly what is wanted here.
+    """
+    from tcps2 import dataedit, engine
+    store = dataedit.Store(engine.backup_dir_for(iso_path))
+    for rec in store.entries():
+        if rec["path"].upper() == path.upper():
+            got = store.original(rec["archive"], rec["path"])
+            if got:
+                return got[0]
+    return arc.read_file(path)
 
 
 def run_lockdown(args):
@@ -126,7 +147,7 @@ def run_lockdown(args):
         check("the index parses to 4,671 files", len(pak.files) == 4671,
               str(len(pak.files)))
 
-        cg = pak.read_file("/PS2DATA/BINARY/NIMITZ.CGSB")
+        cg = _stock_bytes(args.lockdown, pak, "/PS2DATA/BINARY/NIMITZ.CGSB")
         skills = transforms.read_nimitz_skills(cg)
         check("70 of the 72 AI profiles decode", len(skills) == 70,
               str(len(skills)))
@@ -1372,6 +1393,176 @@ def run_rse_missions(args):
                   sum(1 for e in both if e.op == "strip_difficulty") == 1,
                   str([e.note for e in both if e.op == "strip_difficulty"]))
 
+
+
+def run_rse_weapons(args):
+    """The Weapons page on the three Red Storm discs.
+
+    Two halves again: the sides have to be the disc's own answer rather than a
+    guess, and an edit aimed at one side has to reach that side's files, change
+    the right numbers, and not move a single byte of length.
+    """
+    from tcps2 import dataedit, rseguns, rsemissions as rm
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+
+    jobs = [("ghost_recon_slus20613", args.gr, "gr_", "ak47.gun"),
+            ("jungle_storm_slus20820", args.js, "js_", "ak47.gun"),
+            ("soaf_sles51180", args.soaf, "soaf_", "aks74u.gun")]
+    for pid, iso_path, pre, enemy_gun in jobs:
+        if not iso_path:
+            continue
+        profile = BY_ID[pid]
+        print("\n[%s -- the weapons page]" % profile.short)
+
+        cards = [x for x in profile.settings if x.group == "Weapons"]
+        check("there are eight cards, four per side", len(cards) == 8,
+              str(len(cards)))
+        check("and they are all data edits",
+              all(c.touches == "data" for c in cards))
+        check("leaving them alone writes nothing",
+              not [e for e in profile.build_data(dict(profile.defaults()))
+                   if e.op == "scale_gun"])
+
+        with Iso(iso_path) as iso:
+            files = rm.archive_files(iso, profile)
+            yours, theirs, shared = rseguns.sides(files)
+            check("both sides are found", yours and theirs,
+                  "%d / %d" % (len(yours), len(theirs)))
+            check("and they do not overlap", not (yours & theirs))
+            check("a weapon both sides carry is on neither dial",
+                  not (shared & yours) and not (shared & theirs),
+                  str(sorted(shared)[:3]))
+            check("the enemy list is the enemy's, not a guess",
+                  enemy_gun in theirs, str(sorted(theirs)))
+            on_disc = {k[1:].lower() for k in files if k.endswith(".GUN")}
+            check("every gun named is really on the disc",
+                  (yours | theirs | shared) <= on_disc,
+                  str(sorted((yours | theirs | shared) - on_disc)[:3]))
+
+            vals = dict(profile.defaults())
+            vals[pre + "enemy_spread"] = 200
+            vals[pre + "ally_mag"] = 200
+            edits = [e for e in profile.build_data(vals) if e.op == "scale_gun"]
+            check("two dials make two edits, one per side", len(edits) == 2,
+                  str(len(edits)))
+
+            scopes = {}
+            arcs = list({id(a): a for a, _e in files.values()}.values())
+            hit = {}
+            for edit in edits:
+                allow = dataedit._scope_filter(arc=arcs[0], edit=edit,
+                                               cache=scopes, arcs=arcs)
+                names, moved, grew = set(), 0, 0
+                for key, (arc, ent) in sorted(files.items()):
+                    if not edit.matches(key) or not allow(key):
+                        continue
+                    names.add(key[1:].lower())
+                    original = arc.read_entry(ent)
+                    kind, plain = dataedit._unpack(original, ent.path)
+                    new, _n = dataedit.OPS[edit.op](plain, edit.params)
+                    if len(new) != len(plain):
+                        grew += 1
+                    if new != plain:
+                        moved += 1
+                hit[edit.scope] = (names, moved, grew)
+
+            names, moved, grew = hit["enemy_guns"]
+            check("the enemy edit selects exactly the enemy's weapons",
+                  names == theirs, str(sorted(names ^ theirs)[:4]))
+            check("it changes every one of them", moved == len(names),
+                  "%d of %d" % (moved, len(names)))
+            check("and not one file changes length", grew == 0, str(grew))
+
+            names, _moved, grew = hit["ally_guns"]
+            check("your edit selects exactly your side's weapons",
+                  names == yours, str(sorted(names ^ yours)[:4]))
+            check("and keeps every length too", grew == 0, str(grew))
+            check("neither edit touches a shared weapon",
+                  not (hit["ally_guns"][0] & hit["enemy_guns"][0])
+                  and not (shared & hit["ally_guns"][0]),
+                  str(sorted(shared & hit["ally_guns"][0])[:3]))
+
+            # the numbers really move, and in the direction the card promises
+            key = "/" + sorted(theirs)[0].upper()
+            arc, ent = files[key]
+            _kind, plain = dataedit._unpack(arc.read_entry(ent), ent.path)
+            spread = [e for e in edits if e.scope == "enemy_guns"][0]
+            new, _n = dataedit.OPS[spread.op](plain, spread.params)
+            before, after = rseguns.read(plain), rseguns.read(new)
+            wider = [f for f in rseguns.ACCURACY
+                     if f in before and after[f] > before[f]]
+            check("a 200% spread really widens the enemy's cone",
+                  len(wider) >= 6, "%d of 12 widened" % len(wider))
+            check("and leaves the magazine alone",
+                  before.get("MagazineCapacity") == after.get("MagazineCapacity"),
+                  "%s -> %s" % (before.get("MagazineCapacity"),
+                                after.get("MagazineCapacity")))
+
+
+def _width_cases():
+    """The same-width renderer, on the cases that actually occur."""
+    from tcps2 import rseguns
+    print("\n[gun values are rewritten without moving a byte]")
+    cases = [("30", 2.0, "60"), ("30", 0.5, "15"), ("50", 0.1, "05"),
+             ("700", 2.0, "999"), ("475.000000", 2.0, "950.000000"),
+             ("475.000000", 4.0, "1900.00000"), ("5", 0.0, "0")]
+    bad = [(t, f) for t, f, want in cases
+           if rseguns._same_width(t, float(t) * f) != want]
+    check("every value keeps its own width", not bad, str(bad))
+    same = [t for t, f, _w in cases
+            if len(rseguns._same_width(t, float(t) * f) or "") != len(t)]
+    check("including the ones that have to clamp", not same, str(same))
+
+
+def run_lockdown_weapons(args):
+    """Lockdown's weapons page: whose gun is whose, and a scoped edit."""
+    if not args.lockdown:
+        return
+    from tcps2 import nimitz, nimitz_mis, transforms
+    from tcps2.games.lockdown import (ALLY_GUNS, ENEMY_GUNS, PROFILE,
+                                      SHARED_GUNS)
+    from tcps2.iso import Iso
+
+    print("\n[Lockdown -- the weapons page]")
+    cards = [x for x in PROFILE.settings if x.group == "Weapons"]
+    check("there are four cards, two per side", len(cards) == 4, str(len(cards)))
+
+    with Iso(args.lockdown) as iso:
+        pak = nimitz.open_pak(iso)[0]
+        yours, theirs, shared = nimitz_mis.gun_sides(pak)
+        check("the table matches what the disc derives",
+              (set(ALLY_GUNS), set(ENEMY_GUNS), set(SHARED_GUNS))
+              == (yours, theirs, shared),
+              "%d/%d/%d vs %d/%d/%d" % (len(ALLY_GUNS), len(ENEMY_GUNS),
+                                        len(SHARED_GUNS), len(yours),
+                                        len(theirs), len(shared)))
+        check("the two sides do not overlap", not (yours & theirs))
+        # the disc's own naming agrees, without being the authority
+        named = sum(1 for g in theirs if "_enemy" in g)
+        check("and most of the enemy's guns are named for it",
+              named == 21 and not any("_enemy" in g for g in yours),
+              "%d of %d" % (named, len(theirs)))
+
+        blob = pak.read_file("/PS2DATA/BINARY/NIMITZ.GUNS")
+        before = {n: (m, r) for n, m, r in transforms.read_nimitz_guns(blob)}
+
+        vals = dict(PROFILE.defaults())
+        vals["ld_enemy_mag"] = 50
+        edits = [e for e in PROFILE.build_data(vals) if e.op == "nimitz_guns"]
+        check("one dial makes one edit", len(edits) == 1, str(len(edits)))
+        new, n = transforms.scale_nimitz_guns(blob, mag=0.5,
+                                              only=edits[0].params["only"])
+        check("the blob keeps its length", len(new) == len(blob))
+        after = {g: (m, r) for g, m, r in transforms.read_nimitz_guns(new)}
+        moved = [g for g in before if before[g] != after.get(g)]
+        check("it moves only the enemy's weapons",
+              moved and set(moved) <= set(ENEMY_GUNS), str(sorted(moved)[:4]))
+        check("your squad's are untouched",
+              all(before[g] == after[g] for g in ALLY_GUNS if g in before))
+        check("and so are the ones both sides carry",
+              all(before[g] == after[g] for g in SHARED_GUNS if g in before))
+        check("the magazines really halve", n > 0, str(n))
 
 
 if __name__ == "__main__":

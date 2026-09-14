@@ -665,13 +665,22 @@ def bump_nimitz_skills(blob: bytes, steps: int, hostile_only: bool = True,
     return bytes(out), changed
 
 
-def scale_nimitz_guns(blob: bytes, mag: float = 1.0, rpm: float = 1.0):
-    """Scale magazine capacity and rate of fire in place, u16 each."""
+def scale_nimitz_guns(blob: bytes, mag: float = 1.0, rpm: float = 1.0,
+                      only=None):
+    """Scale magazine capacity and rate of fire in place, u16 each.
+
+    `only` is a set of `.gun` names to touch -- which is how the weapons page
+    reaches one side without the other, since every weapon in this game lives
+    in the same `NIMITZ.GUNS` blob rather than in a file of its own.
+    """
     if abs(mag - 1.0) < 1e-6 and abs(rpm - 1.0) < 1e-6:
         return blob, 0
+    pick = {n.lower() for n in only} if only else None
     out = bytearray(blob)
     changed = 0
     for name, start, end in _nimitz_records(blob, b".gun"):
+        if pick is not None and name.lower() not in pick:
+            continue
         base = _nimitz_gun_body(blob, start)
         for off, factor in ((NIMITZ_GUN_MAG, mag), (NIMITZ_GUN_RPM, rpm)):
             p = base + off
