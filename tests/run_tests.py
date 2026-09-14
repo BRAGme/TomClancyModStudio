@@ -166,8 +166,63 @@ def run_lockdown(args):
         check("scaling is applied", after_g["m249.gun"] == (300, 1000),
               str(after_g["m249.gun"]))
 
+        run_lockdown_psx(pak)
+
     check("an all-default config writes nothing",
           profile.build_data(dict(profile.defaults())) == [])
+
+
+def run_lockdown_psx(pak):
+    """The `.PSX` texture decode.
+
+    The swizzle is two GS addressings composed, so the one invariant that
+    catches a transcription slip in either of them is that the composed order
+    must be a permutation: every source byte used exactly once. A wrong column
+    or page term collides instead, which is silent in a thumbnail but not here.
+    """
+    from tcps2 import psx
+
+    print("\n[Lockdown -- .PSX textures]")
+    for w, h, tw in ((256, 256, 512), (512, 512, 2048), (256, 128, 256),
+                     (128, 128, 64), (128, 64, 64), (64, 64, 32), (32, 32, 16)):
+        order = psx._order(w, h, tw)
+        check("the %dx%d order is a permutation" % (w, h),
+              sorted(order) == list(range(w * h)))
+
+    # every shipped geometry must agree with the header's own consistency rule
+    shapes, bad = set(), []
+    for name, ent in pak.files.items():
+        if not name.upper().endswith(".PSX"):
+            continue
+        head = pak.read_entry(ent)[:70]
+        if len(head) < 70:
+            continue
+        w, h, tw, th, sel = psx.header(head)
+        if sel != 8:
+            continue
+        shapes.add((w, h, tw, th))
+        if tw * th * 4 != w * h:
+            bad.append(name)
+    check("every 8-bit .PSX transfer carries exactly w*h bytes", not bad,
+          str(bad[:3]))
+    check("the disc uses the seven known geometries", len(shapes) == 7,
+          str(sorted(shapes)))
+
+    logo = psx.to_image(pak.read_file("/PS2DATA/SHELL/ART/LOCKDOWN_SMALL.PSX"))
+    check("the wordmark decodes", logo is not None and logo.size == (256, 256),
+          str(logo.size if logo else None))
+    if logo is not None:
+        # Counting opaque pixels proves nothing: the swizzle is a permutation,
+        # so every ordering -- right or wrong -- has the identical alpha
+        # histogram. What separates them is WHERE those pixels land. A correct
+        # unswizzle gathers the mark into a band; a wrong one smears it to all
+        # four edges. Measured: 62% of the height correct, 98-100% wrong.
+        alpha = logo.split()[-1]
+        box = alpha.point(lambda v: 255 if v > 40 else 0).getbbox()
+        tall = (box[3] - box[1]) / float(logo.height) if box else 1.0
+        check("the mark is gathered, not smeared across the square",
+              box is not None and tall < 0.80,
+              "alpha bbox spans %.0f%% of the height" % (100 * tall))
 
 
 def run_raw_and_data(args, work):

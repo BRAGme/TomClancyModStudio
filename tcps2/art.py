@@ -181,6 +181,18 @@ EMBLEM_WORDMARK = {
                                ("arialbd.ttf", "ariblk.ttf", "segoeuib.ttf")),
 }
 
+#: Lockdown keeps its real menu art in PS2DATA.PAK as `.PSX` textures. Those
+#: decode to full RGBA (see `psx.py`), so its mark needs none of the luminance
+#: keying the games that only ship a flattened loading screen do.
+PSX_BANNERS = {
+    "lockdown_slus21144": ["/PS2DATA/SHELL/ART/LOADING01.PSX",
+                           "/PS2DATA/SHELL/ART/LOADING07.PSX",
+                           "/PS2DATA/SHELL/ART/LOADING09.PSX"],
+}
+PSX_EMBLEM = {
+    "lockdown_slus21144": "/PS2DATA/SHELL/ART/LOCKDOWN_SMALL.PSX",
+}
+
 #: the game's own menu art, by name, inside its archives
 ARCHIVE_BANNERS = {
     "ghost_recon_slus20613": ["/MAIN_MENU_PS2.RSB", "/SHELL_BGD_PS2.RSB",
@@ -189,6 +201,25 @@ ARCHIVE_BANNERS = {
                                "/LOAD_NEW_2.RSB"],
     "soaf_sles51180": ["/MAIN_MENU_PS2.RSB"],
 }
+
+
+def psx_image(iso, profile, name):
+    """Decode one `.PSX` out of Lockdown's PS2DATA.PAK, or None."""
+    if not name:
+        return None
+    try:
+        from . import psx
+        from .nimitz import NimitzPak
+    except ImportError:
+        return None
+    try:
+        pak = NimitzPak(iso)
+        ent = pak.files.get(name)
+        if ent is None:
+            return None
+        return psx.to_image(pak.read_entry(ent))
+    except Exception:                             # noqa: BLE001
+        return None
 
 
 def raw_image(iso, profile_id):
@@ -260,7 +291,13 @@ def banner_image(detection, cache_dir=None):
     try:
         from .iso import Iso
         with Iso(detection.path) as iso:
-            img = raw_image(iso, profile.id)
+            for name in PSX_BANNERS.get(profile.id, []):
+                img = psx_image(iso, profile, name)
+                if img is not None:
+                    img = img.convert("RGB")
+                    break
+            if img is None:
+                img = raw_image(iso, profile.id)
             for pat in ([] if img is not None
                         else BANNER_PREFERENCE.get(profile.id, [])):
                 img = find_fbz(iso, pat, profile.archive_pattern)
@@ -300,9 +337,15 @@ def emblem_image(detection, cache_dir=None):
         return None
 
     img = None
+    # a mark decoded from a .PSX arrives with the game's own alpha, so it must
+    # not go through the luminance key -- that would throw the real cutout away
+    # and rebuild a worse one from brightness
+    already_cut = False
     try:
         with Iso(detection.path) as iso:
-            raw = raw_image(iso, profile.id)
+            img = psx_image(iso, profile, PSX_EMBLEM.get(profile.id))
+            already_cut = img is not None
+            raw = None if img is not None else raw_image(iso, profile.id)
             if raw is not None and profile.id in RAW_EMBLEM:
                 img = _crop_frac(raw, RAW_EMBLEM[profile.id])
             pats, box = EMBLEM.get(profile.id, (None, None))
@@ -335,6 +378,18 @@ def emblem_image(detection, cache_dir=None):
         return None
     if img is None:
         return None
+
+    if already_cut:
+        rgba = img.convert("RGBA")
+        box = rgba.split()[-1].point(lambda a: 255 if a > 40 else 0).getbbox()
+        if box and (box[2] - box[0]) > 8 and (box[3] - box[1]) > 8:
+            rgba = rgba.crop(box)
+        if cached:
+            try:
+                rgba.save(cached, "PNG")
+            except Exception:                     # noqa: BLE001
+                pass
+        return rgba
 
     mode, floor, gain = EMBLEM_MODE.get(profile.id, ("key", 118, 3.2))
     img = img.convert("RGB")
