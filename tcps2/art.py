@@ -354,6 +354,15 @@ def emblem_image(detection, cache_dir=None):
     mark = EMBLEM_WORDMARK.get(profile.id)
     if mark:
         rgba = _stamp_wordmark(rgba, mark[0], mark[1])
+    # Trim the fully transparent margin the key leaves behind. Without this a
+    # mark that does not fill its own source -- Jungle Storm's ring sits in a
+    # square of empty space -- is scaled to fit that empty space rather than to
+    # fit itself, and ends up noticeably smaller than the wordmarks beside it.
+    # threshold first: the key leaves a faint haze all the way to the edges on
+    # some marks, and a plain getbbox() then trims nothing at all
+    box = rgba.split()[-1].point(lambda a: 255 if a > 40 else 0).getbbox()
+    if box and (box[2] - box[0]) > 8 and (box[3] - box[1]) > 8:
+        rgba = rgba.crop(box)
     if cached:
         try:
             rgba.save(cached, "PNG")

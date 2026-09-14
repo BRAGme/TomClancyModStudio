@@ -34,7 +34,11 @@ PRESET_HINT = "Choose a preset…"
 VERSION = "1.1"
 NOTES_TAB = "About this disc"
 
-HEADER = 132
+# A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
+# limited by the header's HEIGHT, not its width, so the wide wordmarks were
+# filling their box while the square ones sat well under it. A taller band
+# costs the wide marks nothing and gives the square ones room.
+HEADER = 148
 ACTION_H = 46
 LOG_H = 88
 GUTTER = 22
