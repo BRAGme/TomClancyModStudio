@@ -18,7 +18,7 @@ pulled out of the user's own disc at run time and cached, never redistributed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass
@@ -122,10 +122,21 @@ JS = Palette(
     glyph_triangle="#46b79c",
 )
 
+#: Advanced Warfighter is Rainbow Six 3's engine and its menus follow that
+#: house style, so it wears the same gunmetal chrome. Sum of All Fears is the
+#: Red Storm shell like the Ghost Recons, in its own colour.
+GRAW = replace(RS3)
+
+SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
+               panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#5a7d60",
+               sel_text="#16241a")
+
 BY_PROFILE = {
     "r6_3_slus20883": RS3,
     "ghost_recon_slus20613": GR,
     "jungle_storm_slus20820": JS,
+    "graw_slus21422": GRAW,
+    "soaf_sles51180": SOAF,
 }
 
 DEFAULT = RS3

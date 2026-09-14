@@ -16,6 +16,11 @@ import struct
 
 SECTOR = 2048
 
+#: (raw sector size, offset of the 2048 user bytes within it). A plain .iso is
+#: (2048, 0); a CloneCD-style MODE2/2352 .bin carries 2,352-byte sectors with
+#: the user data 24 bytes in, and Sum of All Fears ships that way.
+GEOMETRIES = ((2048, 0), (2352, 24), (2352, 16), (2336, 8))
+
 
 class IsoError(Exception):
     pass
@@ -46,7 +51,23 @@ class Iso:
         self.writable = writable
         self.fh = open(self.path, "r+b" if writable else "rb")
         self._entries = None
+        self.raw_sector, self.data_off = self._find_geometry()
         self._check_pvd()
+
+    def _find_geometry(self):
+        """Work out the sector layout by looking for CD001 at sector 16."""
+        for raw, off in GEOMETRIES:
+            try:
+                self.fh.seek(16 * raw + off)
+                if self.fh.read(6)[1:6] == b"CD001":
+                    return raw, off
+            except OSError:
+                continue
+        return 2048, 0            # let _check_pvd produce the real complaint
+
+    @property
+    def interleaved(self):
+        return self.raw_sector != SECTOR or self.data_off != 0
 
     # -- lifecycle ---------------------------------------------------------
     def close(self):
@@ -61,20 +82,53 @@ class Iso:
     def __exit__(self, *exc):
         self.close()
 
-    # -- raw sectors -------------------------------------------------------
-    def read(self, lba, n):
-        self.fh.seek(lba * SECTOR)
-        return self.fh.read(n)
+    # -- sectors -----------------------------------------------------------
+    # Everything above this line works in the LOGICAL address space -- the flat
+    # stream of 2,048-byte user areas -- and these three translate it to wherever
+    # the bytes really sit. On a plain .iso that is a straight seek; on a 2,352-
+    # byte CD image it has to step sector by sector.
 
-    def read_at(self, byte_offset, n):
-        self.fh.seek(byte_offset)
-        return self.fh.read(n)
+    def read_logical(self, offset, n):
+        if not self.interleaved:
+            self.fh.seek(offset)
+            return self.fh.read(n)
+        out = bytearray()
+        while n > 0:
+            lba, within = divmod(offset, SECTOR)
+            take = min(n, SECTOR - within)
+            self.fh.seek(lba * self.raw_sector + self.data_off + within)
+            chunk = self.fh.read(take)
+            if not chunk:
+                break
+            out += chunk
+            offset += len(chunk)
+            n -= len(chunk)
+        return bytes(out)
 
-    def write(self, lba, data):
+    def write_logical(self, offset, data):
         if not self.writable:
             raise IsoError("ISO opened read-only")
-        self.fh.seek(lba * SECTOR)
-        self.fh.write(data)
+        if not self.interleaved:
+            self.fh.seek(offset)
+            self.fh.write(data)
+            return
+        view = memoryview(data)
+        while view:
+            lba, within = divmod(offset, SECTOR)
+            take = min(len(view), SECTOR - within)
+            self.fh.seek(lba * self.raw_sector + self.data_off + within)
+            self.fh.write(view[:take])
+            view = view[take:]
+            offset += take
+
+    def read(self, lba, n):
+        return self.read_logical(lba * SECTOR, n)
+
+    def read_at(self, byte_offset, n):
+        return self.read_logical(byte_offset, n)
+
+    def write(self, lba, data):
+        self.write_logical(lba * SECTOR, data)
 
     def flush(self):
         self.fh.flush()
@@ -104,8 +158,7 @@ class Iso:
     def _walk(self, lba, length, prefix, out, depth):
         if depth > 8:
             return
-        self.fh.seek(lba * SECTOR)
-        data = self.fh.read(length)
+        data = self.read(lba, length)
         o = 0
         while o < len(data):
             rec_len = data[o]

@@ -27,6 +27,10 @@ from __future__ import annotations
 
 import struct
 
+#: record sizes seen in the wild, tried in this order. Rainbow Six 3, Ghost
+#: Recon and Jungle Storm use 48-byte records; Sum of All Fears uses 40, with
+#: the same fields up to +0x24 and one trailing unknown word instead of three.
+REC_SIZES = (48, 40)
 REC = 48
 
 
@@ -52,7 +56,7 @@ class Region:
 
     @classmethod
     def from_iso(cls, iso, entry):
-        return cls(iso.fh, entry.lba * 2048, entry.path.lstrip("/"))
+        return IsoRegion(iso, entry.lba * 2048, entry.path.lstrip("/"))
 
     def read(self, off, n):
         self.fh.seek(self.base + off)
@@ -67,6 +71,24 @@ class Region:
             self.fh.close()
 
 
+class IsoRegion(Region):
+    """A region addressed through an ISO's logical view.
+
+    Needed because a 2,352-byte CD image is not a flat stream -- the archive's
+    own offsets are logical, and only the ISO knows how to reach them.
+    """
+
+    def __init__(self, iso, base, name):
+        super().__init__(iso.fh, base, name)
+        self.iso = iso
+
+    def read(self, off, n):
+        return self.iso.read_logical(self.base + off, n)
+
+    def write(self, off, data):
+        self.iso.write_logical(self.base + off, data)
+
+
 class Entry:
     __slots__ = ("index", "path", "size", "offset")
 
@@ -78,7 +100,7 @@ class Entry:
 
 
 class Vokes:
-    def __init__(self, region: Region):
+    def __init__(self, region: Region, rec_size=None):
         self.r = region
         h = struct.unpack("<16I", region.read(0, 64))
         self.filesize = h[0]
@@ -88,18 +110,41 @@ class Vokes:
             raise VokesError("%s: not a vokes archive (table at 0x%x..0x%x)"
                              % (region.name, self.ent_off, self.ent_end))
         span = self.ent_end - self.ent_off
-        if span % REC:
-            raise VokesError("%s: entry table %d bytes is not a multiple of %d"
-                             % (region.name, span, REC))
-        self.count = span // REC
         self.ent = bytearray(region.read(self.ent_off, span))
         self.names = region.read(self.name_off, self.data_off - self.name_off)
+        self.rec_size = rec_size or self._guess_rec_size(span)
+        self.count = span // self.rec_size
         self.files: dict[str, Entry] = {}
         self._build()
 
+    def _guess_rec_size(self, span):
+        """Pick the record size that divides the table and yields real files.
+
+        Both candidates share their first 0x24 bytes, so the test is simply
+        whether the entries that claim to be files point at plausible data.
+        """
+        best = None
+        for size in REC_SIZES:
+            if span % size:
+                continue
+            n = span // size
+            good = 0
+            for i in range(1, min(n, 64)):
+                r = struct.unpack_from("<%dI" % (size // 4), self.ent, i * size)
+                is_file, length, off = r[5], r[6], r[8]
+                if is_file == 1 and 0 < length and                         self.data_start <= off <= self.filesize:
+                    good += 1
+            if best is None or good > best[0]:
+                best = (good, size)
+        if best is None or best[0] == 0:
+            raise VokesError("%s: entry table %d bytes fits no known record size"
+                             % (self.r.name, span))
+        return best[1]
+
     # -- records -----------------------------------------------------------
     def rec(self, i):
-        return struct.unpack("<12I", self.ent[i * REC:(i + 1) * REC])
+        n = self.rec_size // 4
+        return struct.unpack_from("<%dI" % n, self.ent, i * self.rec_size)
 
     def _name(self, off):
         end = self.names.find(b"\0", off)
@@ -131,12 +176,23 @@ class Vokes:
     # -- writing -----------------------------------------------------------
     ALIGN = 16
 
-    def _set_entry(self, e, offset, size):
-        base = e.index * REC
+    def _set_entry(self, e, offset, size, raw_size=None):
+        """Rewrite one record's size, second size and data offset.
+
+        The two size fields are equal in Rainbow Six 3 and the two Ghost Recons.
+        Sum of All Fears uses the second as the DECOMPRESSED length of a
+        per-entry-compressed file, so it is only overwritten when the caller
+        says what the new decompressed length is, or when the pair was equal to
+        begin with.
+        """
+        base = e.index * self.rec_size
+        old_size, old_raw = self.rec(e.index)[6], self.rec(e.index)[7]
+        second = raw_size if raw_size is not None else (
+            size if old_size == old_raw else old_raw)
         struct.pack_into("<I", self.ent, base + 0x18, size)
-        struct.pack_into("<I", self.ent, base + 0x1C, size)
+        struct.pack_into("<I", self.ent, base + 0x1C, second)
         struct.pack_into("<I", self.ent, base + 0x20, offset)
-        self.r.write(self.ent_off + base + 0x18, struct.pack("<II", size, size))
+        self.r.write(self.ent_off + base + 0x18, struct.pack("<II", size, second))
         self.r.write(self.ent_off + base + 0x20, struct.pack("<I", offset))
         e.offset, e.size = offset, size
 
@@ -202,7 +258,7 @@ class Vokes:
                          "no file claims -- refusing to write over it"
                          % (self.r.name, size))
 
-    def write(self, path, data):
+    def write(self, path, data, raw_size=None):
         """Replace a file, relocating it if it has outgrown its slot.
 
         Small enough, and it goes back where it was. Too big, and it moves to
@@ -219,7 +275,7 @@ class Vokes:
         old_off, old_size = e.offset, e.size
         dest = self.allocate(len(data), exclude=e)
         self.r.write(dest, data)
-        self._set_entry(e, dest, len(data))
+        self._set_entry(e, dest, len(data), raw_size)
         # Release the old run -- but only the part of it the new one does not
         # occupy. The allocator is allowed to grow a file into its own slot plus
         # the gap next to it, and blindly zeroing the old range would then wipe

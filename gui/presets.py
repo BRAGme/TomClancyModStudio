@@ -155,6 +155,8 @@ JUNGLE_STORM = [
 
 PRESETS = {
     "r6_3_slus20883": R6_3,
+    "graw_slus21422": [],
+    "soaf_sles51180": [],
     "ghost_recon_slus20613": GHOST_RECON,
     "jungle_storm_slus20820": JUNGLE_STORM,
 }

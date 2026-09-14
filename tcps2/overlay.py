@@ -89,8 +89,7 @@ class RawOverlay:
 
     def store(self):
         for va, value in self._dirty.items():
-            self.iso.fh.seek(self._off(va))
-            self.iso.fh.write(struct.pack("<I", value))
+            self.iso.write_logical(self._off(va), struct.pack("<I", value))
         self.iso.flush()
         self._dirty.clear()
 
