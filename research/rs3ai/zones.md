@@ -466,3 +466,59 @@ That is the next question worth answering, and it is a different kind of
 question from this one: not "is there room" but "is there a function whose
 bytecode has room for a spawn call". Nothing so far has needed an
 UnrealScript disassembler; that one does.
+
+## The disassembler: stalled, and where
+
+Attempted, not delivered. The blocker is one step earlier than expected and is
+worth recording precisely, because three of the four findings below contradict
+what this file previously assumed.
+
+**1. The per-export offsets are NOT garbage.** This file says the cooker
+relaid the summary's table offsets, which is true and is why `tables()` walks.
+But the *per-export* `offset` fields in `COMMON.LIN` are perfectly
+self-consistent: across the 7,364 exports of the script package, **7,363 of
+7,363 consecutive pairs satisfy `offset + size == next offset`**, and the sizes
+sum to exactly the span, 2,321,838 bytes. That is not something that happens by
+accident. The offsets describe a real, contiguous layout.
+
+**2. The package contains no data.** Walking that package's header, name,
+import and export tables ends at `0xc895d`, which is exactly where the next
+package signature begins. So the script package is header-and-tables only, and
+its 2.3 MB of object data lives somewhere else in the file.
+
+**3. The offsets are relative to a base that has not been found.** Reading at
+the offsets as written gives content that cannot be what the export table says
+it is. `R6IOAlarmSystem`, a Class of 119 bytes, reads as
+
+    03 02 02 02 01 01 01 01 ... 07 07 08 08 08 08
+
+a smooth 0-8 ramp -- an envelope or a curve, not a default-property list.
+
+**4. The obvious bases do not work.** Scoring a stock UE2 `UFunction` layout
+(SuperField, Next, ScriptText, Children, Line, TextPos, ScriptSize, script)
+across all 2,061 Functions, at every candidate base -- end of file, immediately
+before each of the 132 package signatures, and zero -- fits **under 20% at
+every one**. Either the base is somewhere not yet guessed, or this cook's
+UFunction layout differs from stock, or both. `research/code/exportdata.py`
+holds the search so it can be rerun with new candidates.
+
+### What that means for the pickup
+
+It does not change the resource arithmetic -- those numbers came from the
+export TABLE, which parses cleanly and is what the budget was measured from.
+It does mean the remaining question, "is there a function whose bytecode has
+room for a spawn call", cannot be answered until object data can be located.
+
+So the order of work has changed. It is no longer "write a disassembler"; it
+is:
+
+1. **Find the export data region.** The strongest lead is that the offsets
+   tile exactly, so the region is contiguous and 2,321,838 bytes long. Finding
+   one object whose content is recognisable -- a Texture with a known size, a
+   Sound, a StrProperty whose string is readable -- pins the base immediately,
+   and then every other object follows from the tiling.
+2. Only then, fit the `UFunction` header and write the opcode table.
+
+Step 1 is a search with a strong constraint and a self-checking answer: get
+the base right and 7,364 objects land correctly at once, which is a much
+better position than fitting a bytecode layout blind.
