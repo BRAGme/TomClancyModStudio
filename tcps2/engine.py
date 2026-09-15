@@ -420,9 +420,24 @@ def pnach_text(profile, words, crc) -> str:
     return "\n".join(lines) + "\n"
 
 
+#: `patch=<place>,EE,<address>,<type>,<value>`, the only form these files use.
+PATCH_LINE = re.compile(r"\s*patch\s*=\s*\d+\s*,\s*EE\s*,\s*([0-9a-fA-F]+)\s*,", re.I)
+
+
 def write_pnach(path, profile, words, crc) -> str:
-    """Write or update a .pnach, preserving any lines outside our block."""
-    kept = []
+    """Write or update a .pnach, preserving any lines outside our block.
+
+    Outside lines that patch an address the managed block also patches are
+    dropped rather than kept. A hand-written copy of what the tool now emits is
+    the normal case -- these patches started life as notes pasted into the file
+    by hand -- and keeping both is not harmless. A `place=1` patch is re-applied
+    every vsync, and every write into a page of EE RAM holding recompiled code
+    throws that code away and makes the emulator build it again; two copies is
+    twice that churn, on game code, during the level load that is already the
+    busiest the recompiler ever gets.
+    """
+    mine = {w.va for w in words}
+    kept, superseded = [], 0
     if os.path.exists(path):
         inside = False
         for line in open(path, "r", encoding="utf-8", errors="replace"):
@@ -433,8 +448,16 @@ def write_pnach(path, profile, words, crc) -> str:
             if s.startswith(END):
                 inside = False
                 continue
-            if not inside and not s.startswith("gametitle="):
-                kept.append(s)
+            if inside or s.startswith("gametitle="):
+                continue
+            m = PATCH_LINE.match(s)
+            if m and int(m.group(1), 16) in mine:
+                if not superseded:
+                    kept.append("// (patch lines for addresses the managed block "
+                                "above already sets were removed from here)")
+                superseded += 1
+                continue
+            kept.append(s)
     body = pnach_text(profile, words, crc)
     extra = "\n".join(l for l in kept if l.strip())
     text = body + (("\n" + extra + "\n") if extra else "")

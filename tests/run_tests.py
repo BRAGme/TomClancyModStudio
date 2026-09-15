@@ -1122,6 +1122,24 @@ def run(args, work):
     check("rewriting does not duplicate the block",
           open(path, encoding="utf-8").read().count("patch=1,EE,") == 68)
 
+    # A hand-written copy of the same patches sitting below our block is the
+    # normal case -- that is how these started life. Keeping it doubles the
+    # per-vsync writes into pages of EE RAM that hold recompiled game code,
+    # which costs most during a level load.
+    hand = "\n".join(["// my own notes"] +
+                     ["patch=1,EE,%08x,word,%08x" % (w.va, w.value) for w in words] +
+                     ["patch=1,EE,20653778,extended,00000001"])
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("\n" + hand + "\n")
+    engine.write_pnach(path, PROFILE, words, "21CC1EC3")
+    after = open(path, encoding="utf-8").read()
+    addrs = re.findall(r"patch=\d+,EE,([0-9a-fA-F]+),", after)
+    check("a hand-written duplicate of our own patches is dropped",
+          len(addrs) == len(set(addrs)) == 69)
+    check("an unrelated hand-written patch is kept",
+          "20653778" in addrs)
+    check("hand-written comments are kept", "// my own notes" in after)
+
     print("\n[crc]")
     check("the PCSX2 CRC is an XOR of every word",
           engine.pcsx2_crc(b"\x01\x00\x00\x00\x02\x00\x00\x00") == "00000003")
