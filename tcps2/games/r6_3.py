@@ -28,8 +28,8 @@ from __future__ import annotations
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
-from .. import (rsecanon, rsedraw, rseloadout, rsemandown, rserpg, rseshadow,
-                rsesidearm, rsescope, rsewheel)
+from .. import (rsecanon, rsechatter, rsedraw, rseloadout, rsemandown, rserpg,
+                rseshadow, rsesidearm, rsescope, rsewheel)
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -580,6 +580,7 @@ def _settings():
                      "shipped code does not say so. The Enemy Behaviour page "
                      "raises their skill and their never-miss range for both "
                      "modes at once, which is the lever that does exist."),
+    ] + rsechatter.cards("", TEAM_GROUP) + [
         rsemandown.card("", "Split Screen"),
         rsecanon.card("", "Split Screen"),
         Setting("teammates", "AI teammates in split screen", BOOL, False,
@@ -805,6 +806,14 @@ def build_data(v: dict) -> list:
                             {"chance": sidearm, "in_contact": contact,
                              "say_chance": say},
                             "; ".join(notes)))
+    chatter = int(v.get("ss_chatter_kill", 0))
+    if chatter:
+        # COMMON_SS.LIN only, same reason as the canon team below.
+        out.append(FileEdit("ss_chatter", r"/COMMON_SS\.LIN$", "",
+                            {"chance": chatter,
+                             "hostage": bool(v.get("ss_chatter_hostage", True))},
+                            "split screen: %d%% chance player 2 calls out a kill"
+                            % chatter))
     if v.get("canon_team"):
         # COMMON_SS.LIN only: that IS the split-screen package, which is what
         # keeps single player and Terrorist Hunt untouched by construction.

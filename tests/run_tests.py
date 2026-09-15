@@ -2209,8 +2209,8 @@ def run_split_wheel(args):
     play-test, and the option says so.
     """
     import re
-    from tcps2 import (dataedit, lin, rsecanon, rsemandown, rsesidearm,
-                        rsewheel, uscode)
+    from tcps2 import (dataedit, lin, rsecanon, rsechatter, rsemandown,
+                       rsesidearm, rsewheel, uscode)
     from tcps2.games import BY_ID
     from tcps2.iso import Iso
     from tcps2.vokes import open_archives
@@ -2388,6 +2388,42 @@ def run_split_wheel(args):
                 mpacked = dataedit._repack(kind, raw, md)
                 check("%s: the container survives the call-out edit" % path[1:],
                       len(mpacked) == len(raw))
+
+                # player 2 calling out player 1's kills
+                cat = rsechatter.find_block(plain)
+                check("%s: the player kill handler is located" % path[1:],
+                      cat == 0x10B5B5, "found %#x" % cat)
+                check("%s: and reads as stock" % path[1:],
+                      rsechatter.reads(plain) == (0, False))
+                check("%s: a chance of 0 leaves it alone" % path[1:],
+                      rsechatter.apply(plain, 0) == (plain, 0))
+                ch, cn2 = rsechatter.apply(plain, 35)
+                check("%s: the chatter edit keeps the length" % path[1:],
+                      cn2 == 1 and len(ch) == len(plain))
+                check("%s: and reads back the chance it was given" % path[1:],
+                      rsechatter.reads(ch) == (35, True))
+                check("%s: the hostage arm can be left out" % path[1:],
+                      rsechatter.reads(rsechatter.apply(plain, 35, False)[0])
+                      == (35, False))
+                check("%s: applying it twice is a no-op" % path[1:],
+                      rsechatter.apply(ch, 35) == (ch, 0))
+                check("%s: an over-range chance is clamped" % path[1:],
+                      rsechatter.reads(rsechatter.apply(plain, 500)[0])[0]
+                      == rsechatter.MAX_CHANCE)
+                cspan = uscode.Script.at(plain, cat).disk_len + 4
+                coutside = [i for i in range(len(plain))
+                            if plain[i] != ch[i] and not (cat <= i < cat + cspan)]
+                check("%s: and nothing outside that function moves" % path[1:],
+                      not coutside, "%d bytes elsewhere" % len(coutside))
+                # the three dead calls must all be gone, and the speaker built
+                news = [t for t in uscode.Script.at(ch, cat).statements()
+                        if t.op == rsechatter.EX_CONTEXT
+                        and t.parts[0][1].op == rsechatter.EX_NEW]
+                check("%s: all three call-outs build their own voice" % path[1:],
+                      len(news) == 3, "%d" % len(news))
+                cpacked = dataedit._repack(kind, raw, ch)
+                check("%s: the container survives the chatter edit" % path[1:],
+                      len(cpacked) == len(raw))
 
                 # the canon split-screen team -- COMMON_SS.LIN only
                 if path == "/COMMON_SS.LIN":

@@ -125,6 +125,12 @@ def _op_canon_team(plain, params):
     return rsecanon.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_ss_chatter(plain, params):
+    from . import rsechatter
+    return rsechatter.apply(plain, int(params.get("chance", 0)),
+                            bool(params.get("hostage", True)))
+
+
 def _op_ss_man_down(plain, params):
     from . import rsemandown
     return rsemandown.apply(plain, bool(params.get("enable", True)))
@@ -180,6 +186,7 @@ OPS = {
     "split_wheel": _op_split_wheel,
     "ai_sidearm": _op_ai_sidearm,
     "ss_man_down": _op_ss_man_down,
+    "ss_chatter": _op_ss_chatter,
     "canon_team": _op_canon_team,
     "split_cycle": _op_split_cycle,
     "split_draw": _op_split_draw,
