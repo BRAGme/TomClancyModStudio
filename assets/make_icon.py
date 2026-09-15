@@ -7,10 +7,13 @@ sits next to it in the same folder on the same taskbar, so it keeps the reticle
 -- they are siblings and should look it -- and changes the two things that tell
 icons apart at 16 pixels: the **hue**, and the **silhouette**.
 
-  Hue        teal rather than green. It is the colour this tool actually wears
-             -- GRAW's tactical display and Ghost Recon's HUD ring are both in
-             this family -- and green against teal is unmistakable at any size,
-             where green against green is not.
+  Hue        BLUE rather than green. Teal was the first answer and it was the
+             wrong one: #3ec8d8 is a blue-green, and at 16 pixels on a dark
+             plate it reads as green to anyone not holding the two icons side
+             by side -- which is exactly the situation the hue exists for.
+             Blue has no such failure mode against green, and it is the colour
+             this tool wears anyway: Ghost Recon's Xbox shell measures #384878
+             and its accent here is #6f8fd8.
 
   Silhouette four corner brackets around the reticle. Those are the games' own:
              every briefing screenshot in Ghost Recon and Island Thunder is
@@ -34,10 +37,10 @@ from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-PLATE = (17, 22, 26, 255)     # near-black, a shade cooler than the PS2 one
-EDGE = (44, 60, 66, 255)
-INK = (62, 200, 216, 255)     # the teal
-INK_DIM = (36, 122, 134, 255)
+PLATE = (16, 20, 30, 255)     # near-black with a blue cast, not the PS2 grey
+EDGE = (44, 56, 78, 255)
+INK = (90, 160, 240, 255)     # the blue, a shade brighter than the skin's
+INK_DIM = (48, 92, 150, 255)
 
 SIZES = (256, 128, 64, 48, 32, 24, 16)
 

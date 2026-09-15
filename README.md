@@ -219,10 +219,16 @@ stem, because the two do not always agree -- `m10_ruined_city.mis` asks for
 ## The icon
 
 `python assets\make_icon.py` redraws it. It is the PS2 tool's reticle -- they
-are siblings and should look it -- in **teal instead of green**, inside the four
+are siblings and should look it -- in **blue instead of green**, inside the four
 corner brackets Ghost Recon prints around every briefing screenshot. Hue and
 silhouette are the two things that tell icons apart at 16 pixels, and both
 differ.
+
+It was teal first, and teal was wrong. `#3ec8d8` is a blue-green, and at 16
+pixels on a dark plate it reads as green to anyone who is not holding the two
+icons side by side -- which is the exact situation the hue exists for. Blue has
+no such failure mode against green, and it is the colour this tool wears anyway:
+Ghost Recon's Xbox shell measures `#384878`.
 
 The sizes under 32 pixels are drawn again rather than downsampled from the 256.
 A big drawing resampled that far turns the ring into a smudge and the brackets
