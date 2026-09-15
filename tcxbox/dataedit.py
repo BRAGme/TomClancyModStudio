@@ -1,0 +1,374 @@
+"""Applying and undoing edits to the files in an extracted game folder.
+
+The shape is the same as the PS2 tool's: a profile hands over a list of
+`FileEdit`s, each naming a transform and a regex over the folder's keys, and
+this module runs them, remembers every original, and can put them all back.
+
+Two things are different, and both make it safer.
+
+**There is no archive to relocate inside.** A loose file is written straight to
+disk; a glob member or a `.umd` slot is written in place at the byte it already
+occupies. So there is no free-space pool to exhaust and no entry that can end up
+pointing somewhere else. The cost is that a file in a fixed slot must keep its
+length -- and that is checked per key, not globally, which is what lets the
+`.ASS` server scripts, which exist only loose in every one of these games, be
+rewritten with values of a different width.
+
+**A logical file may live in more than one place.** `gamedir.Root` keys loose
+copies and packed copies separately but `Root.write` writes all the copies of a
+key, so the loose `mission\\m01_caves.mis` and the copy inside `ikedata.glb`
+cannot drift apart.
+
+Originals go into a sidecar folder beside the game folder before the first
+change, so undoing puts every file back byte for byte a month later.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+from . import rseguns, transforms
+
+MANIFEST = "data-edits.json"
+
+
+class DataEditError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# the named operations a profile can ask for
+# ---------------------------------------------------------------------------
+
+def _op_strip_difficulty(plain, params):
+    return transforms.strip_difficulty(plain, params.get("which",
+                                                         ("Easy", "Normal", "Hard")))
+
+
+def _op_reveal_hidden(plain, params):
+    return transforms.reveal_hidden(plain)
+
+
+def _op_bump_tier(plain, params):
+    return transforms.bump_enemy_tier(plain, int(params.get("steps", 1)))
+
+
+def _op_bump_stats(plain, params):
+    return transforms.bump_atr_stats(plain, int(params.get("steps", 1)),
+                                     stats=params.get("stats", transforms.ATR_STATS))
+
+
+def _op_scale_ballistics(plain, params):
+    return transforms.scale_xml_floats(plain, float(params.get("factor", 1.0)))
+
+
+def _op_xml_text(plain, params):
+    return transforms.set_xml_text(plain, params.get("values", {}))
+
+
+def _op_scale_xml(plain, params):
+    return transforms.scale_xml_floats(
+        plain, float(params.get("factor", 1.0)),
+        prefix=params.get("prefix", "").encode("latin1"),
+        keep_width=bool(params.get("keep_width", True)))
+
+
+def _op_xml_values(plain, params):
+    return transforms.set_xml_values(plain, params.get("values", {}))
+
+
+def _op_gtf_variables(plain, params):
+    return transforms.set_gtf_variables(plain, params.get("values", {}))
+
+
+def _op_ini_values(plain, params):
+    return transforms.set_ini_values(plain, params.get("values", {}))
+
+
+def _op_scale_ini(plain, params):
+    return transforms.scale_ini_values(plain, params.get("factors", {}))
+
+
+def _op_tpt_values(plain, params):
+    return transforms.set_tpt_values(plain, params.get("values", {}),
+                                     scale=params.get("scale"))
+
+
+def _op_grenade_carry(plain, params):
+    return transforms.set_grenade_carry(plain, params.get("percent", 20))
+
+
+def _op_scale_gun(plain, params):
+    return rseguns.scale(plain, params)
+
+
+OPS = {
+    "strip_difficulty": _op_strip_difficulty,
+    "reveal_hidden": _op_reveal_hidden,
+    "bump_tier": _op_bump_tier,
+    "bump_stats": _op_bump_stats,
+    "gtf_variables": _op_gtf_variables,
+    "ini_values": _op_ini_values,
+    "scale_ini": _op_scale_ini,
+    "tpt_values": _op_tpt_values,
+    "grenade_carry": _op_grenade_carry,
+    "scale_ballistics": _op_scale_ballistics,
+    "scale_xml": _op_scale_xml,
+    "xml_text": _op_xml_text,
+    "xml_values": _op_xml_values,
+    "scale_gun": _op_scale_gun,
+}
+
+
+# ---------------------------------------------------------------------------
+# scopes -- narrowing an edit to one side of the war
+# ---------------------------------------------------------------------------
+
+class _View:
+    """`rseguns` and `transforms` were written against the PS2 archive's
+    (archive, entry) pair. A Root key is both, so this is the whole adapter."""
+
+    def __init__(self, root):
+        self.root = root
+
+    def read_entry(self, key):
+        return self.root.read(key)
+
+
+def enemy_template_set(root):
+    """The `.atr` files a mission hands to a non-allied company.
+
+    Ghost Recon and Island Thunder keep the two sets completely disjoint, so
+    scoping a skill edit this way is exact rather than approximate.
+    """
+    names = set()
+    for key in root.match(r"\.MIS$"):
+        try:
+            names |= transforms.enemy_templates(root.read(key))
+        except Exception:                       # noqa: BLE001
+            continue
+    return {n.upper() for n in names}
+
+
+GUN_SCOPES = {"ally_guns": 0, "enemy_guns": 1}
+
+
+def gun_scope_set(root, which):
+    """The base names of one side's `.gun` files.
+
+    `rseguns` keys its census by BASE NAME with a leading slash, because the
+    PS2 archives it was written against are flat. A game folder is not: the
+    same kit is `/EQUIP/AK47 ONLY.KIT` here. Handing it the full key silently
+    produced two empty sides -- the kit stems never matched the names the
+    missions asked for -- so the census is keyed by base name and the real key
+    is carried alongside for reading. Where a name exists both loose and inside
+    a glob the two are byte-identical, so collapsing them loses nothing.
+    """
+    view = _View(root)
+    files = {}
+    for key, f in root.files.items():
+        files.setdefault("/" + f.name, (view, key))
+    picked = rseguns.sides(files)[GUN_SCOPES[which]]
+    return {n.upper() for n in picked}
+
+
+def _scope_filter(root, edit, cache):
+    if not edit.scope:
+        return None
+    if edit.scope in GUN_SCOPES:
+        if edit.scope not in cache:
+            cache[edit.scope] = gun_scope_set(root, edit.scope)
+        allowed = cache[edit.scope]
+    elif edit.scope == "enemy_templates":
+        if "atr" not in cache:
+            cache["atr"] = enemy_template_set(root)
+        allowed = cache["atr"]
+    else:
+        raise DataEditError("unknown scope %r" % edit.scope)
+    return lambda key: root.files[key].name in allowed
+
+
+# ---------------------------------------------------------------------------
+# backup store
+# ---------------------------------------------------------------------------
+
+class Store:
+    """Original bytes for every file we have touched, keyed the same way the
+    folder index is."""
+
+    def __init__(self, folder):
+        self.folder = folder
+        self.path = os.path.join(folder, MANIFEST)
+        self.index = {}
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, encoding="utf-8") as fh:
+                    self.index = json.load(fh)
+            except (OSError, ValueError):
+                self.index = {}
+
+    def _blob(self, key):
+        safe = key.strip("/").replace("/", "__").replace("\\", "__")
+        return os.path.join(self.folder, "orig", safe)
+
+    def remember(self, key, data):
+        if key in self.index:
+            return
+        blob = self._blob(key)
+        os.makedirs(os.path.dirname(blob), exist_ok=True)
+        with open(blob, "wb") as fh:
+            fh.write(data)
+        self.index[key] = {"key": key, "size": len(data)}
+        self.save()
+
+    def original(self, key):
+        if key not in self.index:
+            return None
+        try:
+            with open(self._blob(key), "rb") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    def keys(self):
+        return list(self.index)
+
+    def save(self):
+        os.makedirs(self.folder, exist_ok=True)
+        with open(self.path, "w", encoding="utf-8") as fh:
+            json.dump(self.index, fh, indent=1)
+
+    def forget_all(self):
+        self.index = {}
+        self.save()
+
+
+# ---------------------------------------------------------------------------
+# apply / revert
+# ---------------------------------------------------------------------------
+
+def _is_packed(root, key) -> bool:
+    """True when any copy of this file lives in a fixed slot.
+
+    A loose file may change length freely -- it is its own file on disk. A glob
+    member or a `.umd` slot may not, because its neighbours' positions are
+    implied by its length. Checking per key rather than globally is what lets
+    the `.ASS` server scripts, which exist only loose, be rewritten with values
+    of a different width.
+    """
+    return any(p.packed for p in root.files[key].places)
+
+
+def plan_data(root, edits):
+    """Which keys each edit would rewrite, without touching anything."""
+    rows = []
+    scopes = {}
+    for edit in edits:
+        allowed = _scope_filter(root, edit, scopes)
+        for key in root.match(edit.select):
+            if allowed and not allowed(key):
+                continue
+            rows.append((key, edit))
+    return rows
+
+
+def apply_data(root, edits, store, progress=None):
+    """Run every edit against the folder, starting from the original bytes.
+
+    Starting from the ORIGINAL rather than from what is on disk is what makes
+    this idempotent: applying twice gives the same folder as applying once, and
+    clearing an option really removes it, because the first thing an apply does
+    to a file it has touched before is put the shipped bytes back.
+    """
+    pending = {}
+    counts = {}
+    scopes = {}
+
+    def say(msg):
+        if progress:
+            progress(msg)
+
+    for edit in edits:
+        op = OPS.get(edit.op)
+        if op is None:
+            raise DataEditError("unknown data operation %r" % edit.op)
+        allowed = _scope_filter(root, edit, scopes)
+        for key in root.match(edit.select):
+            if allowed and not allowed(key):
+                continue
+            if key in pending:
+                plain = pending[key]
+            else:
+                plain = store.original(key)
+                if plain is None:
+                    plain = root.read(key)
+                    store.remember(key, plain)
+            new, n = op(plain, edit.params)
+            if len(new) != len(plain) and _is_packed(root, key):
+                raise DataEditError(
+                    "%s: %s changed the file length, which neither a glob nor "
+                    "a .umd slot can survive" % (key, edit.op))
+            if n:
+                counts[edit.op] = counts.get(edit.op, 0) + n
+            pending[key] = new
+
+    written = 0
+    for key, plain in sorted(pending.items()):
+        if plain == root.read(key):
+            continue
+        root.write(key, plain)
+        written += 1
+        if written % 100 == 0:
+            say("  %d of %d files rewritten" % (written, len(pending)))
+    packed = root.flush()
+
+    # Put back anything we touched on a previous run that no longer matches an
+    # edit. Without this, turning an option off would leave its files changed.
+    restored = 0
+    for key in store.keys():
+        if key in pending or key not in root.files:
+            continue
+        original = store.original(key)
+        if original is not None and root.read(key) != original:
+            root.write(key, original)
+            restored += 1
+    packed += root.flush()
+
+    if written or restored:
+        say("Rewrote %d file%s%s, in %d container%s"
+            % (written, "" if written == 1 else "s",
+               (" and put %d back" % restored) if restored else "",
+               packed, "" if packed == 1 else "s"))
+    return {"files": written, "restored": restored, "changes": counts}
+
+
+def revert_data(root, store, progress=None):
+    """Put every remembered file back."""
+    done = 0
+    for key in store.keys():
+        original = store.original(key)
+        if original is None or key not in root.files:
+            continue
+        root.write(key, original)
+        done += 1
+        if progress and done % 100 == 0:
+            progress("  %d files restored" % done)
+    root.flush()
+    store.forget_all()
+    return {"files": done}
+
+
+def verify_data(root, store):
+    """Read every file we touched back off the disc and confirm it is there."""
+    ok = bad = 0
+    for key in store.keys():
+        if key not in root.files:
+            bad += 1
+            continue
+        try:
+            root.read(key)
+            ok += 1
+        except Exception:                       # noqa: BLE001
+            bad += 1
+    return ok, bad
