@@ -303,8 +303,14 @@ def _mission_settings():
 #: poking bytes in place. All of them are withdrawn together, because the
 #: evidence says the fault is the rewrite path and not the individual features.
 #: Delete this list to put them back once `uscode` is understood.
-REASSEMBLED = ("ss_man_down", "canon_team", "ai_sidearm", "ai_sidearm_contact",
-               "ai_say_dry", "ss_chatter_kill", "ss_chatter_hostage")
+REASSEMBLED = ("canon_team",)
+
+#: Re-enabled 2026-09-15 once `uscode` stopped shrinking the declared memory
+#: size -- see REASSEMBLED_REASON for what that was and why it mattered. They go
+#: back on the list as "untested", because the fix is reasoned and measured but
+#: has not yet been through a level load. `canon_team` stays out: it is the one
+#: with four earlier hangs behind it as well, so it is the last to be retried,
+#: not the first.
 
 REASSEMBLED_REASON = (
     "Withdrawn 2026-09-15. Every edit that RE-ASSEMBLES bytecode hangs the "
@@ -327,13 +333,36 @@ REASSEMBLED_REASON = (
     "What all of them have in common, and the byte-poke edits never do, is "
     "that the block's declared MEMORY size shrinks -- ss_man_down -10, "
     "canon_team -3, ai_sidearm -3, ss_chatter -28 -- while the disk length is "
-    "held fixed by padding with EX_Nothing. That is the next thing to take "
-    "apart.")
+    "held fixed by padding with EX_Nothing.\n\n"
+    "FIXED for the others: the padding now mixes EX_Nothing with an "
+    "EX_LocalVariable carrying one of the block's own refs -- compact on disk, "
+    "four bytes in RAM -- so both the disk length AND the memory size can be "
+    "hit exactly. This one stays withdrawn because it also has four earlier "
+    "hangs behind it, so it is the last to be retried rather than the first.")
+
+
+#: Back on offer, but the padding fix has not yet survived a level load.
+RETRY = ("ss_man_down", "ai_sidearm", "ai_sidearm_contact", "ai_say_dry",
+         "ss_chatter_kill", "ss_chatter_hostage")
+
+RETRY_NOTE = (
+    "The hang that withdrew this is understood and fixed -- the edit used to "
+    "shrink the block's declared MEMORY size while padding the disk back out "
+    "with EX_Nothing, which is one disk byte and one memory byte and so cannot "
+    "make the memory total up again. Padding now mixes EX_Nothing with an "
+    "EX_LocalVariable carrying one of the block's own refs, compact on disk and "
+    "four bytes in RAM, so both numbers land exactly; all four edits now "
+    "reproduce the original size to the byte. That is measured, not yet played: "
+    "this has not been through a level load. If a load hangs, this is the first "
+    "thing to turn off.")
 
 
 def _settings():
     out = _build_settings()
     for s in out:
+        if s.key in RETRY and s.enabled:
+            s.confidence = "untested"
+            s.caution = RETRY_NOTE + ("\n\n" + s.caution if s.caution else "")
         if s.key in REASSEMBLED and s.enabled:
             s.enabled = False
             s.confidence = "broken"
@@ -577,7 +606,7 @@ def _build_settings():
                      "they are always the fire and water next to the players.",
                 confidence="verified"),
         Setting("p2_look_speed", "Player 2 look speed", INT, 1, "Split Screen",
-                minimum=1, maximum=256, unit="x", confidence="experimental",
+                minimum=1, maximum=256, unit="x", confidence="verified",
                 help="Player 2 turns more slowly than player 1, and the cause "
                      "is one instruction. The input routine computes its own "
                      "frame delta, then at 0x00142048 substitutes 0.05 s for "
@@ -599,7 +628,8 @@ def _build_settings():
                      "substituted delta becomes 0.05 / x. 1 leaves the disc "
                      "alone; 2 doubles player 2's look speed, 4 quadruples it, "
                      "and so on.",
-                caution="3 is parity, and it is calculated rather than "
+                caution="3 is parity. Calculated, then confirmed in play. "
+                        "Was: calculated rather than "
                         "guessed. Stock substitutes 0.05 s, which at 60 fps "
                         "is exactly three frames -- so player 2 turns at a "
                         "third of player 1's rate, which is the complaint. "

@@ -118,6 +118,7 @@ def main():
         run_uscode_units()
         run_vokes_regrow(args)
         run_vokes_stay_home(args)
+        run_mem_size_preserved(args)
         run_switch_off_restores(args, work)
         run_combination_warnings()
     finally:
@@ -2353,9 +2354,21 @@ def run_split_wheel(args):
                 check("%s: and without the contact test too" % path[1:],
                       rsesidearm.reads(loose) == (40, False),
                       "got %r" % (rsesidearm.reads(loose),))
+                # Both shapes keep the block's declared memory size -- that is
+                # the invariant the console cares about. What differs is how
+                # much of the slot is real code rather than trailing padding.
+                def _live(buf):
+                    blk = uscode.Script.at(buf, sat)
+                    end = max(t.mstart for t in blk.toks
+                              if t.op == uscode.EX_RETURN)
+                    return end
                 check("%s: the contact test costs real bytes" % path[1:],
+                      _live(sid) > _live(loose),
+                      "%d vs %d" % (_live(sid), _live(loose)))
+                check("%s: and both keep the declared memory size" % path[1:],
                       uscode.Script.at(sid, sat).mem_len
-                      > uscode.Script.at(loose, sat).mem_len)
+                      == uscode.Script.at(loose, sat).mem_len
+                      == uscode.Script.at(plain, sat).mem_len)
                 check("%s: and it borrows the function's own Enemy reference"
                       % path[1:],
                       rsesidearm._enemy_ref(uscode.Script.at(plain, sat))
@@ -2369,7 +2382,9 @@ def run_split_wheel(args):
                       and rsesidearm.reads(say) == (0, False))
                 sblk = uscode.Script.at(say, sat)
                 check("%s: and it really added statements" % path[1:],
-                      sblk.mem_len != uscode.Script.at(plain, sat).mem_len)
+                      len(sblk.toks) != len(uscode.Script.at(plain, sat).toks))
+                check("%s: without moving the declared memory size" % path[1:],
+                      sblk.mem_len == uscode.Script.at(plain, sat).mem_len)
                 calls = [t for t in sblk.statements()
                          if t.op == rsesidearm.EX_VIRTUAL_FUNCTION
                          and len(t.parts[1][1]) == 1
@@ -2432,9 +2447,12 @@ def run_split_wheel(args):
                             if plain[i] != md[i] and not (mat <= i < mat + mspan)]
                 check("%s: and nothing outside that function moves" % path[1:],
                       not moutside, "%d bytes elsewhere" % len(moutside))
+                # The declared memory size must come back EXACTLY. Every edit
+                # that shrank it hung the level load on a real console; the
+                # padding is chosen to hit the original number on the nose.
                 check("%s: the rewritten block still parses" % path[1:],
                       uscode.Script.at(md, mat).mem_len
-                      < uscode.Script.at(plain, mat).mem_len)
+                      == uscode.Script.at(plain, mat).mem_len)
                 mpacked = dataedit._repack(kind, raw, md)
                 check("%s: the container survives the call-out edit" % path[1:],
                       len(mpacked) == len(raw))
@@ -3427,6 +3445,90 @@ def run_vokes_stay_home(args):
               arc.files[key.upper()].offset == home,
               "left at 0x%x" % arc.files[key.upper()].offset)
         check("with its bytes intact", arc.read_file(key) == body)
+
+
+def run_mem_size_preserved(args):
+    """Every bytecode edit must leave the block's declared memory size alone.
+
+    This is the whole reason the four script options were withdrawn. Each of
+    them shrank that number -- ss_man_down -10, canon_team -3, ai_sidearm -3,
+    ss_chatter -28 -- and padded the disk back out with `EX_Nothing`, which is
+    one disk byte and one memory byte and so cannot make the memory total up
+    again. On a real console every one of those hung the level load, while
+    every edit that merely poked bytes in place worked.
+
+    The padding now mixes `EX_Nothing` with `EX_LocalVariable` carrying a ref,
+    which is compact on disk and four bytes in RAM, so both totals can be hit
+    exactly. A ref has to be one the loader can resolve -- it turns the index
+    into a pointer while reading, long before anything runs -- so the supply is
+    the block's own refs rather than invented ones.
+    """
+    from tcps2 import (dataedit, lin, rsecanon, rsechatter, rsemandown,
+                       rsesidearm, uscode)
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    print("\n[bytecode edits keep the declared memory size]")
+    with Iso(iso_path) as iso:
+        arcs = open_archives(iso, r"/VOKES0\.IMG$")
+        if not arcs:
+            return
+        arc = arcs[0]
+        for path in ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN"):
+            if path.upper() not in arc.files:
+                continue
+            raw = arc.read_entry(arc.files[path.upper()])
+            plain = lin.decompress(raw)
+            cases = [
+                ("ss_man_down", rsemandown.find_block,
+                 lambda p: rsemandown.apply(p, True)[0]),
+                ("ai_sidearm", None,
+                 lambda p: rsesidearm.apply(p, 40, True, 0)[0]),
+                ("ss_chatter", rsechatter.find_block,
+                 lambda p: rsechatter.apply(p, 35)[0]),
+            ]
+            if path == "/COMMON_SS.LIN":
+                cases.append(("canon_team",
+                              lambda p: rsecanon._block(
+                                  p, rsecanon.TEAM_MEMBER_SIG, "x")[0],
+                              lambda p: rsecanon.apply(p, True)[0]))
+            for name, finder, fn in cases:
+                new = fn(plain)
+                check("%s: %s changes something" % (path[1:], name),
+                      new != plain and len(new) == len(plain))
+                if finder is None:
+                    diff = next(i for i in range(len(plain))
+                                if plain[i] != new[i])
+                    at = max(b for b in uscode.find_blocks(
+                        plain[max(0, diff - 4000):diff + 1],
+                        lo=16, hi=20000)) + max(0, diff - 4000)
+                else:
+                    at = finder(plain)
+                was = uscode.Script.at(plain, at)
+                now = uscode.Script.at(new, at)
+                check("%s: %s keeps the declared memory size" % (path[1:], name),
+                      now.mem_len == was.mem_len,
+                      "%d -> %d" % (was.mem_len, now.mem_len))
+                check("%s: %s keeps the disk length" % (path[1:], name),
+                      now.disk_len == was.disk_len)
+                # every padding token must carry a ref the package can resolve
+                pads = [t for t in now.toks
+                        if t.op == uscode.EX_LOCAL_VARIABLE
+                        and t.mstart is not None
+                        and t.mstart > max(x.mstart for x in now.toks
+                                           if x.op == uscode.EX_RETURN)]
+                refs = {bytes(t.parts[0][1]) for t in pads}
+                known = {bytes(v) for v in was._pad_refs().values()}
+                check("%s: %s pads only with the block's own refs"
+                      % (path[1:], name), refs <= known,
+                      "%d pad tokens, %d unknown refs"
+                      % (len(pads), len(refs - known)))
+                packed = dataedit._repack("lin", raw, new)
+                check("%s: %s still repacks and round-trips" % (path[1:], name),
+                      len(packed) == len(raw) and lin.decompress(packed) == new)
 
 if __name__ == "__main__":
     raise SystemExit(main())

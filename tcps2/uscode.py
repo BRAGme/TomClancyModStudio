@@ -238,11 +238,56 @@ class Tok:
 END = object()
 
 
+#: `EX_LocalVariable`. Used only as padding, after the function's own Return, so
+#: it is decoded by the loader and never executed.
+EX_LOCAL_VARIABLE = 0x00
+
+
+def _pad_plan(pad_disk, extra_mem, widths):
+    """(nothingCount, [(refWidth, count)]) filling `pad_disk` bytes of disk and
+    contributing `pad_disk + extra_mem` bytes of memory.
+
+    `EX_Nothing` costs (1, 1). A ref token costs (1 + w, 5) for a ref `w` bytes
+    wide, so it buys `4 - w` extra memory bytes for `w` extra disk bytes: a
+    one-byte ref is +3 memory for 2 disk, a two-byte ref +2 for 3.
+
+    A three-byte ref would buy +1 and would make every total reachable, but no
+    such ref can be valid here -- the compact encoding only reaches three bytes
+    above 8191, and this package has 7,364 exports and 1,582 imports, so every
+    real object index fits in two. An `extra_mem` of exactly 1 is therefore
+    unreachable and says so rather than being silently rounded.
+    """
+    if extra_mem == 0:
+        return pad_disk, []
+    best = None
+    have1, have2 = 1 in widths, 2 in widths
+    for a in range((extra_mem // 3) + 1 if have1 else 1):
+        rest = extra_mem - 3 * a
+        if rest < 0:
+            break
+        if rest and not have2:
+            continue
+        if rest % 2:
+            continue
+        b = rest // 2
+        disk = 2 * a + 3 * b
+        if disk <= pad_disk and (best is None or disk > best[0]):
+            best = (disk, a, b)
+    if best is None:
+        raise ScriptError(
+            "cannot pad to the original memory size: need %d extra memory "
+            "bytes in %d disk bytes of padding, with refs of widths %s"
+            % (extra_mem, pad_disk, sorted(widths)))
+    disk, a, b = best
+    return pad_disk - disk, [(1, a), (2, b)]
+
+
 class Script:
     """A parsed script block: the statements, and how to put them back."""
 
     def __init__(self, toks, disk_len, mem_len):
         self.toks = toks
+        self._refcache = None
         self.disk_len = disk_len        # the extent this MUST be written back into
         self.mem_len = mem_len
 
@@ -357,28 +402,73 @@ class Script:
         raise ScriptError("no top-level statement at 0x%x" % mstart)
 
     # -- writing ----------------------------------------------------------
-    def assemble(self, disk_len=None):
+    def _pad_refs(self):
+        """{width: rawCompactBytes} for refs this block already uses.
+
+        Padding has to carry a ref the loader can resolve -- it turns the index
+        into a pointer while reading, long before anything runs -- so the safe
+        supply is the block's own. Narrowest first for each width, which keeps
+        the choice deterministic.
+        """
+        if getattr(self, "_refcache", None) is None:
+            found = {}
+            for t in self.statements():
+                if t.op not in (0x00, 0x01, 0x02):
+                    continue
+                for kind, val in t.parts:
+                    if kind == "ref" and len(val) in (1, 2):
+                        found.setdefault(len(val), val)
+            self._refcache = found
+        return self._refcache
+
+    def _pad_ref(self, width):
+        return self._pad_refs()[width]
+
+    def assemble(self, disk_len=None, mem_len=None):
         """-> (diskBytes, memSize). Sizes and jumps are recomputed.
 
-        `disk_len` pads the result to that many bytes with `EX_Nothing`, which
-        is what keeps a LIN package's length fixed. Padding lands after the last
-        statement, so it is never executed; it still has to be valid bytecode,
-        because the loader decodes every byte it is told the block contains.
+        `disk_len` pads the result to that many bytes, which is what keeps a LIN
+        package's length fixed. Padding lands after the last statement, so it is
+        never executed; it still has to be valid bytecode, because the loader
+        decodes every byte it is told the block contains.
+
+        `mem_len` additionally pins the DECLARED memory size, and that matters
+        more than it looks. Every edit that shrank the declared size -- padding
+        the disk back out with `EX_Nothing`, which is 1 disk byte and 1 memory
+        byte -- hung the level load on a real console, while every edit that
+        left the size alone worked. On paper the shrink is self-consistent, so
+        the reason is not understood; what IS established is that leaving the
+        number alone is the safe side of the line.
+
+        Hitting both targets needs padding whose disk and memory costs differ,
+        and a `ref` is exactly that: `FCompactIndex` on disk, four bytes in RAM.
+        `EX_Nothing` gives (1, 1); a one-byte ref in an `EX_LocalVariable` gives
+        (2, 5); a two-byte ref gives (3, 5). See `_pad_plan`.
         """
         out = bytearray()
         patches = []            # (diskPos, kind, value) filled in on pass two
         mp = 0
         for t in self.toks:
             mp = _emit(t, out, patches, mp)
-        mem_len = mp
         if disk_len is None:
             disk_len = len(out)
         pad = disk_len - len(out)
         if pad < 0:
             raise ScriptError("assembled script is %d bytes, %d too many for "
                               "its slot" % (len(out), -pad))
-        out += bytes([EX_NOTHING]) * pad
-        mem_len += pad
+        want_extra = 0 if mem_len is None else mem_len - (mp + pad)
+        if want_extra < 0:
+            raise ScriptError("cannot pad to a memory size %d smaller than the "
+                              "%d bytes already emitted" % (mem_len, mp + pad))
+        n_nothing, refs = _pad_plan(pad, want_extra, self._pad_refs())
+        for width, count in refs:
+            for _ in range(count):
+                out.append(EX_LOCAL_VARIABLE)
+                out += self._pad_ref(width)
+                mp += 5
+        out += bytes([EX_NOTHING]) * n_nothing
+        mp += n_nothing
+        mem_len = mp
         for dpos, kind, val in patches:
             if kind == "jump":
                 struct.pack_into("<H", out, dpos, _mem_of(val, mem_len))
@@ -391,7 +481,7 @@ class Script:
 
     def write_into(self, buf, size_at):
         """Rewrite the block in `buf` (a bytearray) in place, length preserved."""
-        disk, mem = self.assemble(self.disk_len)
+        disk, mem = self.assemble(self.disk_len, self.mem_len)
         struct.pack_into("<I", buf, size_at, mem)
         buf[size_at + 4:size_at + 4 + self.disk_len] = disk
         return mem
