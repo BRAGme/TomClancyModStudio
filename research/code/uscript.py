@@ -255,12 +255,24 @@ def anchors(data, lo=0, hi=None):
     return out
 
 
-def run(data, pos, limit=64, end=None):
-    """Decode up to `limit` tokens from `pos`. Returns (lines, nextPos)."""
+def run(data, pos, limit=64, end=None, strict=True):
+    """Decode up to `limit` tokens from `pos`. Returns (lines, nextPos).
+
+    `strict` raises on the first desync, which is what `validate` needs to
+    measure. With it off, decoding stops at the desync and returns what it
+    read -- which is what a person reading a listing wants, because an anchor
+    lands mid-block and running off the end of that block is normal.
+    """
     lines = []
     for _ in range(limit):
         start = pos
-        text, pos = token(data, pos, 0, end)
+        try:
+            text, pos = token(data, pos, 0, end)
+        except (Desync, IndexError, struct.error) as exc:
+            if strict:
+                raise
+            lines.append((start, "<end of block: %s>" % exc))
+            break
         lines.append((start, text))
         if text in ("Stop", "Nothing"):
             break
@@ -305,7 +317,7 @@ def _main(argv):
             return 1
     if len(argv) > 3:
         at = int(argv[3], 16)
-        lines, _ = run(data, at, 40)
+        lines, _ = run(data, at, 40, strict=False)
         for pos, text in lines:
             print("%08x  %s" % (pos, text))
         return 0
