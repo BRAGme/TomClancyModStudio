@@ -303,7 +303,9 @@ def _mission_settings():
 #: poking bytes in place. All of them are withdrawn together, because the
 #: evidence says the fault is the rewrite path and not the individual features.
 #: Delete this list to put them back once `uscode` is understood.
-REASSEMBLED = ("canon_team",)
+REASSEMBLED = ("canon_team", "ss_man_down", "ai_sidearm",
+               "ai_sidearm_contact", "ai_say_dry",
+               "ss_chatter_kill", "ss_chatter_hostage")
 
 #: Re-enabled 2026-09-15 once `uscode` stopped shrinking the declared memory
 #: size -- see REASSEMBLED_REASON for what that was and why it mattered. They go
@@ -334,11 +336,19 @@ REASSEMBLED_REASON = (
     "that the block's declared MEMORY size shrinks -- ss_man_down -10, "
     "canon_team -3, ai_sidearm -3, ss_chatter -28 -- while the disk length is "
     "held fixed by padding with EX_Nothing.\n\n"
-    "FIXED for the others: the padding now mixes EX_Nothing with an "
-    "EX_LocalVariable carrying one of the block's own refs -- compact on disk, "
-    "four bytes in RAM -- so both the disk length AND the memory size can be "
-    "hit exactly. This one stays withdrawn because it also has four earlier "
-    "hangs behind it, so it is the last to be retried rather than the first.")
+    "THAT WAS TESTED AND IS NOT THE CAUSE. The padding now mixes EX_Nothing "
+    "with an EX_LocalVariable carrying one of the block's own refs -- compact "
+    "on disk, four bytes in RAM -- so both the disk length and the memory size "
+    "land on their original values exactly, measured for all four edits. "
+    "ss_man_down was rebuilt that way, put on a disc reading mem=375 disk=283 "
+    "against a stock 375/283, and STILL hung the initial load. So the declared "
+    "size is not it either.\n\n"
+    "Where that leaves it: the bytes reaching the console are provably the "
+    "bytes intended (assembler round-trips 6,726 of 6,789 blocks byte-exactly, "
+    "container decompresses back identically, archive layout unchanged, "
+    "declared sizes now identical), and the console still will not load them. "
+    "Static inspection has run out. The next step is a savestate taken DURING "
+    "the hang, or PCSX2 EE breakpoints -- not another theory.")
 
 
 #: Back on offer, but the padding fix has not yet survived a level load.
