@@ -196,3 +196,91 @@ second bit in the same word or a sibling store in the same routine.
    byte that differs between the two and does not differ between two states of
    the same mode. That is one afternoon's difference narrowed to a handful of
    addresses in one command, and it does not need any new tooling.
+
+## Weapon pickup: what Ghost Recon 2 has that Rainbow Six 3 does not
+
+This supersedes an earlier conclusion in this project that the pickup could
+not be ported because Rainbow Six 3 lacked the input action. **That was
+wrong**, and the mistake is worth recording: the check enumerated ONE package's
+name table and stopped, when `COMMON.LIN` holds 132. A raw byte search over
+the whole decompressed package is the reliable way to ask "is this name on the
+disc", and it says:
+
+    BTN_QuickWeaponSwitch   RS3 COMMON.LIN / COMMONOFF.LIN / COMMON_SS.LIN: 1 each
+                            (all three VOKES archives, nine files, every one)
+
+So Rainbow Six 3 already has the button.
+
+`S_Pickup`, cited earlier as shared pickup vocabulary, is also a red herring:
+it resolves to a **Texture** export in both games -- the stock UnrealEd sprite
+(`S_Pickup.pcx`). Its presence means nothing.
+
+### The actual difference
+
+`R6IOGroundWeapon` -- a script class, present in Ghost Recon 2 and absent from
+Rainbow Six 3:
+
+    R6IOGroundWeapon   GR2 GR2.IMG/COMMONOFF.LIN (single player)  2
+                       GR2 VOKES0+2/COMMON.LIN   (multiplayer)    1
+                       RS3 any COMMON package                     0
+
+Around it, in Ghost Recon 2's single-player package only:
+
+* `AlterWeapon` x12, plus `AlterWeaponClass`, `AlterWeaponNum`,
+  `NewAlterWeapon`, `m_nAlterWeaponNum`, `m_pOldWeapon` -- the swap itself
+* `m_iNbBulletsInWeapon2`, `m_iCurrentNbOfClips2`, `m_iNbOfClips2`,
+  `m_iTotalRemainingBulletNum2` -- a second weapon slot's ammunition state,
+  where Rainbow Six 3 has only the unsuffixed slot-1 versions
+* `R6GetCircumstantialActionTexID`, `R6GetCircumstantialActionID`,
+  `CanAcceptActionKey` -- the on-screen prompt
+
+Ghost Recon 2's MULTIPLAYER half implements pickup a second, different way,
+with the stock Unreal `Inventory`/`Pickup` pattern (`R6PickUp`, `State Pickup`,
+`ReadyToPickup`, `AnnouncePickup`). None of that is in Rainbow Six 3 either.
+
+### It is script, not native -- measured
+
+The native overlays carry an `IMPLEMENT_CLASS` string table, and it settles it:
+
+    RS3 SP.SOZ:  AR6IOObject, AR6InteractiveObject, AR6IORotatingDoor
+    GR2 SP.SOZ:  AR6IOObject, AR6InteractiveObject
+    GR2 MP.SOZ:  AR6IOObject, AR6InteractiveObject
+
+`AR6IOGroundWeapon` is in none of them, while `AR6IORotatingDoor` proves
+native IO subclasses DO appear in that table when they exist. So
+`R6IOGroundWeapon` is an UnrealScript subclass of a native base that Rainbow
+Six 3 already ships.
+
+### What Rainbow Six 3 already has
+
+* the input action -- `BTN_QuickWeaponSwitch`
+* the native base -- `AR6IOObject` / `AR6InteractiveObject`
+* the prompt system -- 25 `Circumstantial*` names against Ghost Recon 2's 25,
+  differing only by Ghost Recon 2's two `R6GetCircumstantialAction*ID`
+  accessors; 9 of the 10 `ActionKey` names, missing only `CanAcceptActionKey`
+* a richer action enum than Ghost Recon 2's -- 45 `CA_*` members to its 19
+
+### The real blocker, and it is not the one previously given
+
+Everything missing is script, and script lives in a cooked `.LIN`. The
+container is a chain of chunks with fixed compressed slots, and
+`lin.substitute` refuses any edit that changes the decompressed length:
+
+    "a LIN edit must preserve length exactly"
+    "chunk re-deflates larger than its N-byte slot; the container length
+     cannot move"
+
+Adding a class export, four ammunition properties and a texture accessor grows
+the package. So the obstacle is not that the feature is native, and not that
+the button is missing -- it is that **this tool can only make same-length
+edits to these packages**, and adding exports is not one.
+
+Two routes, neither attempted:
+
+1. Find equal-length room -- repurpose an existing unused script class rather
+   than adding one. Rainbow Six 3 has script-only IO subclasses already
+   (`R6IOAlarmSystem`, `R6IOBomb`, `R6IODevice`); whether any is dead weight
+   on this disc is unknown and checkable.
+2. Rebuild the container instead of substituting into it, which means writing
+   a `.LIN` writer that can relocate chunks, and re-cooking an export table
+   whose offsets this project already knows the PS2 cooker relaid.
