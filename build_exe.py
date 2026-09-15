@@ -23,10 +23,12 @@ HIDDEN = [
     "gui.presets", "gui.skins", "gui.presence", "gui.discorddialog",
     "tcxbox", "tcxbox.model", "tcxbox.engine", "tcxbox.detect",
     "tcxbox.gamedir", "tcxbox.globfile", "tcxbox.umd", "tcxbox.xbe",
+    "tcxbox.xiso",
     "tcxbox.dataedit", "tcxbox.transforms", "tcxbox.rseguns",
     "tcxbox.art", "tcxbox.rsb", "tcxbox.xpr",
     "tcxbox.games", "tcxbox.games.ghost_recon", "tcxbox.games.ghost_recon2",
     "tcxbox.games.r6_3", "tcxbox.games.graw", "tcxbox.games.r6engine",
+    "tcxbox.games.critical_hour",
     "tcxbox.games.rstuning", "tcxbox.games.rseweapons",
     # Discord presence speaks the IPC protocol itself, so this pulls in no
     # third-party package -- but the modules still have to be named here.
