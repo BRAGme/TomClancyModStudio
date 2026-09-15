@@ -3,8 +3,10 @@
 The whole window sits on one canvas holding the loaded game's own artwork, and
 every part of the interface is placed onto it, so the backdrop shows in the gaps
 the way it does in the games' own menus. Which skin is in force follows the
-disc: gunmetal for Rainbow Six 3, gold-on-navy for Ghost Recon, gold-on-teal for
-Island Thunder.
+game, and the colours are each game's own, sampled off its shell art: steel blue
+for Ghost Recon, green-teal for Island Thunder, lime for Ghost Recon 2, ice for
+Summit Strike, gunmetal for Rainbow Six 3, burnt orange for Black Arrow, teal
+for Advanced Warfighter and crimson for Critical Hour.
 
 What you point it at is a game: either the `.iso` it was ripped as, or a folder
 someone extracted it into. Both are edited in place and neither is preferred.
@@ -40,10 +42,10 @@ PRESET_HINT = "Choose a preset…"
 VERSION = "1.0"
 NOTES_TAB = "About this game"
 
-# A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
-# limited by the header's HEIGHT, not its width, so the wide wordmarks were
-# filling their box while the square ones sat well under it. A taller band
-# costs the wide marks nothing and gives the square ones room.
+# A square mark -- Ghost Recon 2's stacked wordmark -- is limited by the
+# header's HEIGHT, not its width, so the wide marks fill their box while the
+# square ones sit well under it. A taller band costs the wide ones nothing and
+# gives the square ones room.
 HEADER = 148
 ACTION_H = 46
 LOG_H = 88
@@ -76,7 +78,7 @@ class App(tk.Tk):
         self.emblem_src = None
         self._plate = None
         self._header_img = None
-        self._title_text = ("Choose a disc", "")
+        self._title_text = ("Choose a game", "")
         self._msgs = queue.Queue()
         self._recent = []
         self._last_size = (0, 0)
@@ -167,7 +169,7 @@ class App(tk.Tk):
 
         self.apply_btn = ActionButton(self.bar, "Apply to game", self._apply,
                                       accent=True)
-        self.revert_btn = ActionButton(self.bar, "Restore folder", self._revert)
+        self.revert_btn = ActionButton(self.bar, "Restore game", self._revert)
         self.discord_btn = ActionButton(self.bar, "Discord", self.discord_setup)
         self.discord_btn.configure(width=self.discord_btn.width_needed())
         for b in (self.apply_btn, self.revert_btn):
@@ -656,7 +658,7 @@ class App(tk.Tk):
         if pl.warnings:
             lines.append("")
             lines += ["• " + w for w in pl.warnings]
-        lines += ["", "Close the emulator first -- it holds these files open."]
+        lines += ["", "Close xemu first if this game is loaded in it."]
         if self.detection.kind == "iso":
             lines.insert(-2, "This writes into the disc image itself. Every "
                              "file stays where it is; nothing is rebuilt.")
@@ -698,7 +700,7 @@ class App(tk.Tk):
             return
         if not messagebox.askokcancel(
                 APP_NAME, "Put %s back exactly as it shipped?\n\nClose the "
-                          "emulator first." % os.path.basename(self.detection.path)):
+                          "xemu first." % os.path.basename(self.detection.path)):
             return
         path, profile = self.detection.path, self.profile
 

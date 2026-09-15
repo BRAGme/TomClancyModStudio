@@ -44,40 +44,47 @@ from . import rseweapons, rstuning
 MISSION_GROUP = "Missions"
 
 #: (stem, actors placed, actors carrying a difficulty flag, actors that ship
-#: Hidden, codename, place, date, time) -- counted out of the game folders,
-#: campaign missions only. Multiplayer and Defend variants place no order of
-#: battle at all and are left off the page rather than listed as empty.
+#: Hidden, codename, place, date, time, briefing sheet, tactical map) --
+#: counted and read out of the games themselves, campaign missions only.
+#: Multiplayer and Defend variants place no order of battle at all and are left
+#: off the page rather than listed as empty.
+#:
+#: The last two fields are the mission's own artwork. The sheet name is taken
+#: from the mission file's `<MapShots>` rather than derived, because it does not
+#: always follow the stem: `m10_ruined_city.mis` asks for `m10_vilnius_shots`.
+#: An empty map field means the disc ships no tactical map for that mission --
+#: four of Ghost Recon's fifteen, and the card simply shows the screenshots.
 GR_MISSIONS = (
-    ("M01_CAVES", 52, 25, 0, "Iron Dragon", "South Ossetia", "04/16/08", "05:45"),
-    ("M02_FARM", 50, 17, 0, "Eager Smoke", "South Ossetia", "04/24/08", "02:15"),
-    ("M03_RRBRIDGE", 54, 21, 0, "Stone Bell", "South Ossetia", "05/02/08", "10:00"),
-    ("M04_VILLAGE", 58, 29, 15, "Black Needle", "Republic of Georgia", "05/07/08", "15:00"),
-    ("M05_EMBASSY", 67, 34, 0, "Gold Mountain", "Tbilisi, Georgia", "05/14/08", "09:00"),
-    ("M06_CASTLE", 53, 30, 0, "Witch Fire", "Izborsk, Russia", "06/06/08", "02:00"),
-    ("M07_RIVER", 47, 18, 0, "Paper Angel", "Lubana River, Latvia", "06/17/08", "06:00"),
-    ("M08_BATTLEFIELD", 63, 37, 0, "Zebra Straw", "Venta, Lithuania", "06/24/08", "16:00"),
-    ("M09_SWAMP", 62, 43, 0, "Blue Storm", "Nereta Swamp, Latvia", "07/03/08", "09:00"),
-    ("M10_RUINED_CITY", 49, 22, 0, "Fever Claw", "Vilnius, Lithuania", "09/01/08", "18:00"),
-    ("M11_POW_CAMP", 63, 36, 0, "Dream Knife", "Ljady, Russia", "09/16/08", "03:00"),
-    ("M12_DOCKS", 52, 28, 0, "Ivory Horn", "Murmansk, Russia", "09/22/08", "02:00"),
-    ("M13_AIRBASE", 47, 22, 0, "Arctic Sun", "Arkhangel'sk, Russia", "10/03/08", "04:00"),
-    ("M14_MOUNTAIN", 53, 18, 0, "Willow Bow", "Toropec, Russia", "10/23/08", "13:00"),
-    ("M15_RED_SQUARE", 64, 31, 3, "White Razor", "Moscow, Russia", "11/10/08", "11:00"),
+    ("M01_CAVES", 52, 25, 0, "Iron Dragon", "South Ossetia", "04/16/08", "05:45", "m01_caves_shots", "M01_CAVES"),
+    ("M02_FARM", 50, 17, 0, "Eager Smoke", "South Ossetia", "04/24/08", "02:15", "m02_farm_shots", "M02_FARM"),
+    ("M03_RRBRIDGE", 54, 21, 0, "Stone Bell", "South Ossetia", "05/02/08", "10:00", "m03_rrbridge_shots", "M03_RRBRIDGE"),
+    ("M04_VILLAGE", 58, 29, 15, "Black Needle", "Republic of Georgia", "05/07/08", "15:00", "m04_village_shots", "M04_VILLAGE"),
+    ("M05_EMBASSY", 67, 34, 0, "Gold Mountain", "Tbilisi, Georgia", "05/14/08", "09:00", "m05_embassy_shots", "M05_EMBASSY"),
+    ("M06_CASTLE", 53, 30, 0, "Witch Fire", "Izborsk, Russia", "06/06/08", "02:00", "m06_castle_shots", "M06_CASTLE"),
+    ("M07_RIVER", 47, 18, 0, "Paper Angel", "Lubana River, Latvia", "06/17/08", "06:00", "m07_river_shots", "M07_RIVER"),
+    ("M08_BATTLEFIELD", 63, 37, 0, "Zebra Straw", "Venta, Lithuania", "06/24/08", "16:00", "m08_battlefield_shots", "M08_BATTLEFIELD"),
+    ("M09_SWAMP", 62, 43, 0, "Blue Storm", "Nereta Swamp, Latvia", "07/03/08", "09:00", "m09_swamp_shots", ""),
+    ("M10_RUINED_CITY", 49, 22, 0, "Fever Claw", "Vilnius, Lithuania", "09/01/08", "18:00", "m10_vilnius_shots", ""),
+    ("M11_POW_CAMP", 63, 36, 0, "Dream Knife", "Ljady, Russia", "09/16/08", "03:00", "m11_pow_camp_shots", ""),
+    ("M12_DOCKS", 52, 28, 0, "Ivory Horn", "Murmansk, Russia", "09/22/08", "02:00", "m12_docks_shots", "M12_DOCKS"),
+    ("M13_AIRBASE", 47, 22, 0, "Arctic Sun", "Arkhangel'sk, Russia", "10/03/08", "04:00", "m13_airbase_shots", "M13_AIRBASE"),
+    ("M14_MOUNTAIN", 53, 18, 0, "Willow Bow", "Toropec, Russia", "10/23/08", "13:00", "m14_mountain_shots", "M14_MOUNTAIN"),
+    ("M15_RED_SQUARE", 64, 31, 3, "White Razor", "Moscow, Russia", "11/10/08", "11:00", "m15_red_square_shots", ""),
 )
 
 IT_MISSIONS = (
-    ("XC01_PLANTATION", 45, 15, 0, "Watchful Yeoman", "Punta Tabacal", "03/20/10", "06:30"),
-    ("XC02_MILITARY_CAMP", 45, 15, 0, "Angel Rage", "Pinar del Rio", "04/03/10", "19:30"),
-    ("XC03_HIGH_SIERRA", 47, 15, 0, "Jaguar Maze", "Sierra de los Organos", "04/12/10", "11:20"),
-    ("XC04_SWAMP_AIRFIELD", 45, 15, 0, "Hidden Spectre", "Isla de la Juventud", "04/21/10", "10:40"),
-    ("XC05_BRIDGES", 47, 15, 0, "Rapid Python", "Matanzas Province", "04/27/10", "01:00"),
-    ("XC06_POLLING_CENTER", 54, 15, 0, "Liberty Storm", "Cienfuegos", "05/12/10", "06:45"),
-    ("XC07_BEACH_RESORT", 49, 15, 0, "Ocean Forge", "Near Dimas", "05/19/10", "06:45"),
-    ("XC08_MOUNTAIN_STRONGHOLD", 51, 15, 0, "Righteous Archer", "Sierra de los Organos", "06/06/10", "20:20"),
+    ("XC01_PLANTATION", 45, 15, 0, "Watchful Yeoman", "Punta Tabacal", "03/20/10", "06:30", "xc01_shots", "XC01_PLANTATION"),
+    ("XC02_MILITARY_CAMP", 45, 15, 0, "Angel Rage", "Pinar del Rio", "04/03/10", "19:30", "xc02_shots", "XC02_MILITARY_CAMP"),
+    ("XC03_HIGH_SIERRA", 47, 15, 0, "Jaguar Maze", "Sierra de los Organos", "04/12/10", "11:20", "xc03_shots", "XC03_HIGH_SIERRA"),
+    ("XC04_SWAMP_AIRFIELD", 45, 15, 0, "Hidden Spectre", "Isla de la Juventud", "04/21/10", "10:40", "xc04_shots", "XC04_SWAMP_AIRFIELD"),
+    ("XC05_BRIDGES", 47, 15, 0, "Rapid Python", "Matanzas Province", "04/27/10", "01:00", "xc05_shots", "XC05_BRIDGES"),
+    ("XC06_POLLING_CENTER", 54, 15, 0, "Liberty Storm", "Cienfuegos", "05/12/10", "06:45", "xc06_shots", "XC06_POLLING_CENTER"),
+    ("XC07_BEACH_RESORT", 49, 15, 0, "Ocean Forge", "Near Dimas", "05/19/10", "06:45", "xc07_shots", "XC07_BEACH_RESORT"),
+    ("XC08_MOUNTAIN_STRONGHOLD", 51, 15, 0, "Righteous Archer", "Sierra de los Organos", "06/06/10", "20:20", "xc08_shots", "XC08_MOUNTAIN_STRONGHOLD"),
     # The three Ghost Recon maps Island Thunder ships again, unchanged.
-    ("M05_EMBASSY", 67, 34, 0, "Gold Mountain", "Tbilisi, Georgia", "05/14/08", "09:00"),
-    ("M06_CASTLE", 53, 30, 0, "Witch Fire", "Izborsk, Russia", "06/06/08", "02:00"),
-    ("M08_BATTLEFIELD", 63, 37, 0, "Zebra Straw", "Venta, Lithuania", "06/24/08", "16:00"),
+    ("M05_EMBASSY", 67, 34, 0, "Gold Mountain", "Tbilisi, Georgia", "05/14/08", "09:00", "m05_embassy_shots", "M05_EMBASSY"),
+    ("M06_CASTLE", 53, 30, 0, "Witch Fire", "Izborsk, Russia", "06/06/08", "02:00", "m06_castle_shots", "M06_CASTLE"),
+    ("M08_BATTLEFIELD", 63, 37, 0, "Zebra Straw", "Venta, Lithuania", "06/24/08", "16:00", "m08_battlefield_shots", "M08_BATTLEFIELD"),
 )
 
 
@@ -189,7 +196,8 @@ def _mission_settings(prefix, missions):
     """One switch per mission: the global "every soldier on every difficulty"
     aimed at a single file, with that mission's own numbers on the card."""
     out = []
-    for stem, actors, held, hidden, codename, place, date, time in missions:
+    for (stem, actors, held, hidden, codename, place, date, time,
+         _shots, _map) in missions:
         when = ", ".join(x for x in (place, date, time) if x)
         if held:
             help_text = ("%s. %d soldiers placed, %d of them removed below "
@@ -209,6 +217,31 @@ def _mission_settings(prefix, missions):
                              "difficulty suppression flags at all."),
             confidence="applied"))
     return out
+
+
+def _mission_art_for(prefix, missions):
+    """key -> the pictures its card should show, most informative first.
+
+    Three, because that is what a card has room for: the briefing's tactical
+    map, then two of the four screenshots off the mission's own briefing sheet.
+    A mission with no map on the disc gets a third screenshot instead, so every
+    card is the same shape whether or not its map was drawn.
+    """
+    by_key = {}
+    for m in missions:
+        stem, shots, tactical = m[0], m[8], m[9]
+        names = []
+        if tactical:
+            names.append(tactical)
+        if shots:
+            names += ["%s#%d" % (shots, n)
+                      for n in range(3 - len(names) + 1)][:3 - len(names)]
+        by_key[mission_key(prefix, stem)] = names
+
+    def lookup(key):
+        return by_key.get(key, ())
+
+    return lookup
 
 
 def _build_data(prefix, missions):
@@ -254,6 +287,7 @@ GHOST_RECON = GameProfile(
              Marker("actor", "the squad and enemy templates")],
     settings=_settings("gr_", GR_MISSIONS, has_env=True),
     build_data=_build_data("gr_", GR_MISSIONS),
+    mission_art_for=_mission_art_for("gr_", GR_MISSIONS),
     notes=notes_for("Ghost Recon", GR_MISSIONS, 48),
     ui_art={"backdrop": "shell/art/shell_bgd-01.rsb",
             # The 512 x 128 wordmark off the start screen, not the 64-pixel
@@ -271,6 +305,7 @@ ISLAND_THUNDER = GameProfile(
              Marker("actor", "the squad and enemy templates")],
     settings=_settings("it_", IT_MISSIONS, has_env=True),
     build_data=_build_data("it_", IT_MISSIONS),
+    mission_art_for=_mission_art_for("it_", IT_MISSIONS),
     notes=notes_for("Island Thunder", IT_MISSIONS, 61),
     ui_art={"backdrop": "shell/art/shell_bgd-01.rsb",
             # Island Thunder's start screen carries the plain Ghost Recon

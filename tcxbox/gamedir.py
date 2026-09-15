@@ -1,15 +1,16 @@
 """A game, presented as one flat, keyed namespace -- disc image or folder.
 
 The same games turn up in two shapes on a shelf: as an `.iso` the way they were
-ripped, and as a folder someone extracted so an emulator could load it directly.
-Both are supported and neither is preferred, because they hold exactly the same
-files; a `Source` hides which one is underneath and everything above this line
-is written once.
+ripped, and as a folder someone extracted. Both are supported -- a `Source`
+hides which one is underneath, and everything above this line is written once.
 
-Editing a disc image in place is the better default. Extracting a 4 GB image to
-change 2 KB of it is slow, and it leaves two copies of the game that can drift
-apart. XDVDFS gives every file a whole number of sectors, so a file can usually
-grow into its own padding without anything moving -- see `xiso.replace`.
+**The disc image is the one that matters**, because xemu is what these are
+tested in and xemu mounts an image; it has no way to boot a loose folder. Which
+is just as well: extracting a 4 GB image to change 2 KB of it is slow, and it
+leaves two copies of the game that can drift apart. XDVDFS gives every file a
+whole number of sectors, so a file can usually grow into its own padding without
+anything moving -- see `xiso.replace`. The folder path stays because it costs
+almost nothing here and other tools do read a loose tree.
 
 Keys are upper-case, `/`-separated, and rooted at the game:
 

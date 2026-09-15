@@ -25,6 +25,8 @@ What each group is actually asserting:
                a silent empty census is how a weapons dial reaches nothing.
   cycle        plan, apply, verify, revert, and the folder is byte-identical
                to how it started.
+  mission art  every mission card's pictures are actually on the disc -- a
+               missing one draws nothing and says nothing.
 """
 
 from __future__ import annotations
@@ -138,6 +140,41 @@ def test_art(games):
              "keyed out" % det.profile.short)
         shot += 2
     return "%d bitmaps decoded, every wordmark at least 200px wide" % shot
+
+
+def test_mission_art(games):
+    """Every mission card has the pictures its profile promised it.
+
+    Worth a check rather than a glance, because the failure is silent: a card
+    whose art cannot be found just draws without it, and nobody notices that
+    one mission in fifteen lost its briefing map.
+    """
+    from tcxbox import art
+
+    lines = []
+    for det in games:
+        spec = getattr(det.profile, "mission_art_for", None)
+        if spec is None:
+            continue
+        cards = [s for s in det.profile.settings if s.group == "Missions"]
+        must(cards, "%s has mission_art_for and no mission cards"
+             % det.profile.short)
+        found = 0
+        for card in cards:
+            names = list(spec(card.key))
+            must(names, "%s: %s asks for no art" % (det.profile.short, card.key))
+            for name in names:
+                image = art.mission_art(det, name)
+                must(image is not None,
+                     "%s: %s is not on the disc" % (det.profile.short, name))
+                must(image.width >= 100 and image.height >= 80,
+                     "%s: %s came out %dx%d"
+                     % (det.profile.short, name, image.width, image.height))
+                found += 1
+        lines.append("%s %d/%d" % (det.profile.short.split()[0], found,
+                                   len(cards)))
+    must(lines, "no game on this shelf offers mission art")
+    return "pictures per game (found/cards): " + ", ".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +537,9 @@ def main(argv):
     check("every .umd parses and round-trips", lambda: test_umds(games))
     check("every executable identifies its game", lambda: test_xbes(games))
     check("every shell bitmap decodes", lambda: test_art(games))
+
+    check("every mission card has its own art",
+          lambda: test_mission_art(games))
 
     print("disc images")
     check("an image and its extracted folder agree byte for byte",

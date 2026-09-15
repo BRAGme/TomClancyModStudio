@@ -60,9 +60,10 @@ def _render_cards(prefix):
                      "and not a limit of the art. Opening it up is the single "
                      "most visible change on this page, and it is the one worth "
                      "making before capturing anything.",
-                caution="This is a memory setting. On real hardware the full "
-                        "range may not fit; under an emulator it generally "
-                        "does. It writes both the Xbox and the Windows client "
+                caution="This is a memory setting: the console had 64 MB and "
+                        "this spends it. Under xemu there is more room than the "
+                        "hardware had, which is where this is worth trying "
+                        "first. It writes both the Xbox and the Windows client "
                         "sections, because the file carries the same key twice "
                         "and only one of them is read."),
         Setting(prefix + "gore", "Gore level", CHOICE, "stock", RENDER,

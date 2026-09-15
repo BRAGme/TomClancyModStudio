@@ -281,18 +281,31 @@ def chrome_images(detection, cache_dir=None):
     return {}
 
 
-def mission_art(detection, name, cache_dir=None):
-    """A mission's own briefing map, for the card that switches it on.
+def mission_art(detection, spec, cache_dir=None):
+    """One picture for a mission card, named by the profile.
 
-    Ghost Recon and Island Thunder name one in every `.MIS` -- `<MapShots>`,
-    e.g. `m01_caves_shots.rsb` -- and ship it under `commandmaps\\`.
+    Ghost Recon and Island Thunder both ship two kinds, and the cards use both:
+
+      `commandmaps\\M01_CAVES.rsb`          the briefing's tactical map
+      `briefings\\m01_caves_shots.rsb`      four in-game screenshots of it
+
+    The screenshots come as ONE sheet -- a 2 x 2 grid in the top-left corner of
+    a 512 x 256 page -- so `spec` may carry a quadrant: `"m01_caves_shots#1"` is
+    the top-right of the four. The sheet is content-cropped first, because the
+    grid fills the art and not the page.
+
+    Island Thunder names its command maps without the `X` its mission files
+    carry (`XC01_PLANTATION.mis` against `C01_PLANTATION.rsb`), so that spelling
+    is tried too rather than recorded per mission.
     """
-    if not detection or not detection.ok or not name:
+    if not detection or not detection.ok or not spec:
         return None
+    name, _, quadrant = spec.partition("#")
     source = _open(detection)
     try:
         rel, data = _first(source, ("commandmaps/%s.rsb" % name,
-                                    "commandmaps/%s" % name,
+                                    "commandmaps/%s.rsb" % name.lstrip("Xx"),
+                                    "briefings/%s.rsb" % name,
                                     "shell/art/%s.rsb" % name))
     finally:
         source.close()
@@ -301,8 +314,16 @@ def mission_art(detection, name, cache_dir=None):
 
     def build():
         try:
-            return rsb.content_crop(decode(data, rel))
+            image = rsb.content_crop(decode(data, rel))
         except Exception:                          # noqa: BLE001
             return None
+        if quadrant.isdigit():
+            n = int(quadrant) % 4
+            w, h = image.size
+            left = (n % 2) * (w // 2)
+            top = (n // 2) * (h // 2)
+            image = image.crop((left, top, left + w // 2, top + h // 2))
+        return image
 
-    return _cached(cache_dir, detection.path, rel, "mission", build)
+    return _cached(cache_dir, detection.path, "%s#%s" % (rel, quadrant),
+                   "mission", build)

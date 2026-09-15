@@ -10,9 +10,9 @@ tool needs is in two structures:
 
   * the certificate, which carries the 32-bit title id and the title name as
     40 UTF-16 characters. The title id is the thing worth keying a profile on:
-    it is the same four bytes on every disc of a given game, it is what an
-    emulator and the console's own dashboard identify a title by, and unlike a
-    folder name nobody renames it.
+    it is the same four bytes on every disc of a given game, it is what xemu and
+    the console's own dashboard identify a title by, and unlike a file name
+    nobody renames it.
 
 Sections are exposed because a code patch has to be written at a file offset
 and every address in a disassembly is a virtual one. Nothing in this build

@@ -17,7 +17,7 @@ Three rules make this safe to run over and over, and they are the PS2 tool's:
 
 A disc image is edited in place. It is opened read-only to plan and read-write
 only for the moments an apply or a revert is actually writing, so a tool left
-sitting on a game does not hold the image open against an emulator.
+sitting on a game does not hold the image open against xemu.
 """
 
 from __future__ import annotations

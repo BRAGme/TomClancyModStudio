@@ -195,5 +195,22 @@ how a broken card or a missing palette colour is found.
 
 ## Artwork
 
-None is redistributed. Each game's backdrop and dashboard logo are read out of
-your own extracted disc when it is loaded and cached under `%LOCALAPPDATA%`.
+None is redistributed. Each game's backdrop, wordmark and per-mission briefing
+art are read out of your own disc when it is loaded, and cached under
+`%LOCALAPPDATA%`.
+
+Every Ghost Recon and Island Thunder mission card carries the game's own
+pictures: the briefing's tactical map from `commandmaps\`, then two of the four
+screenshots off that mission's briefing sheet in `briefings\`. The sheet is one
+512 x 256 page holding a 2 x 2 grid, so it is content-cropped and quartered. The
+sheet's name comes from the mission file's own `<MapShots>` rather than from its
+stem, because the two do not always agree -- `m10_ruined_city.mis` asks for
+`m10_vilnius_shots`. All 26 cards across the two games have all three pictures.
+
+## The icon
+
+`python assets\make_icon.py` redraws it. It is the PS2 tool's reticle -- they
+are siblings and should look it -- in **teal instead of green**, inside the four
+corner brackets Ghost Recon prints around every briefing screenshot. Hue and
+silhouette are the two things that tell icons apart at 16 pixels, and both
+differ, so the two never get picked up for each other on a taskbar.
