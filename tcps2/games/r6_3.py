@@ -299,7 +299,49 @@ def _mission_settings():
     return out
 
 
+#: Every option whose edit RE-ASSEMBLES UnrealScript bytecode, rather than
+#: poking bytes in place. All of them are withdrawn together, because the
+#: evidence says the fault is the rewrite path and not the individual features.
+#: Delete this list to put them back once `uscode` is understood.
+REASSEMBLED = ("ss_man_down", "canon_team", "ai_sidearm", "ai_sidearm_contact",
+               "ai_say_dry", "ss_chatter_kill", "ss_chatter_hostage")
+
+REASSEMBLED_REASON = (
+    "Withdrawn 2026-09-15. Every edit that RE-ASSEMBLES bytecode hangs the "
+    "level load, and this is one of them.\n\n"
+    "Bisected on the disc twice: canon_team alone froze the split-screen load "
+    "on Island Estate, and ss_man_down alone froze the initial load with "
+    "removing it loading fine. Against that, all four options that merely poke "
+    "bytes in place -- the equipment wheel, the draw animation, the RPG speed "
+    "and the scope overlay -- work, and split_scope was watched working the "
+    "same day. Two of two against four of four is not a coincidence about the "
+    "features; it is the rewrite path.\n\n"
+    "Measured and cleared, so the next attempt need not redo it: the assembler "
+    "is faithful -- 6,726 of the package's 6,789 script blocks round-trip "
+    "byte-identically through it with zero wrong byte streams and zero wrong "
+    "declared sizes, the 63 misses being the block scanner's own false "
+    "positives. The LIN container is faithful -- every edit repacks to the "
+    "same length AND decompresses back to exactly the bytes put in. The "
+    "archive layout is clean -- no file moves, no size changes. And there is "
+    "no second copy of the script size beside the block being missed.\n\n"
+    "What all of them have in common, and the byte-poke edits never do, is "
+    "that the block's declared MEMORY size shrinks -- ss_man_down -10, "
+    "canon_team -3, ai_sidearm -3, ss_chatter -28 -- while the disk length is "
+    "held fixed by padding with EX_Nothing. That is the next thing to take "
+    "apart.")
+
+
 def _settings():
+    out = _build_settings()
+    for s in out:
+        if s.key in REASSEMBLED and s.enabled:
+            s.enabled = False
+            s.confidence = "broken"
+            s.disabled_reason = REASSEMBLED_REASON
+    return out
+
+
+def _build_settings():
     return [
         # ---- wave mode -------------------------------------------------
         Setting("wave_enable", "Enable wave mode", BOOL, True, "Enemy Waves",
