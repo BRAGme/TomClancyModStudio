@@ -15,6 +15,7 @@ import re
 import hashlib
 import os
 import shutil
+import struct
 import sys
 import tempfile
 
@@ -1159,16 +1160,42 @@ def run_withdrawn_options(args, work):
 
     print("\n[withdrawn options stay withdrawn]")
     profile = BY_ID["r6_3_slus20883"]
-    s = profile.setting("p2_look_parity")
-    check("player 2 look parity is switched off", not s.enabled)
-    check("and says why", "play-test" in s.disabled_reason.lower(),
-          s.disabled_reason[:60])
+    # The on/off switch that removed the clamp outright is gone, replaced by a
+    # dial that re-aims it. The instruction the old switch overwrote is still
+    # never written, and its stock word is still recorded, because a disc that
+    # carries the old patch has to be healable by one ordinary Apply.
+    check("the withdrawn look-parity switch no longer exists",
+          profile.setting("p2_look_parity") is None)
     vals = dict(profile.defaults())
     vals["p2_look_parity"] = True
     words = [w for w in profile.build_edits(vals) if w.va == 0x00142048]
-    check("asking for it anyway emits no word", not words, str(words))
+    check("asking for it by its old key emits no word", not words, str(words))
     pn = [w for w in profile.build_pnach(vals) if w.va == 0x00142048]
     check("and no cheat line either", not pn, str(pn))
+
+    dial = profile.setting("p2_look_speed")
+    check("the dial replaces it", dial is not None and dial.enabled)
+    check("and is stock at 1", dial.default == 1)
+    check("1 writes nothing",
+          not [w for w in profile.build_edits(dict(profile.defaults(),
+                                                   p2_look_speed=1))
+               if 0x00142040 <= w.va <= 0x00142048])
+    for mult in (2, 32, 256):
+        got = [w for w in profile.build_edits(dict(profile.defaults(),
+                                                   p2_look_speed=mult))
+               if 0x00142040 <= w.va <= 0x00142048]
+        check("x%d writes the constant and nothing else" % mult,
+              sorted(w.va for w in got) == [0x00142040, 0x00142044],
+              str([hex(w.va) for w in got]))
+        bits = ((got[0].value & 0xFFFF) << 16) | (got[1].value & 0xFFFF)
+        want = struct.unpack("<f", struct.pack("<f", 0.05 / mult))[0]
+        check("x%d encodes %g s" % (mult, want),
+              struct.unpack("<f", struct.pack("<I", bits))[0] == want)
+        check("x%d stays under the 0.033 s test, so the clamp still fires"
+              % mult, struct.unpack("<f", struct.pack("<I", bits))[0] < 0.033)
+        check("x%d keeps the lui and ori opcodes" % mult,
+              got[0].value >> 26 == 0x0F and got[1].value >> 26 == 0x0D,
+              "%08x %08x" % (got[0].value, got[1].value))
     check("the stock word is still recorded, so a patched disc can be healed",
           profile.stock_words.get(0x00142048) == 0x4483A800,
           hex(profile.stock_words.get(0x00142048, 0)))

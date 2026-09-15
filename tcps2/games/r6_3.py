@@ -25,6 +25,8 @@ Provenance of the wave numbers, briefly, because they are not obvious:
 
 from __future__ import annotations
 
+import struct
+
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
@@ -65,6 +67,11 @@ STOCK = {
     0x00317600: 0x3C034040,   # lui v1, 0x4040       3.0f despawn window
     0x00379B30: 0x24060020,   # addiu a2, zero, 32   R6DecalGroup m_MaxSize
     0x0040ACA0: 0x0C051B7C,   # jal rand             SpawnATerrorist point pick
+    # The substituted delta is built as a lui/ori pair and then moved into the
+    # register, so the constant itself is patchable without touching the branch:
+    #   lui v1, 0x3D4C ; ori v1, v1, 0xCCCD  ->  0x3D4CCCCD == 0.05f
+    0x00142040: 0x3C033D4C,   # lui v1, 0x3D4C      high half of the constant
+    0x00142044: 0x3463CCCD,   # ori v1, v1, 0xCCCD  low half
     0x00142048: 0x4483A800,   # mtc1 v1, $f21       player 2's input dt := 0.05f
     0x0019AE40: 0x14A000C6,   # bnez a1, 0x19b15c   the scope-overlay gate
     0x00446EA8: 0x30420001,   # andi v0, v0, 1      the shadow-pass gate
@@ -527,27 +534,47 @@ def _settings():
                      "the engine disables exactly those -- six per level, and "
                      "they are always the fire and water next to the players.",
                 confidence="verified"),
-        Setting("p2_look_parity", "Match player 2's look speed to player 1",
-                BOOL, False, "Split Screen", enabled=False,
-                confidence="broken",
-                help="The clamp is real and the patch lands on it cleanly. "
-                     "What it does to the game is not what this card used to "
-                     "claim, so the switch is off until that is understood.",
-                disabled_reason=(
-                    "Withdrawn after play-testing. Turning this on made "
-                    "player 2 roughly four times more sensitive with no "
-                    "acceleration ramp at all -- an instant top turn rate -- "
-                    "rather than matching player 1. Two things are certain "
-                    "from the disassembly: $f21 really is this routine's "
-                    "frame delta (it is computed as a timer over 2^32 and "
-                    "capped at 0.04 for a long frame), and the stock clamp "
-                    "raises it TO 0.05 when the real frame is under 33 ms, "
-                    "which at 60 fps makes it three times LARGER, not "
-                    "smaller. So the old card had the direction backwards. "
-                    "The delta feeds accumulators and countdowns rather than "
-                    "a look rate directly, and until the path from it to the "
-                    "camera is traced this stays off."),
-                caution=""),
+        Setting("p2_look_speed", "Player 2 look speed", INT, 1, "Split Screen",
+                minimum=1, maximum=256, unit="x", confidence="experimental",
+                help="Player 2 turns more slowly than player 1, and the cause "
+                     "is one instruction. The input routine computes its own "
+                     "frame delta, then at 0x00142048 substitutes 0.05 s for "
+                     "it -- but only for pad index 1, and only when the real "
+                     "frame is under 33 ms, which at any playable frame rate "
+                     "is always. The look rate is `20.0 / delta`, so a delta "
+                     "that has been made larger is a look rate that has been "
+                     "made slower.\n\n"
+                     "Nothing else differs. All 503 properties of the two "
+                     "player controllers, both input objects and both 3 KB "
+                     "viewport structs were compared from a savestate of both "
+                     "players turning: every term in the look formula -- the "
+                     "sensitivity steps, the option bits, the base rates, the "
+                     "global multiplier, the acceleration terms -- is "
+                     "byte-identical. The only thing that is not the same is "
+                     "that register.\n\n"
+                     "This dial does not remove the clamp. It rewrites the "
+                     "lui/ori pair that builds the constant, so the "
+                     "substituted delta becomes 0.05 / x. 1 leaves the disc "
+                     "alone; 2 doubles player 2's look speed, 4 quadruples it, "
+                     "and so on.",
+                caution="Experimental, and meant to be bisected rather than "
+                        "trusted. The earlier version of this card was a "
+                        "switch that removed the clamp outright, and play-"
+                        "testing found it wildly too fast -- which the "
+                        "measurement now explains: at the captured instant "
+                        "player 1's delta was 0.000229 s, so removing the "
+                        "clamp is not a small correction but a jump of about "
+                        "218x. That 0.000229 is a single sample, and the "
+                        "routine appears to run more than once per frame, so "
+                        "treat it as the order of magnitude and not as the "
+                        "parity value.\n\n"
+                        "Start around 32 and work up or down. One cheap check "
+                        "tells you whether the whole chain is right: the same "
+                        "clamp also divides player 2's MOVEMENT axes. If "
+                        "player 2's walking speed changes as you raise this, "
+                        "the mechanism is confirmed; if only looking changes, "
+                        "the movement axes are inert and this is still the "
+                        "right dial but for a reason not yet proven."),
         Setting("p2_settings_persist", "Keep player 2's settings between "
                 "missions", BOOL, False, "Split Screen", enabled=False,
                 confidence="broken",
@@ -664,10 +691,20 @@ def build_edits(v: dict) -> list:
         w(0x003531D0, NOP, "split screen: rain and snow")
     if v.get("fx_hidden_emitters"):
         w(0x002375E0, NOP, "split screen: stop disabling flagged emitters")
-    # p2_look_parity is deliberately absent: the setting is disabled, and
-    # `engine` would refuse a disabled setting's edit anyway, but leaving the
-    # write here would put it one uncommented line away from shipping again.
-    # What it did, and why it is off, is on the card and in the notes.
+    # Player 2's look speed. The routine clamps ITS OWN frame delta to 0.05 s
+    # for pad index 1 only, and the look rate is `20.0 / delta`, so the smaller
+    # the substituted delta the faster player 2 turns. This does not remove the
+    # clamp -- the earlier card did, and it overshot badly -- it re-aims it, by
+    # rewriting the lui/ori pair that builds the constant. The clamp still
+    # fires (any substituted value is far below the 0.033 s test), it stays
+    # player-2-only, and the result is a dial rather than a switch.
+    speed = int(v.get("p2_look_speed", 1))
+    if speed > 1:
+        bits = struct.unpack("<I", struct.pack("<f", 0.05 / speed))[0]
+        w(0x00142040, 0x3C030000 | (bits >> 16),
+          "player 2 look: x%d, delta = %g s (high)" % (speed, 0.05 / speed))
+        w(0x00142044, 0x34630000 | (bits & 0xFFFF),
+          "player 2 look: x%d (low)" % speed)
 
     ring = int(v.get("decal_ring", 32))
     if ring != 32:
