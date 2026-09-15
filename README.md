@@ -232,6 +232,23 @@ off really removes it.
 
 ---
 
+## The icon
+
+`python assets\make_icon.py` redraws it. The colours are this tool's own,
+sampled out of the icon it already had -- plate `#12151a`, edge `#2c3542`,
+green `#6fae3f` -- so nothing about how it looks has changed. What changed is
+that it is drawn from source at every size instead of one 256 being
+downsampled: at 16 pixels a resampled ring is a smudge, and a smudge reads as
+"some icon" rather than as this one, which is the whole job at taskbar size.
+
+It has a sibling now. The [Xbox Mod Studio][xbox] wears the same reticle in
+blue inside four corner brackets; this one is green with none. Hue and
+silhouette are the two things that separate icons at 16 pixels and each tool
+gets its own of both, while the geometry is deliberately identical so the pair
+reads as one family.
+
+[xbox]: https://github.com/BRAGme/TomClancyXbox-ModStudio
+
 ## Command line
 
 The same binary, the same engine:
