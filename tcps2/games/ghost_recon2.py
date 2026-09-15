@@ -128,7 +128,26 @@ NOTES = (
     "file names suggest: S02_02 is the second mission and S01_02 the sixth. "
     "R6MENUS.INT gives every mission a date, time and weather line, and those "
     "dates run from 2007-07-06 to 2007-12-22 without going backwards. The "
-    "titles come off the levels' own loading screens."
+    "titles come off the levels' own loading screens.\n\n"
+    "No wave mode, and no dial for a bigger starting garrison either. Both "
+    "were looked for properly. Rainbow Six 3's system is R6DZoneWave actors "
+    "placed in the levels; this disc exports none, and nothing here names "
+    "GR3DeploymentZone or m_iNbToSpawn. The words FirstWave, secondwave, "
+    "thirdwave, Reinforce1..4 and Reinforcementa..d DO appear in the level "
+    "packages, which looks promising until you see what they are: script tags "
+    "a designer typed for a trigger in one level, not an engine feature with "
+    "numbers behind it.\n\n"
+    "As for spawning more to begin with, the whole campaign authors twenty "
+    "terrorist-count properties: one in S02_01, five in S02_03 and fourteen in "
+    "S03_05 -- and all fourteen of those read zero, which on this engine means "
+    "an individual rather than a group. Six usable numbers in fourteen levels "
+    "is not something to put a dial on. The enemies are placed one at a time "
+    "by each level's own script.\n\n"
+    "One thing the savestates settled: the copy the game actually loads is "
+    "GR2.IMG's. Its m_fXSensitivityMultiplier reads 0.70 where both VOKES "
+    "copies say 0.60, and 0.70 is what turns up in the engine's parsed cache "
+    "in memory. The tool writes all three copies, so this changes nothing in "
+    "practice -- but it is the reason to keep writing all three."
 )
 
 
@@ -153,13 +172,26 @@ def _settings():
                         "decision is deterministic."),
         Setting("gr2_grenade_dist", "How close enemies will throw grenades",
                 INT, 500, "Enemies", minimum=25, maximum=900, unit="units",
-                confidence="applied", touches="data",
-                help="The game will not let an enemy throw at anything nearer "
-                     "than this, and it ships at 500 -- far enough that a lot "
-                     "of this game's fights never qualify. If grenades feel "
-                     "absent, this is the dial: drop it to 150-250 and they "
-                     "start turning up in rooms instead of only across open "
-                     "ground."),
+                confidence="experimental", touches="data",
+                help="The variable the engine checks before letting an enemy "
+                     "throw. It ships at 500 -- far enough that a lot of this "
+                     "game's fights never qualify -- and the theory is that "
+                     "dropping it to 150-250 brings grenades into rooms "
+                     "instead of only across open ground.",
+                caution="Play-tested at 80 and nothing changed, so treat this "
+                        "as unproven. What HAS been checked: the key is "
+                        "registered in this disc's own script, the overlay "
+                        "names R6GAMESETTINGS.ini, the edit lands in all "
+                        "three copies, no memory-card save carries an "
+                        "overriding value, and a savestate shows the engine "
+                        "keeps a parsed copy of that file in memory. So the "
+                        "number reaches the game and the behaviour did not "
+                        "follow, which points at the variable being one more "
+                        "of the Rainbow Six 3 leftovers this build registers "
+                        "without using -- like the two dead gadget classes on "
+                        "the Loadout page. research/code/p2s.py reads that "
+                        "cache out of a savestate if you want to confirm the "
+                        "80 arrived."),
         Setting("gr2_grenade_delay", "How long they think about it first",
                 CHOICE, "stock", "Enemies", confidence="applied",
                 touches="data",
