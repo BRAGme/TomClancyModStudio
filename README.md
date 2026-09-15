@@ -13,6 +13,8 @@ almost everything interesting in plain text.
 
 [ps2]: https://github.com/BRAGme/TomClancyPS2-ModStudio
 
+![Ghost Recon, the Missions page](docs/screens/ghost-recon-missions.png)
+
 ## Games
 
 | Game | Title id | Where its options come from |
@@ -30,6 +32,11 @@ folder's name, so a renamed folder still works and a folder holding some other
 game is never mistaken for one of these. Black Arrow's prototype disc is a demo
 installer whose payload sits three levels down; point the tool at the folder you
 downloaded and it walks down to find the game.
+
+Each game wears its own menu. Advanced Warfighter's tactical display, over its
+own loading backdrop:
+
+![GRAW, the enemy weapons page](docs/screens/graw-enemy-weapons.png)
 
 ## Running it
 
