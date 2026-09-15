@@ -1,5 +1,6 @@
 """Command line for the same engine the window drives.
 
+    python ModStudio.py --cli scan    [folder]
     python ModStudio.py --cli info    <iso>
     python ModStudio.py --cli list    <iso>
     python ModStudio.py --cli plan    <iso> [--set key=value ...] [--preset NAME]
@@ -8,6 +9,9 @@
     python ModStudio.py --cli cheat   <iso> [--set ...] [--out FILE]
     python ModStudio.py --cli art     <iso> --out DIR
     python ModStudio.py --cli files   <iso> [--grep REGEX]
+
+`scan` takes the folder your discs are in rather than a disc, and is the only
+verb here that does. With no folder it looks in the current one.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ import re
 import sys
 
 from tcps2 import art, engine
-from tcps2.detect import identify
+from tcps2.detect import identify, scan_folder
 from tcps2.model import BOOL, CHOICE, INT
 
 
@@ -53,6 +57,33 @@ def _need(path):
     if not det.ok:
         raise SystemExit(det.message)
     return det
+
+
+def cmd_scan(args):
+    """Every supported disc in a folder.
+
+    Deliberately not the full identify: `scan_folder` skips the PCSX2 CRC,
+    which XORs every word of a boot executable that is 37 MB on one of these
+    discs, and the check for this tool's own code patches, which has to inflate
+    a compressed overlay. Neither tells you anything you need in order to
+    choose a disc, and with them a shelf of eight takes the better part of a
+    minute instead of a tenth of a second. Whichever one you then open gets the
+    full check.
+    """
+    folder = args.folder or os.getcwd()
+    found = scan_folder(folder)
+    if not found:
+        print("No supported discs in %s" % folder)
+        return 1
+    width = max(len(d.profile.short) for d in found)
+    for det in sorted(found, key=lambda d: (d.profile.short,
+                                            os.path.basename(d.path))):
+        print("%-*s  %-11s  %s" % (width, det.profile.short,
+                                   det.profile.serial,
+                                   os.path.basename(det.path)))
+    print("\n%d disc%s in %s"
+          % (len(found), "" if len(found) == 1 else "s", os.path.abspath(folder)))
+    return 0
 
 
 def cmd_info(args):
@@ -217,6 +248,10 @@ def main(argv=None):
         if with_out:
             p.add_argument("--out", metavar="PATH")
         return p
+
+    sp = sub.add_parser("scan", help="list the discs in a folder")
+    sp.add_argument("folder", nargs="?")
+    sp.set_defaults(fn=cmd_scan)
 
     common(sub.add_parser("info")).set_defaults(fn=cmd_info)
     common(sub.add_parser("list")).set_defaults(fn=cmd_list)

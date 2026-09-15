@@ -237,6 +237,7 @@ off really removes it.
 The same binary, the same engine:
 
 ```
+ModStudio.exe --cli scan   "E:\PS2 Games"
 ModStudio.exe --cli info   "R6 3.iso"
 ModStudio.exe --cli list   "R6 3.iso"
 ModStudio.exe --cli plan   "R6 3.iso" --preset heavy
@@ -250,6 +251,13 @@ ModStudio.exe --cli art    "R6 3.iso" --out .\art
 
 `plan` shows exactly which words and which data files would change, and writes
 nothing.
+
+`scan` is the only verb that takes a folder rather than a disc, and with no
+argument it looks in the current one. It deliberately skips the disc CRC while
+listing -- that XORs every word of a boot executable which is 37 MB on one of
+these discs, and it tells you nothing you need in order to choose. A shelf of
+eight lists in a quarter of a second; whichever disc you then open gets the
+full check.
 
 ---
 
