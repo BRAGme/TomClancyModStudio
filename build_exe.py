@@ -1,4 +1,4 @@
-"""Produce dist/ModStudio.exe.
+"""Produce dist/Tom Clancys PS2 ModStudio.exe.
 
     python build_exe.py
 
@@ -16,7 +16,13 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-NAME = "ModStudio"
+#: what the built executable is called. Separate from the entry script,
+#: which keeps its own name -- renaming the output must not go looking
+#: for a source file that does not exist.
+NAME = "Tom Clancys PS2 ModStudio"
+
+#: the script PyInstaller is pointed at
+ENTRY = "ModStudio.py"
 
 HIDDEN = [
     "cli", "gui", "gui.app", "gui.theme", "gui.widgets", "gui.controls",
@@ -31,7 +37,7 @@ HIDDEN = [
     "tcps2.psx", "tcps2.upscale",
     "tcps2.rseloadout", "tcps2.rseguns", "tcps2.rsemissions",
     "tcps2.rsewheel", "tcps2.rserpg", "tcps2.rsesidearm", "tcps2.rsescope", "tcps2.rsedraw",
-    "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon",
+    "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon", "tcps2.rseshadow",
     # zopfli packs the LIN chunks zlib cannot fit back into their
     # slots. Without it those chunks simply refuse every edit.
     "zopfli", "zopfli.zlib",
@@ -113,7 +119,7 @@ def main():
         args += ["--hidden-import", h]
     for e in EXCLUDE:
         args += ["--exclude-module", e]
-    args.append(os.path.join(ROOT, "%s.py" % NAME))
+    args.append(os.path.join(ROOT, ENTRY))
 
     print(" ".join(args))
     rc = subprocess.call(args, cwd=ROOT)

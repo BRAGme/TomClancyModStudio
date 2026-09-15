@@ -108,12 +108,14 @@ def main():
         run_mission_gallery(args)
         run_rpg_speed(args)
         run_split_scope(args)
+        run_split_shadows(args)
         run_split_draw(args)
         run_split_wheel(args)
         run_zopfli_fallback()
         run_enemy_loadouts(args)
         run_loadout_units()
         run_uscode_units()
+        run_vokes_regrow(args)
         run_combination_warnings()
     finally:
         if not args.keep:
@@ -2849,6 +2851,124 @@ def run_split_scope(args):
           and len(rsescope.FRAMEBUFFER_READS) == 8)
 
 
+def run_split_shadows(args):
+    """The branch that discards the projected-shadow pass in split screen.
+
+    The point of these assertions is that the edit is one word, that the word
+    really is the `andi` the module says it is, and that forcing it changes
+    only the opcode -- the registers and the immediate stay put, so the test
+    still reads the same bit of the same byte.
+    """
+    from tcps2 import overlay, rseshadow
+    from tcps2.games import BY_ID
+    from tcps2.games.r6_3 import SP, STOCK
+    from tcps2.iso import Iso
+
+    if not args.rs3data:
+        return
+    print(chr(10) + "[Rainbow Six 3 -- projected shadows in split screen]")
+    with Iso(args.rs3data) as iso:
+        ov = overlay.open_overlay(iso, SP)
+        live = ov.read_word(rseshadow.SHADOW_GATE)
+        flag = ov.read_word(rseshadow.SHADOW_FLAG_READ)
+        branch = ov.read_word(rseshadow.SHADOW_GATE_BRANCH)
+    check("the gate is one of the two words it can be",
+          live in (rseshadow.SHADOW_GATE_STOCK, rseshadow.SHADOW_GATE_FORCED),
+          "%#010x" % live)
+    check("the shipped word is recorded, so a patched disc can be healed",
+          STOCK.get(rseshadow.SHADOW_GATE) == rseshadow.SHADOW_GATE_STOCK,
+          "%r" % STOCK.get(rseshadow.SHADOW_GATE))
+    check("the word in front of it reads the flags byte at +0x94",
+          (flag >> 26) == 0x24 and (flag & 0xFFFF) == 0x0094, "%#010x" % flag)
+    check("and the word after it is the branch that skips the pass",
+          (branch >> 26) == 4 and ((branch >> 16) & 31) == 0, "%#010x" % branch)
+
+    stock, forced = rseshadow.SHADOW_GATE_STOCK, rseshadow.SHADOW_GATE_FORCED
+    check("the shipped word is andi and the edit is ori",
+          (stock >> 26) == 0x0C and (forced >> 26) == 0x0D)
+    check("the edit changes the opcode and nothing else",
+          (stock & 0x03FFFFFF) == (forced & 0x03FFFFFF))
+    check("it still tests bit 0 of the same register",
+          (stock & 0xFFFF) == 1 and ((stock >> 21) & 31) == ((stock >> 16) & 31))
+
+    profile = BY_ID["r6_3_slus20883"]
+    st = profile.setting("split_shadows")
+    check("the option reaches the profile", st is not None)
+    check("and it goes onto the disc, not into the cheat file",
+          st.touches == "words")
+    check("and says plainly that it is untested", st.confidence == "untested")
+    check("leaving it off writes no word",
+          not [e for e in profile.build_edits(profile.effective({}))
+               if e.va == rseshadow.SHADOW_GATE])
+    made = [e for e in profile.build_edits(
+                profile.effective({"split_shadows": True}))
+            if e.va == rseshadow.SHADOW_GATE]
+    check("turning it on writes exactly that one word",
+          len(made) == 1 and made[0].value == forced and made[0].stock == stock)
+    base = profile.build_pnach(profile.effective({}))
+    with_it = profile.build_pnach(profile.effective({"split_shadows": True}))
+    check("and it adds nothing to the cheat file",
+          len(with_it) == len(base), "%d vs %d" % (len(with_it), len(base)))
+
+    check("every timed scope starts before it stops",
+          all(x < y for x, y in rseshadow.SHADOW_TIMERS.values())
+          and len(rseshadow.SHADOW_TIMERS) == 3)
+    check("the recorded map list is the measured one",
+          len(rseshadow.SHADOW_MAPS) == 15
+          and sum(rseshadow.SHADOW_MAPS.values()) == 25,
+          "%d maps, %d projectors" % (len(rseshadow.SHADOW_MAPS),
+                                      sum(rseshadow.SHADOW_MAPS.values())))
+    check("and the map picked for testing is in it",
+          rseshadow.BEST_TEST_MAP in rseshadow.SHADOW_MAPS)
+
+    # The map list is a measurement, so re-measure some of it off the disc.
+    import re, zlib
+    from tcps2 import lin, vokes
+
+    NONE_TAG = bytes([5]) + b"None" + bytes([0])
+    RX = re.compile("^R6LightProjector" + chr(92) + "d+$")
+
+    def projectors(arc, member):
+        blob = arc.read_file(member)
+        chunks, _tail = lin.parse(blob)
+        head = bytearray()
+        for rawsz, comp, at in chunks:
+            head += zlib.decompress(blob[at:at + comp])
+            if len(head) >= (1 << 20):
+                break
+        q = head.find(NONE_TAG)
+        names = []
+        while 0 <= q < len(head):
+            n = head[q]
+            if n == 0 or q + 1 + n + 4 > len(head):
+                break
+            txt = head[q + 1:q + n]
+            if head[q + n] != 0 or not all(32 <= c < 127 for c in txt):
+                break
+            names.append(txt.decode())
+            q += 1 + n + 4
+        return sum(1 for x in names if RX.match(x)), names
+
+    with Iso(args.rs3data) as iso:
+        arcs = {str(getattr(v.r, "name", "")).upper(): v
+                for v in vokes.open_archives(iso)}
+        v1 = [x for k, x in arcs.items() if "VOKES1" in k][0]
+        v2 = [x for k, x in arcs.items() if "VOKES2" in k][0]
+        n_off, names_off = projectors(v1, "/GARAGE_AOFF.LIN")
+        n_ss, names_ss = projectors(v1, "/GARAGE_A_SS.LIN")
+        n_none, names_none = projectors(v2, "/OIL_REFINERY_AOFF.LIN")
+    check("Garage A really carries the three projectors claimed",
+          n_off == rseshadow.SHADOW_MAPS["GARAGE_A"] == 3, str(n_off))
+    check("its split-screen build carries exactly the same three",
+          n_ss == n_off, "%d vs %d" % (n_ss, n_off))
+    check("and both name tables are identical, so nothing was cut",
+          names_off == names_ss)
+    check("a map with no shadow pass really has none",
+          n_none == 0 and "ShadowBufferMatrix" not in names_none, str(n_none))
+    check("while Garage does declare the shadow-buffer property",
+          "ShadowBufferMatrix" in names_off)
+
+
 def run_split_draw(args):
     """The guard that stops the draw animation playing twice in split screen.
 
@@ -2919,6 +3039,70 @@ def run_split_draw(args):
     check("turning it on writes exactly one edit",
           len([e for e in profile.build_data({"split_draw_once": True})
                if e.op == "split_draw"]) == 1)
+
+
+def run_vokes_regrow(args):
+    """A file that shrank must be able to grow back into its own slot.
+
+    The archive records a file's extent as its length, so shrinking one gives
+    up the rest of its slot: nothing claims those bytes any more. Before this
+    was fixed, the next edit even a byte larger than the shrunken size could no
+    longer fit, and the file was relocated into the pad at the end -- on Rainbow
+    Six 3 that moved R6GAMESETTINGS.INI, which is read at every level load,
+    about a gigabyte away from everything read with it. These archives ship in
+    three redundant copies precisely to keep seeks short, so that is a load-time
+    regression and not a cosmetic one.
+    """
+    from tcps2.iso import Iso
+    from tcps2.vokes import Region, open_archives
+
+    if not args.rs3data:
+        return
+    print("\n[vokes -- a shrunken file grows back where it was]")
+
+    class Shadow(Region):
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    with Iso(args.rs3data) as iso:
+        arc = open_archives(iso, r"/VOKES0\.IMG$")[0]
+        arc.r = Shadow(arc.r)
+        key = "/R6GAMESETTINGS.INI"
+        entry = arc.files[key]
+        home, full = entry.offset, entry.size
+        body = arc.read_file(key)
+
+        arc.write(key, body[:full - 40])
+        check("shrinking keeps a file where it is",
+              arc.files[key].offset == home and arc.files[key].size == full - 40,
+              "0x%x/%d" % (arc.files[key].offset, arc.files[key].size))
+
+        arc.write(key, body[:full - 6])
+        check("and growing back into its own slot does too",
+              arc.files[key].offset == home,
+              "moved to 0x%x" % arc.files[key].offset)
+
+        arc.write(key, body)
+        check("right back to its full original length",
+              arc.files[key].offset == home and arc.files[key].size == full)
+        check("and the bytes read back unchanged", arc.read_file(key) == body)
+
+        try:
+            arc.write(key, body + bytes(1 << 20))
+            moved = arc.files[key].offset != home
+        except Exception:
+            moved = True
+        check("a file that truly outgrows its slot still moves", moved)
 
 
 def run_combination_warnings():

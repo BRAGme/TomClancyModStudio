@@ -193,7 +193,7 @@ there is no arms-and-weapon mesh anywhere in the game to show instead.
 
 ## Using it
 
-1. Download `ModStudio.exe`. No install, no Python.
+1. Download `Tom Clancys PS2 ModStudio.exe`. No install, no Python.
 2. **Close your emulator** — it keeps the ISO locked.
 3. Browse to the folder your discs are in and choose one from **Game**, or
    browse straight to a disc image. Either way the tool identifies it from
@@ -254,16 +254,16 @@ reads as one family.
 The same binary, the same engine:
 
 ```
-ModStudio.exe --cli scan   "E:\PS2 Games"
-ModStudio.exe --cli info   "R6 3.iso"
-ModStudio.exe --cli list   "R6 3.iso"
-ModStudio.exe --cli plan   "R6 3.iso" --preset heavy
-ModStudio.exe --cli apply  "R6 3.iso" --set wave_trigger=4 --set wave_size=2
-ModStudio.exe --cli cheat  "R6 3.iso" --out 21CC1EC3.pnach
-ModStudio.exe --cli revert "R6 3.iso"
-ModStudio.exe --cli apply  "Ghost Recon.iso" --set gr_all_difficulties=true
-ModStudio.exe --cli files  "Ghost Recon.iso" --grep "\.MIS$"
-ModStudio.exe --cli art    "R6 3.iso" --out .\art
+"Tom Clancys PS2 ModStudio.exe" --cli scan   "E:\PS2 Games"
+"Tom Clancys PS2 ModStudio.exe" --cli info   "R6 3.iso"
+"Tom Clancys PS2 ModStudio.exe" --cli list   "R6 3.iso"
+"Tom Clancys PS2 ModStudio.exe" --cli plan   "R6 3.iso" --preset heavy
+"Tom Clancys PS2 ModStudio.exe" --cli apply  "R6 3.iso" --set wave_trigger=4 --set wave_size=2
+"Tom Clancys PS2 ModStudio.exe" --cli cheat  "R6 3.iso" --out 21CC1EC3.pnach
+"Tom Clancys PS2 ModStudio.exe" --cli revert "R6 3.iso"
+"Tom Clancys PS2 ModStudio.exe" --cli apply  "Ghost Recon.iso" --set gr_all_difficulties=true
+"Tom Clancys PS2 ModStudio.exe" --cli files  "Ghost Recon.iso" --grep "\.MIS$"
+"Tom Clancys PS2 ModStudio.exe" --cli art    "R6 3.iso" --out .\art
 ```
 
 `plan` shows exactly which words and which data files would change, and writes
@@ -283,7 +283,7 @@ full check.
 ```
 pip install pillow pyinstaller
 python ModStudio.py            # run the window
-python build_exe.py            # produce dist\ModStudio.exe
+python build_exe.py            # produce dist\Tom Clancys PS2 ModStudio.exe
 python tests\run_tests.py --iso "R6 3.iso" --gr "Ghost Recon.iso" --js "Jungle Storm.iso"
 ```
 

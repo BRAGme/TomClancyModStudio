@@ -28,7 +28,7 @@ from __future__ import annotations
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
-from .. import (rsecanon, rsedraw, rseloadout, rsemandown, rserpg,
+from .. import (rsecanon, rsedraw, rseloadout, rsemandown, rserpg, rseshadow,
                 rsesidearm, rsescope, rsewheel)
 
 BASE = 0x00100000
@@ -67,6 +67,7 @@ STOCK = {
     0x0040ACA0: 0x0C051B7C,   # jal rand             SpawnATerrorist point pick
     0x00142048: 0x4483A800,   # mtc1 v1, $f21       player 2's input dt := 0.05f
     0x0019AE40: 0x14A000C6,   # bnez a1, 0x19b15c   the scope-overlay gate
+    0x00446EA8: 0x30420001,   # andi v0, v0, 1      the shadow-pass gate
 }
 
 # Scaffolding from the research build that produced this profile: a tracing stub
@@ -516,6 +517,7 @@ def _settings():
         rsescope.card("", "Split Screen"),
         rsedraw.card("", "Split Screen"),
         rsescope.viewport_card("", "Split Screen"),
+        rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
                 help="Weather is gated off in split screen by a single branch."),
@@ -647,6 +649,9 @@ def build_edits(v: dict) -> list:
     if v.get("split_scope"):
         w(rsescope.SCOPE_BRANCH, rsescope.SCOPE_BRANCH_OPEN,
           "split screen: let the scope overlay draw")
+    if v.get("split_shadows"):
+        w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
+          "split screen: let the shadow pass run")
     if v.get("fx_impact"):
         w(0x003F1934, NOP, "split screen: static-world impact decal")
         w(0x003F1BB4, NOP, "split screen: actor-attached impact decal")

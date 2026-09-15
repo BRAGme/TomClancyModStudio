@@ -258,6 +258,24 @@ class Vokes:
                          "no file claims -- refusing to write over it"
                          % (self.r.name, size))
 
+    def _tail_room(self, e):
+        """Blank bytes sitting immediately after a file, that it may grow into.
+
+        Only counts a run that starts exactly where the file ends, is claimed by
+        no other entry, and is verified to be all zeros -- the same standard
+        `allocate` holds free space to. Anything else and the file relocates.
+        """
+        end = e.offset + e.size
+        for start, length in self.free_blocks(exclude=e):
+            # `exclude` makes the file's own extent free too, so the block that
+            # covers it starts at or before the file and runs past its end.
+            if start <= end < start + length:
+                room = start + length - end
+                if room and self._is_blank(end, room):
+                    return room
+                return 0
+        return 0
+
     def write(self, path, data, raw_size=None):
         """Replace a file, relocating it if it has outgrown its slot.
 
@@ -273,7 +291,16 @@ class Vokes:
             raise VokesError("%s: %s is a stub record (offset 0x%x is before "
                              "the data area) and cannot be replaced"
                              % (self.r.name, e.path, e.offset))
-        if len(data) <= e.size:
+        if len(data) <= e.size + self._tail_room(e):
+            # Fits where it already is -- possibly by growing back into slack it
+            # gave up earlier. A file that SHRINKS has its recorded extent
+            # shrunk with it, so the rest of its original slot stops being
+            # claimed by anything; without this, an edit one byte larger than
+            # the shrunken size would relocate a file that still fits its own
+            # slot perfectly well. That is not a cosmetic difference: these
+            # archives exist in three redundant copies to keep seeks short, and
+            # a file exiled to the pad at the end of a 2.6 GB image is a very
+            # long seek away from everything read alongside it.
             self.r.write(e.offset, data)
             if len(data) < e.size:
                 self.r.write(e.offset + len(data), b"\x00" * (e.size - len(data)))
