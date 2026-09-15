@@ -21,7 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcps2 import art, engine  # noqa: E402
-from tcps2.detect import identify  # noqa: E402
+from tcps2.detect import identify, look  # noqa: E402
 from tcps2.model import BOOL, INT  # noqa: E402
 
 from . import discorddialog, presence, skins, theme  # noqa: E402
@@ -31,7 +31,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "2.9"
+VERSION = "3.0"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -42,6 +42,11 @@ HEADER = 148
 ACTION_H = 46
 LOG_H = 88
 GUTTER = 22
+
+#: Both field labels are given the same width in characters so the entry and
+#: the picker below it start at the same x. Left to size themselves, "DISC" and
+#: "GAMES FOLDER" put the two fields a centimetre apart.
+LABEL_W = 13
 
 
 def settings_path():
@@ -63,6 +68,9 @@ class App(tk.Tk):
 
         self.detection = None
         self.profile = None
+        #: label -> path for whatever the picker is currently offering
+        self._shelf = {}
+        self._shelf_dir = ""
         self.vars, self.cards, self.nav_items = {}, {}, {}
         self.active_group = None
         self.busy = False
@@ -113,7 +121,8 @@ class App(tk.Tk):
         self.disc = Chrome(self.stage, kind="panel", pad=theme.px(9))
         row = tk.Frame(self.disc.body, bg=p.panel)
         row.pack(fill="x")
-        self.disc_lbl = tk.Label(row, text="DISC", bg=p.panel, fg=p.dim,
+        self.disc_lbl = tk.Label(row, text="GAMES FOLDER", width=LABEL_W,
+                                 anchor="w", bg=p.panel, fg=p.dim,
                                  font=theme.F("body", 9))
         self.disc_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
         self.path_var = tk.StringVar()
@@ -131,8 +140,27 @@ class App(tk.Tk):
         self.path_entry.pack(fill="x", expand=True, padx=theme.px(12),
                              pady=theme.px(7))
         self.path_entry.bind("<Return>", lambda _e: self._load_iso(self.path_var.get()))
-        self.browse = ActionButton(row, "Browse", self._browse)
+        self.browse = ActionButton(row, "Disc image", self._browse)
         self.browse.pack(side="left", padx=(theme.px(10), 0))
+        self.browse_dir = ActionButton(row, "Folder", self._browse_folder)
+        self.browse_dir.pack(side="left", padx=(theme.px(6), 0))
+
+        # Second line: which game, out of the discs in that folder. The two
+        # fields are the two questions in order -- where are your discs, and
+        # which one -- and the top one keeps holding the FOLDER after a disc
+        # loads, so the pair reads as a sentence instead of the top field
+        # jumping to a file path the moment you choose something.
+        pick = tk.Frame(self.disc.body, bg=p.panel)
+        pick.pack(fill="x", pady=(theme.px(9), 0))
+        self.shelf_lbl = tk.Label(pick, text="GAME", width=LABEL_W, anchor="w",
+                                  bg=p.panel, fg=p.dim, font=theme.F("body", 9))
+        self.shelf_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
+        self.game_var = tk.StringVar()
+        self.game_box = ttk.Combobox(pick, textvariable=self.game_var,
+                                     state="readonly", values=[])
+        self.game_box.pack(side="left", fill="x", expand=True,
+                           padx=(0, theme.px(4)), pady=theme.px(2))
+        self.game_box.bind("<<ComboboxSelected>>", self._pick_game)
 
         self.status = tk.Label(self.stage, text="", bg=p.bg, fg=p.dim,
                                font=theme.F("body", 9), anchor="w")
@@ -234,8 +262,8 @@ class App(tk.Tk):
         self.logwrap.place(x=x, y=log_top, width=width, height=px(LOG_H))
         self.logwrap.set_height(px(LOG_H))
 
-        for b in (self.browse, self.apply_btn, self.cheat_btn,
-                  self.revert_btn, self.discord_btn):
+        for b in (self.browse, self.browse_dir, self.apply_btn,
+                  self.cheat_btn, self.revert_btn, self.discord_btn):
             b.configure(width=b.width_needed())
 
     def _path_indent(self):
@@ -291,10 +319,48 @@ class App(tk.Tk):
 
     # -- disc --------------------------------------------------------------
     def _browse(self):
-        start = os.path.dirname(self.path_var.get()) if self.path_var.get() else ""
+        start = self.path_var.get() or ""
         path = filedialog.askopenfilename(
             title="Choose a PS2 disc image", initialdir=start or None,
             filetypes=[("PS2 disc images", "*.iso *.bin"), ("All files", "*.*")])
+        if path:
+            self._load_iso(path)
+
+    def _browse_folder(self):
+        start = self.path_var.get() or ""
+        path = filedialog.askdirectory(
+            title="Choose the folder your PS2 discs are in",
+            initialdir=start or None, mustexist=True)
+        if path:
+            self._load_iso(path)
+
+    def _shelf_label(self, det):
+        """What one entry in the picker reads as -- the game, then the file,
+        because a shelf often holds the same game twice."""
+        return "%s   \u00b7   %s   \u00b7   %s" % (
+            det.profile.short, det.profile.serial,
+            os.path.basename(det.path)[:46])
+
+    def _fill_shelf(self, folder, found, current=None):
+        self._shelf_dir = folder
+        self._shelf = {}
+        for det in sorted(found, key=lambda d: d.profile.short):
+            self._shelf[self._shelf_label(det)] = det.path
+        names = list(self._shelf)
+        widest = max((len(n) for n in names), default=30)
+        self.game_box.configure(values=names, width=min(74, widest + 2))
+        self.game_var.set("")
+        if current:
+            self._select_in_shelf(current)
+
+    def _select_in_shelf(self, path):
+        for label, known in self._shelf.items():
+            if os.path.normcase(known) == os.path.normcase(path):
+                self.game_var.set(label)
+                return
+
+    def _pick_game(self, _event=None):
+        path = self._shelf.get(self.game_var.get())
         if path:
             self._load_iso(path)
 
@@ -302,15 +368,34 @@ class App(tk.Tk):
         path = path.strip().strip('"')
         if not path:
             return
-        self.path_var.set(path)
-        self._say("Reading %s" % os.path.basename(path))
-        det = identify(path)
+        self._say("Reading %s" % (os.path.basename(path.rstrip("\\/")) or path))
+
+        # Reading a shelf again opens every disc image on it, and can only find
+        # what it just found, so a game chosen out of the picker skips to
+        # identifying that one.
+        parent = os.path.dirname(path.rstrip("\\/"))
+        cached = (self._shelf_dir
+                  and os.path.normcase(parent) == os.path.normcase(self._shelf_dir))
+        if cached:
+            det, shelf = identify(path), []
+        else:
+            det, shelf = look(path)
+
+        folder = os.path.dirname(det.path) if det.ok else path
+        self.path_var.set(folder)
+        if shelf:
+            self._fill_shelf(folder, shelf,
+                             current=det.path if det.ok else None)
+        elif det.ok:
+            self._select_in_shelf(det.path)
         self.detection = det
 
         if not det.ok:
             self.profile = None
-            self.status.configure(text=det.message, fg=theme.P.bad)
-            self._say(det.message, "bad")
+            # A folder of discs is not a failure, it is a question.
+            tone = theme.P.warn if self._shelf else theme.P.bad
+            self.status.configure(text=det.message, fg=tone)
+            self._say(det.message, "warn" if self._shelf else "bad")
             self.area.clear()
             self._set_buttons(False)
             return
@@ -350,6 +435,8 @@ class App(tk.Tk):
         for wdg in self.disc.body.winfo_children():
             wdg.configure(bg=p.panel)
         self.disc_lbl.configure(bg=p.panel, fg=p.dim)
+        self.shelf_lbl.configure(bg=p.panel, fg=p.dim)
+        self.shelf_lbl.master.configure(bg=p.panel)
         self.path_well.configure(bg=p.bg)
         self.path_entry.configure(bg=p.bg, fg=p.text, insertbackground=p.text)
         self.log.configure(bg=p.panel, fg=p.dim)

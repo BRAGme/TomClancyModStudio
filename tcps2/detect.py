@@ -33,7 +33,15 @@ class Detection:
 BOOT_RX = re.compile(r"BOOT2\s*=\s*cdrom0:\\?([A-Za-z0-9_.]+)", re.I)
 
 
-def identify(path) -> Detection:
+def identify(path, crc=True) -> Detection:
+    """What disc this is.
+
+    `crc=False` skips the two expensive parts -- the PCSX2 CRC, which XORs
+    every word of a boot executable that is 37 MB on one of these discs, and
+    the check for this tool's own code patches, which has to inflate a
+    compressed overlay to read them back. Listing a folder of discs does not
+    need either, and with them it takes the better part of a minute.
+    """
     path = str(path)
     if not os.path.isfile(path):
         return Detection(path, False, message="File not found.")
@@ -56,8 +64,8 @@ def identify(path) -> Detection:
                                  message="Not a supported disc (boot file %r, "
                                          "volume %r). Supported: %s."
                                          % (boot or "?", volume, names))
-            crc = iso_crc(iso, profile.boot)
-            shift = own_crc_shift(iso, profile)
+            crc = iso_crc(iso, profile.boot) if crc else ""
+            shift = own_crc_shift(iso, profile) if crc else 0
             missing = [o.name for o in profile.overlays
                        if iso.find(o.iso_pattern) is None]
     except IsoError as exc:
@@ -72,7 +80,8 @@ def identify(path) -> Detection:
     # That is not a different revision, and refusing to patch it again would
     # strand anyone who used a code option once -- so undo our own words first
     # and compare against that.
-    crc_ok = (not profile.pcsx2_crc) or crc.upper() == profile.pcsx2_crc.upper()
+    crc_ok = (not crc) or (not profile.pcsx2_crc) or \
+        crc.upper() == profile.pcsx2_crc.upper()
     ours = False
     if not crc_ok and shift:
         stock_crc = "%08X" % (int(crc, 16) ^ shift)
@@ -112,9 +121,32 @@ def scan_folder(folder, limit=200) -> list:
     for name in names:
         if not name.lower().endswith((".iso", ".bin")):
             continue
-        det = identify(os.path.join(folder, name))
+        det = identify(os.path.join(folder, name), crc=False)
         if det.ok:
             out.append(det)
         if len(out) >= limit:
             break
     return out
+
+
+def look(path):
+    """(detection, shelf) -- one disc, or the discs sitting in a folder.
+
+    A folder is not a disc, so pointing at one fills the picker rather than
+    being an error. Pointing at a disc reads it properly and lists what is
+    beside it, because the reason to open one of these is usually to do the
+    same thing to the next one.
+    """
+    path = os.path.abspath(str(path))
+    if os.path.isdir(path):
+        found = scan_folder(path)
+        if found:
+            return Detection(path, False,
+                             message="%d disc%s here \u2014 pick one from the "
+                                     "list." % (len(found),
+                                                "" if len(found) == 1 else "s")), found
+        return Detection(path, False,
+                         message="No supported disc images in this folder."), []
+    det = identify(path)
+    shelf = scan_folder(os.path.dirname(path)) if det.ok else []
+    return det, shelf

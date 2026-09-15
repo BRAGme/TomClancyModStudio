@@ -180,6 +180,19 @@ def _apply(st: ttk.Style):
     st.map("TCombobox", fieldbackground=[("readonly", P.panel)],
            foreground=[("disabled", P.faint)])
 
+    # A combobox's DROP-DOWN is not a ttk widget -- it is a plain Tk listbox in
+    # a toplevel, and `Style.configure` does not reach it. It stays stock white
+    # unless it is told otherwise through the option database, which is what
+    # this is.
+    if _root is not None:
+        for option, value in (("background", P.panel),
+                              ("foreground", P.text),
+                              ("selectBackground", P.sel_fill),
+                              ("selectForeground", P.sel_text),
+                              ("borderWidth", 0),
+                              ("highlightThickness", 0)):
+            _root.option_add("*TCombobox*Listbox.%s" % option, value)
+
     st.configure("Vertical.TScrollbar", background=P.panel2, troughcolor=P.bg,
                  borderwidth=0, arrowcolor=P.dim)
     st.map("Vertical.TScrollbar",

@@ -3,7 +3,8 @@
 A Windows tool that patches **Tom Clancy PlayStation 2 disc images in place** and
 gives you switches for things the games shipped with turned off.
 
-Point it at an ISO, move some sliders, press **Apply to disc**. Nothing is
+Point it at an ISO -- **or at the folder your ISOs live in**, and pick the game
+out of the list -- move some sliders, press **Apply to disc**. Nothing is
 rebuilt and no ISO tools are needed. A pristine copy of everything it overwrites
 is kept next to the ISO, and **Restore disc** puts it all back.
 
@@ -194,10 +195,15 @@ there is no arms-and-weapon mesh anywhere in the game to show instead.
 
 1. Download `ModStudio.exe`. No install, no Python.
 2. **Close your emulator** — it keeps the ISO locked.
-3. Browse to your disc image. The tool identifies it from `SYSTEM.CNF` and checks
+3. Browse to the folder your discs are in and choose one from **Game**, or
+   browse straight to a disc image. Either way the tool identifies it from
+   `SYSTEM.CNF` and checks
    the disc CRC against the build the options were measured on; if it does not
    match you get a warning and the code options are refused, because patching
-   addresses on a different revision corrupts it.
+   addresses on a different revision corrupts it. Listing a folder deliberately
+   skips that CRC -- it XORs every word of a boot executable that is 37 MB on
+   one of these discs, and doing it eight times to draw a menu takes the better
+   part of a minute. The disc you actually open still gets the full check.
 4. Pick a preset or set things by hand, then **Apply to disc**.
 
 ### The cheat file
