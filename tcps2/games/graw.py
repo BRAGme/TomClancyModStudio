@@ -144,7 +144,7 @@ def _settings():
          "speed", "spotting", "grenade_dist", "grenade_delay"],
         "graw_", "Enemies",
     ) + r6tuning.cards(["sens_steps", "sens_boost"], "graw_", "Controls") \
-      + r6tuning.cards(["player_grenades"], "graw_", "Loadout")
+      + r6tuning.cards(["player_grenades", "player_mags"], "graw_", "Loadout")
 
 
 

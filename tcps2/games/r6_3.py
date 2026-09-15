@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
-from . import r6tuning
+from . import r6tuning, xboxbuild
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -361,6 +361,36 @@ def _settings():
                         "it is deterministic, gated by the two settings below. "
                         "So this is how many of them can throw, and those are "
                         "when."),
+        Setting("xbox_tuning", "Play it the way the Xbox build does", CHOICE,
+                "stock", "Enemy Behaviour", confidence="measured",
+                touches="data",
+                choices=[Choice("stock", "Leave the PS2 tuning alone"),
+                         Choice("enemies", "Enemies only"),
+                         Choice("aim", "Aim and recoil only"),
+                         Choice("both", "Both")],
+                help="Both builds ship the same 239 settings and 21 of them "
+                     "carry different numbers. Seven of those change how it "
+                     "plays. Enemies: recruits go from 0.20 skill to 0.40, "
+                     "and grenades are thrown from 500 units out instead of "
+                     "200. Aim: the muzzle kicks more than twice as hard "
+                     "(60 to 125), the stick dead zone quadruples (0.1 to "
+                     "0.40), there is less damping and less smoothing "
+                     "settling the reticle, the turn curve's knee moves from "
+                     "90 to 160, and zooming no longer slows your turn. The "
+                     "aim half is the bigger half -- the PS2 port was made "
+                     "markedly more forgiving to aim with.",
+                caution="The individual dials on this page and on Controls "
+                        "are applied AFTER this, so anything you set yourself "
+                        "wins over the Xbox value for that one key."),
+        Setting("xbox_ammo", "...including the Xbox ammunition rules", BOOL,
+                False, "Enemy Behaviour", confidence="measured",
+                touches="data",
+                help="The other two differences go the other way: the Xbox "
+                     "build gives Rainbow unlimited magazines and leaves 5 "
+                     "rounds in a weapon that has run dry, where the PS2 "
+                     "build gives neither. Separate from the difficulty set "
+                     "because it makes the game easier, not harder.",
+                requires={"xbox_tuning": ["enemies", "aim", "both"]}),
         Setting("grenade_dist", "How close enemies will throw grenades", INT,
                 500, "Enemy Behaviour", minimum=25, maximum=900,
                 unit="units", confidence="applied", touches="data",
@@ -422,7 +452,7 @@ def _settings():
     ] + r6tuning.cards(
         ["fire_delay", "sight", "search_time", "speed", "spotting"],
         "", "Enemy Behaviour",
-    ) + r6tuning.cards(["player_grenades"], "", "Loadout") + [
+    ) + r6tuning.cards(["player_grenades", "player_mags"], "", "Loadout") + [
 
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
@@ -659,6 +689,10 @@ def build_data(v: dict) -> list:
                             note="%s: enemy counts to %d%%" % (title, pct)))
 
     ini = {}
+    # First, so that any dial the player has set themselves overwrites
+    # the Xbox value for that key rather than the other way round.
+    ini.update(xboxbuild.ini_updates(v.get("xbox_tuning", "stock"),
+                                     bool(v.get("xbox_ammo"))))
 
     if int(v.get("grenade_dist", 500)) != 500:
         ini["m_fMinDistToThrowGrenade"] = int(v["grenade_dist"])

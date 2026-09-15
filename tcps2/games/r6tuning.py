@@ -43,6 +43,7 @@ STOCK = {
     "spotter": ("0.8", "0.6"),
     "target": ("1.2", "1.4"),
     "player_grenades": 1,
+    "player_mags": 0,
     "sens_steps": 10,
 }
 
@@ -145,6 +146,14 @@ def ini_updates(p: str, v: dict) -> dict:
     if mult != 1:
         for tier in ("Recruit", "Veteran", "Elite"):
             out["m_PlayerGrenadeMultiplier" + tier] = mult
+
+    # 0 means "leave the shipped 3/2/2 alone"; anything else applies to all
+    # three tiers, because the point of the dial is a flat rule about how much
+    # ammunition you start a mission with rather than a difficulty curve.
+    mags = int(v.get(p + "player_mags", 0))
+    if mags:
+        for tier in ("Recruit", "Veteran", "Elite"):
+            out["m_PlayerMagazineMultiplier" + tier] = mags
 
     return out
 
@@ -325,6 +334,24 @@ def _player_grenades(key, group, over):
                    **over)
 
 
+def _player_mags(key, group, over):
+    return Setting(key, "Magazines you start with", INT, 0, group, minimum=0,
+                   maximum=10, unit="x", confidence="applied", touches="data",
+                   help="The same AMMO MULTIPLIERS block, for magazines. This "
+                        "is the number behind starting a mission with far more "
+                        "ammunition than you can use: the kit's own magazine "
+                        "count is multiplied by 3 on Recruit and 2 on Veteran "
+                        "and Elite. Setting this to 1 gives you exactly what "
+                        "the kit says and nothing spare, which is the setting "
+                        "to use if you want running dry to be a real "
+                        "possibility. 0 leaves the shipped 3/2/2 alone.",
+                   caution="There is no way to pick a weapon up off the "
+                           "ground in this game, so a dry primary means the "
+                           "sidearm and then nothing. 1x is a real "
+                           "constraint; go lower and you cannot.",
+                   **over)
+
+
 def _sens_steps(key, group, over):
     return Setting(key, "Look sensitivity ceiling", INT, 10, group, minimum=10,
                    maximum=30, unit="steps", confidence="applied",
@@ -355,6 +382,7 @@ _CARDS = {
     "grenade_dist": _grenade_dist,
     "grenade_delay": _grenade_delay,
     "player_grenades": _player_grenades,
+    "player_mags": _player_mags,
     "sens_steps": _sens_steps,
     "sens_boost": _sens_boost,
 }

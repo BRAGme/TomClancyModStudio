@@ -84,6 +84,7 @@ def main():
     ap.add_argument("--graw", help="Advanced Warfighter ISO, for its INI")
     ap.add_argument("--lockdown", help="Lockdown ISO, for its Nimitz archive")
     ap.add_argument("--soaf", help="Sum of All Fears image, for its missions")
+    ap.add_argument("--xbox", help="the Xbox build's xboxdynamic.umd")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -102,6 +103,7 @@ def main():
         run_rse_weapons(args)
         run_lockdown_weapons(args)
         run_float_locator()
+        run_xbox_tuning(args)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1607,6 +1609,92 @@ def run_float_locator():
           not upackage.float_properties(huge, names, "m_fRateOfFire", (0.01, 5000)))
     check("the int locator does not answer for a float",
           not upackage.find_int_props(good, names, "m_fRateOfFire"))
+
+
+def run_xbox_tuning(args):
+    """The Xbox-match option, checked against both builds' own files.
+
+    The PS2 side comes out of the backup store rather than off the disc: a
+    disc that has been played with no longer says what the game shipped with,
+    and half of a first attempt at this diff turned out to be the player's own
+    edits rather than a difference between the builds.
+    """
+    import re
+    from tcps2 import dataedit, engine, rselzo
+    from tcps2.games import xboxbuild
+    from tcps2.games.r6_3 import PROFILE
+
+    print("\n[Rainbow Six 3 -- matching the Xbox build]")
+    card = PROFILE.setting("xbox_tuning")
+    check("the option is there, with four choices",
+          card is not None and len(card.choices) == 4)
+    check("leaving it alone writes nothing",
+          not [e for e in PROFILE.build_data(dict(PROFILE.defaults()))
+               if e.op == "ini_values"])
+
+    vals = dict(PROFILE.defaults())
+    vals["xbox_tuning"] = "both"
+    got = [e for e in PROFILE.build_data(vals) if e.op == "ini_values"]
+    keys = got[0].params["values"] if got else {}
+    check("both halves make one edit of eight keys", len(keys) == 8, str(len(keys)))
+    check("and the ammunition rules are not in it",
+          "m_bUnlimitedRainbowMagazines" not in keys)
+    vals["xbox_ammo"] = True
+    keys2 = [e for e in PROFILE.build_data(vals)
+             if e.op == "ini_values"][0].params["values"]
+    check("asking for them adds exactly two more", len(keys2) == 10, str(len(keys2)))
+
+    # a dial the player sets must beat the Xbox value for that key
+    vals["grenade_dist"] = 250
+    keys3 = [e for e in PROFILE.build_data(vals)
+             if e.op == "ini_values"][0].params["values"]
+    check("a dial the player set wins over the Xbox value",
+          keys3["m_fMinDistToThrowGrenade"] == 250,
+          str(keys3["m_fMinDistToThrowGrenade"]))
+
+    if not args.iso:
+        return
+    KEY = re.compile(rb"^[ \t]*(m_[A-Za-z0-9_]+)[ \t]*=[ \t]*([^\r\n;]*)", re.M)
+
+    def values(blob):
+        out = {}
+        for m in KEY.finditer(blob):
+            out.setdefault(m.group(1).decode(), m.group(2).decode().strip())
+        return out
+
+    store = dataedit.Store(engine.backup_dir_for(args.iso))
+    ps2 = None
+    for rec in store.entries():
+        if rec["path"].upper().endswith("R6GAMESETTINGS.INI"):
+            blob = store.original(rec["archive"], rec["path"])
+            if blob:
+                ps2 = values(rselzo.unpack(blob[0]))
+                break
+    if ps2 is None:
+        with Iso(args.iso) as iso:
+            from tcps2.vokes import open_archives
+            for arc in open_archives(iso, PROFILE.archive_pattern):
+                if "/R6GAMESETTINGS.INI" in arc.files:
+                    ps2 = values(rselzo.unpack(
+                        arc.read_entry(arc.files["/R6GAMESETTINGS.INI"])))
+                    break
+    wrong = [k for k, want in xboxbuild.PS2_SHIPPED.items()
+             if ps2.get(k) != want]
+    check("the recorded PS2 values are what that build ships",
+          not wrong, str([(k, ps2.get(k), xboxbuild.PS2_SHIPPED[k]) for k in wrong]))
+    check("and every key the option writes really differs between the builds",
+          all(xboxbuild.PS2_SHIPPED[k] != v
+              for k, v in {**xboxbuild.ENEMY, **xboxbuild.AIM,
+                           **xboxbuild.AMMO}.items()))
+
+    if not args.xbox:
+        return
+    xb = values(open(args.xbox, "rb").read())
+    off = [(k, v, xb.get(k)) for k, v in
+           {**xboxbuild.ENEMY, **xboxbuild.AIM, **xboxbuild.AMMO}.items()
+           if xb.get(k) != v]
+    check("every Xbox value is read back off the Xbox build itself",
+          not off, str(off))
 
 
 if __name__ == "__main__":

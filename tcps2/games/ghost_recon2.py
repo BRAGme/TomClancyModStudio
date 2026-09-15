@@ -254,6 +254,7 @@ def _settings():
                      "Raising it multiplies every grenade in that loadout.",
                 caution="This multiplies the loadout, so it does nothing for a "
                         "kit you sent out with no grenades in it."),
+    ] + r6tuning.cards(["player_mags"], "gr2_", "Loadout") + [
 
         # ---- controls ----------------------------------------------------
         Setting("gr2_sens_steps", "Look sensitivity ceiling", INT, 10,
