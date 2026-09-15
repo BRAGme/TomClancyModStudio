@@ -284,3 +284,64 @@ Two routes, neither attempted:
 2. Rebuild the container instead of substituting into it, which means writing
    a `.LIN` writer that can relocate chunks, and re-cooking an export table
    whose offsets this project already knows the PS2 cooker relaid.
+
+### Route 1 tested: is there dead script to repurpose?
+
+**The three IO classes asked about are not all dead, and the one that is, is
+tiny.** Scanning all 80 level packages for each name:
+
+    R6IORotatingDoor   named by 62 of 80 levels   (native anyway)
+    R6IOBomb           named by 14 of 80          895 bytes, alive
+    R6IODevice         named by  6 of 80          386 bytes, alive
+    R6IOAlarmSystem    named by  0 of 80          119 bytes, dead
+
+119 bytes against the ~1,103 Ghost Recon 2's `R6IOGroundWeapon` occupies. So
+that particular idea fails on size.
+
+**But widening the question pays off.** `COMMON.LIN` declares 805 classes; 554
+are named by no level at all, and 453 of those are script rather than native.
+"No level names it" is a weak test on its own -- a class can still be reached
+by code -- so the survivors were checked against the native overlay and the
+menu package as well:
+
+    class                              SP.SOZ  COMMON  MENU   bytes
+    R6XboxReticule                          0       1     0    1298
+    R6RainbowVoices                         0       1     0    1019
+    R6ConsoleXbox                           0       1     0     664
+    R6XboxGadgetReticule                    0       1     0     617
+    R6XboxGrenadeReticule                   0       1     0     563
+    R6IOAlarmSystem                         0       1     0     119
+
+One occurrence in `COMMON.LIN` is the declaration itself. Zero in the overlay
+and zero in `MENU.LIN` means nothing on the disc can reach them. The four
+`Xbox*` ones are leftovers from the Xbox build sitting unused on a PS2 disc,
+which is exactly the shape of dead weight worth having.
+
+That is **4,280 bytes** of genuinely unreachable script, the largest single
+item 1,298 -- more than the 1,103 the class alone would need.
+
+Ones that looked promising and are NOT free, for the record: `R6HudTextures`
+(4 hits in the overlay), `R6TrainingTextures` (4), `R6PackageWeaponsList` (2),
+`R6SharpShooterGameForSplitScreen` (1), `R6InteractionCircumstantialAction`
+(3 in COMMON, referenced by other script).
+
+### So route 1 is not blocked on space -- but space was never the whole problem
+
+Two things stand between this and a working pickup, and both are worth stating
+before anyone spends a weekend on it:
+
+1. **The class is not all that is missing.** Ghost Recon 2 also carries four
+   slot-2 ammunition properties, a dozen `AlterWeapon*` names and a texture
+   accessor, each its own export. 4,280 bytes may or may not cover the lot;
+   nobody has added it up.
+
+2. **A dead class is dead because nothing spawns it** -- which is the catch.
+   Making the pickup work needs a call site in the pawn-death path that
+   creates the object, and that is more script surgery in the same
+   length-locked container. Repurposing the bytes is the easy half.
+
+There is also a smaller, concrete constraint: name table entries are
+length-prefixed and the package length cannot move, so a repurposed class
+keeps its original name. `R6XboxReticule` is 14 characters and
+`R6IOGroundWeapon` is 16; the class would have to go on being called
+`R6XboxReticule` and simply behave differently.
