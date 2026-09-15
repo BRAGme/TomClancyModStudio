@@ -345,3 +345,68 @@ length-prefixed and the package length cannot move, so a repurposed class
 keeps its original name. `R6XboxReticule` is 14 characters and
 `R6IOGroundWeapon` is 16; the class would have to go on being called
 `R6XboxReticule` and simply behave differently.
+
+### The export budget, added up
+
+Every export in Ghost Recon 2's pickup cluster, measured from its own package
+(`GR2.IMG/COMMONOFF.LIN`, the single-player half) and checked against Rainbow
+Six 3's `COMMON.LIN` to see what already exists. Script:
+`research/code/pickup_budget.py`.
+
+**39 exports match the cluster; 7 already exist in Rainbow Six 3.** The seven
+are worth naming, because they are free: `S_Pickup` (the editor texture),
+`R6GetCircumstantialActionVoiceID`, `R6GetCircumstantialActionString`,
+`R6GetCircumstantialActionProgress`, `m_SplitPrimaryWeapon2P`,
+`m_SplitSecondaryWeapon2P`, `m_bChangeWeaponBackward`.
+
+The big items:
+
+    R6IOFixedGun                       Class            1154 bytes
+    R6IOGroundWeapon                   Class            1103
+    GetPrimaryWeapon                   Function          540
+    R6GetCircumstantialActionID        Function          217
+    IsInteractiveObject                Function          108
+    CanAcceptActionKey                 Function          107
+    AdjustWeaponType                   Function          101
+    NeedSwitchToPrimaryWeapon          Function           91
+    R6GetCircumstantialActionTexID     Function           36
+    ...then 30 properties at 10-13 bytes each
+
+`R6IOFixedGun` is a sibling feature -- mounted guns -- that shares the `R6IO`
+prefix, and `m_TrainingWeapon2` matched on "weapon2" but is a training
+variable. Neither belongs to picking a weapon off the ground, so both figures
+are given:
+
+                          objects  rows  names   total   vs 4,280 available
+    everything matched       3719   524    761    5004   SHORT by 724
+    minimal pickup set       2540   474    702    3716   fits by 564
+
+### And that is where it stops being about bytes
+
+The object data half fits: 2,540 bytes into 4,280 bytes of unreachable class
+data, in six separate holes, which is fine because objects are addressed by
+offset and can live anywhere there is room.
+
+**The tables are the problem.** The name table and the export table are
+contiguous runs; growing either shifts every byte after it, and the container
+cannot change length. The only way to add a row without growing the table is
+to overwrite one that is already there -- and the six unreachable classes give
+exactly six rows and six names:
+
+    export rows needed    29   reusable  6   short by 23
+    name entries needed   29   reusable  6   short by 23
+
+So route 1 does not fail on data space. It fails on **table slots**, by 23 of
+each. Reusing more would mean finding 23 further exports that nothing on the
+disc reaches -- plausible, since 453 script classes are unnamed by any level,
+but each one has to survive the same overlay-and-menu check the six did, and
+a name can only be overwritten by a name of the same length.
+
+That is on top of the problem already recorded: **a dead class is dead because
+nothing spawns it**, so even a perfectly placed `R6IOGroundWeapon` needs a
+call site in the pawn-death path that does not exist yet.
+
+Verdict: not a dead end, but not a weekend either. The next concrete step, if
+anyone wants it, is to run the same overlay-and-menu reachability test across
+all 453 unnamed script classes and see how many table slots are genuinely
+free. That is one script and it answers the whole question.
