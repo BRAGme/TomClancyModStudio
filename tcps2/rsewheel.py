@@ -195,14 +195,19 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_wheel", "Equipment wheel in split screen", BOOL, False,
-        group, confidence="untested", touches="data",
+        group, confidence="verified", touches="data",
         help="Holding L1 opens the eight-slot wheel in single player; in split "
              "screen it steps one item per press instead. The reason is that "
              "nothing counts the hold: the player controller ticks the wheel "
              "only when the game is NOT split screen, and its fallback fires "
              "only in a network mode this console never reports. This points "
              "that fallback at the mode split screen actually runs in.",
-        caution="Not play-tested. It cannot touch single player -- that path "
+        caution="Watched working in split screen on Oil Refinery: the wheel "
+                "opens and is usable for both players. It is drawn from the "
+                "framebuffer rather than the per-viewport rectangle, so it "
+                "spills past your half and wants cropping -- that is what "
+                "\"Keep the wheel's labels inside your half\" is for.\n\n"
+                "It cannot touch single player -- that path "
                 "ticks through the first branch and jumps past the byte this "
                 "changes. The only thing given up is online play WITH split "
                 "screen, which needs servers that no longer exist.")
@@ -292,7 +297,7 @@ def cycle_card(prefix, group):
 
     return Setting(
         prefix + "split_cycle", "Tapping L1 switches weapons, not gadgets",
-        BOOL, False, group, confidence="untested", touches="data",
+        BOOL, False, group, confidence="verified", touches="data",
         help="In single player a tap of L1 toggles your primary and secondary; "
              "in split screen the same tap walks the whole inventory, gadgets "
              "included. The game passes a different count down the two arms of "
@@ -300,7 +305,9 @@ def cycle_card(prefix, group):
              "split screen the same two the rest of the game uses, which is "
              "what you want once the wheel is back: hold for a gadget, tap to "
              "get your rifle up.",
-        caution="Not play-tested. Without the wheel restored as well, this "
+        caution="Watched working in split screen on Oil Refinery: a tap of L1 "
+                "switches between primary and secondary instead of cycling "
+                "gadgets.\n\nWithout the wheel restored as well, this "
                 "would leave no quick way to reach a gadget at all -- so turn "
                 "the wheel option on with it.",
         requires={prefix + "split_wheel": [True]})

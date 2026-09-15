@@ -2600,10 +2600,17 @@ def run_split_wheel(args):
     check("and so does the L1-tap option", "split_cycle" in keys)
     check("which needs the wheel, since without it there is no way to a gadget",
           profile.setting("split_cycle").requires == {"split_wheel": [True]})
+    # Watched working in split screen on Oil Refinery, along with the L1 tap.
+    # The caution still has to carry what is imperfect about it: the wheel is
+    # drawn from the framebuffer, so it spills past the player's half.
     s = profile.setting("split_wheel")
-    check("and is offered, marked untested until it is played",
-          s.confidence == "untested" and s.enabled,
+    check("and is offered, marked as watched working",
+          s.confidence == "verified" and s.enabled,
           "%s enabled=%s" % (s.confidence, s.enabled))
+    check("and still says it needs cropping",
+          "cropping" in s.caution.lower())
+    check("the L1 tap is watched working too",
+          profile.setting("split_cycle").confidence == "verified")
     check("leaving it off writes nothing",
           not any(e.op == "split_wheel" for e in profile.build_data({})))
     check("the edit still applies cleanly if it is ever re-enabled",
