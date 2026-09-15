@@ -584,3 +584,59 @@ blocks whose boundaries are already known.
 
 `research/code/lingaps.py` maps the gaps and verifies all 132 magic hits are
 real packages, which is the groundwork for that search.
+
+## The disassembler: built and measured
+
+`research/code/uscript.py`. It works, and the number that says so is a control
+rather than a look at the output.
+
+**Finding the code.** Two idioms in the stream are unmistakable, and the first
+is self-delimiting, which makes it a synchronisation point:
+
+    1F "BeginHere::BeginState" 00      EX_StringConst, NUL-terminated ASCII
+    16 04 0B                           EndFunctionParms, Return, Nothing
+
+`anchors()` finds every string constant; the byte after each terminator is
+guaranteed to be the start of a token, whatever came before it. That is what
+sidesteps the missing index entirely -- the code does not have to be located
+through a table that no longer points anywhere.
+
+**Checking the opcode table.** Decoding forward from an anchor either survives
+or desynchronises. Over `COMMON.LIN`:
+
+    region                       anchors  6 tokens  12 tokens  24 tokens
+    the four inter-package gaps     3106     75.1%      49.3%      25.2%
+    a package's NAME TABLE            41      2.4%       2.4%         --
+
+Thirty-fold separation against a control drawn from the same file. The decay
+with depth is expected: an anchor lands mid-block, so a deeper decode is
+likelier to walk off the end of it.
+
+**A decoded sample**, `COMMON.LIN` at 0x001015ec:
+
+    LocalVariable(#7)
+    IntConst(2449550592)
+    VirtualFunction(#1, (StringConst("::BeginState")))
+    LetBool(BoolVariable(InstanceVariable(#1066)), True)
+    Return(Nothing)
+
+`Log("::BeginState"); bSomething = true; return;` -- a state entry announcing
+itself and setting a flag. That is real code, read out of a file whose index
+was thrown away.
+
+### What it cannot do yet
+
+**Resolve names.** `#1066` is a compact index into the name table of whichever
+package owns that code, and the cook destroyed the object-to-data mapping, so
+nothing says which package that is. The indices are real and internally
+consistent; they are simply unlabelled.
+
+That is a tractable next problem and it is statistical rather than structural:
+a block calling `VirtualFunction(#n)` where `#n` resolves to a plausible
+function name in exactly one package's name table is strong evidence for that
+package, and a few such hits pin the whole block.
+
+Which is also what the equipment wheel needs. `m_bUseWheel` is name #4557 in
+the script package; once blocks can be attributed to packages, searching for
+`InstanceVariable(#4557)` finds every read and write of it, and the
+split-screen gate with them.
