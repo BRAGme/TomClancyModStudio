@@ -160,6 +160,9 @@ class GameProfile:
     notes: str = ""
     #: art paths inside the game's own archives, used to skin the UI
     ui_art: dict = field(default_factory=dict)
+    #: optional (values) -> [str]: warnings that depend on a
+    #: COMBINATION of settings rather than on any one of them
+    combination_warnings: Callable[[dict], list] = None
     #: key -> [(levelStem, part)], so a settings page can show the game's own
     #: art beside the option it belongs to. Left unset for the discs that ship
     #: no per-level pictures.

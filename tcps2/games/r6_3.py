@@ -361,36 +361,6 @@ def _settings():
                         "it is deterministic, gated by the two settings below. "
                         "So this is how many of them can throw, and those are "
                         "when."),
-        Setting("xbox_tuning", "Play it the way the Xbox build does", CHOICE,
-                "stock", "Enemy Behaviour", confidence="measured",
-                touches="data",
-                choices=[Choice("stock", "Leave the PS2 tuning alone"),
-                         Choice("enemies", "Enemies only"),
-                         Choice("aim", "Aim and recoil only"),
-                         Choice("both", "Both")],
-                help="Both builds ship the same 239 settings and 21 of them "
-                     "carry different numbers. Seven of those change how it "
-                     "plays. Enemies: recruits go from 0.20 skill to 0.40, "
-                     "and grenades are thrown from 500 units out instead of "
-                     "200. Aim: the muzzle kicks more than twice as hard "
-                     "(60 to 125), the stick dead zone quadruples (0.1 to "
-                     "0.40), there is less damping and less smoothing "
-                     "settling the reticle, the turn curve's knee moves from "
-                     "90 to 160, and zooming no longer slows your turn. The "
-                     "aim half is the bigger half -- the PS2 port was made "
-                     "markedly more forgiving to aim with.",
-                caution="The individual dials on this page and on Controls "
-                        "are applied AFTER this, so anything you set yourself "
-                        "wins over the Xbox value for that one key."),
-        Setting("xbox_ammo", "...including the Xbox ammunition rules", BOOL,
-                False, "Enemy Behaviour", confidence="measured",
-                touches="data",
-                help="The other two differences go the other way: the Xbox "
-                     "build gives Rainbow unlimited magazines and leaves 5 "
-                     "rounds in a weapon that has run dry, where the PS2 "
-                     "build gives neither. Separate from the difficulty set "
-                     "because it makes the game easier, not harder.",
-                requires={"xbox_tuning": ["enemies", "aim", "both"]}),
         Setting("grenade_dist", "How close enemies will throw grenades", INT,
                 500, "Enemy Behaviour", minimum=25, maximum=900,
                 unit="units", confidence="applied", touches="data",
@@ -452,7 +422,8 @@ def _settings():
     ] + r6tuning.cards(
         ["fire_delay", "sight", "search_time", "speed", "spotting"],
         "", "Enemy Behaviour",
-    ) + r6tuning.cards(["player_grenades", "player_mags"], "", "Loadout") + [
+    ) + xboxbuild.cards(xboxbuild.R6_3, "", "Enemy Behaviour") \
+      + r6tuning.cards(["player_grenades", "player_mags"], "", "Loadout") + [
 
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
@@ -691,8 +662,9 @@ def build_data(v: dict) -> list:
     ini = {}
     # First, so that any dial the player has set themselves overwrites
     # the Xbox value for that key rather than the other way round.
-    ini.update(xboxbuild.ini_updates(v.get("xbox_tuning", "stock"),
-                                     bool(v.get("xbox_ammo"))))
+    ini.update(xboxbuild.ini_updates(xboxbuild.R6_3,
+                                     v.get("xbox_tuning", "stock"),
+                                     bool(v.get("xbox_extra"))))
 
     if int(v.get("grenade_dist", 500)) != 500:
         ini["m_fMinDistToThrowGrenade"] = int(v["grenade_dist"])
@@ -745,6 +717,47 @@ def build_pnach(v: dict) -> list:
     return out
 
 
+def combination_warnings(v: dict) -> list:
+    """Settings that are fine alone and run the console out of memory together.
+
+    The PS2 has 32 MB and no way to ask for more. Each of these on its own is
+    survivable; the combination is what fills it. A level that keeps spawning
+    while nothing is ever removed has only one ending, and it arrives after a
+    few minutes rather than immediately, which is what makes it hard to
+    attribute to any one switch.
+    """
+    out = []
+    feeding = (v.get("wave_enable")
+               and v.get("wave_gate", "stock") != "stock")
+    forever = v.get("bodies", "stock") == "never"
+    owed = int(v.get("wave_total", 0) or 0)
+    trigger = int(v.get("wave_trigger", 99) or 99)
+    ring = int(v.get("decal_ring", 32) or 32)
+
+    if forever and feeding:
+        out.append(
+            "Bodies never despawning AND every deployment zone feeding is the "
+            "combination that fills the console's 32 MB: the level keeps "
+            "spawning and nothing is ever removed. Expect a freeze a few "
+            "minutes in, on the levels with the most zones. Set bodies back "
+            "to a timer, or let only the player's zone feed.")
+    if forever and ring > 64:
+        out.append(
+            "Bodies never despawning with a decal ring of %d holds every "
+            "corpse and %dx the stock number of bullet holes at once. Either "
+            "alone is fine; together they are a lot of memory." % (ring, ring // 32))
+    # Only worth saying alongside something that makes the population
+    # unbounded: continuous spawning on its own is what this page is FOR, and
+    # warning about the defaults on every plan would be noise.
+    if forever and feeding and owed >= 20 and trigger <= 3:
+        out.append(
+            "%d enemies owed per zone with a refill whenever %d or fewer are "
+            "alive means a zone never stops producing. With every zone feeding "
+            "at once that is a continuous spawn for the whole mission."
+            % (owed, trigger))
+    return out
+
+
 PROFILE = GameProfile(
     id="r6_3_slus20883",
     title="Tom Clancy's Rainbow Six 3",
@@ -761,6 +774,7 @@ PROFILE = GameProfile(
     build_data=build_data,
     archive_pattern=r"/VOKES\d\.IMG$",
     notes=WAVE_MAPS,
+    combination_warnings=combination_warnings,
     mission_art_for=mission_art_for,
     ui_art={
         "archive": "iso",

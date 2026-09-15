@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from ..model import (CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
-from . import r6tuning
+from . import r6tuning, xboxbuild
 
 BOOT = "SLUS_214.22"
 
@@ -143,7 +143,7 @@ def _settings():
         ["skill", "fire_delay", "perfect_dist", "sight", "search_time",
          "speed", "spotting", "grenade_dist", "grenade_delay"],
         "graw_", "Enemies",
-    ) + r6tuning.cards(["sens_steps", "sens_boost"], "graw_", "Controls") \
+    ) + xboxbuild.cards(xboxbuild.GRAW, "graw_", "Enemies") + r6tuning.cards(["sens_steps", "sens_boost"], "graw_", "Controls") \
       + r6tuning.cards(["player_grenades", "player_mags"], "graw_", "Loadout")
 
 
@@ -269,7 +269,12 @@ def build_data(v: dict) -> list:
     Both copies are rewritten -- the game reads whichever answers first -- and
     an all-default config produces no edit at all, so a stock disc stays stock.
     """
-    ini = r6tuning.ini_updates("graw_", v)
+    # The Xbox block first, so any dial the player set themselves overwrites
+    # the Xbox value for that key rather than the other way round.
+    ini = dict(xboxbuild.ini_updates(xboxbuild.GRAW,
+                                     v.get("graw_xbox_tuning", "stock"),
+                                     bool(v.get("graw_xbox_extra"))))
+    ini.update(r6tuning.ini_updates("graw_", v))
     ini.update(r6tuning.sens_updates("graw_", v, SENS_BASE))
     if not ini:
         return []

@@ -267,6 +267,8 @@ def plan(iso_path, profile, values) -> Plan:
                     if cur != e.stock:
                         warnings.append("0x%08x reads %08x, expected the stock "
                                         "%08x" % (e.va, cur, e.stock))
+    if profile.combination_warnings:
+        warnings.extend(profile.combination_warnings(values))
     return Plan(profile.title, edits, pn, data, warnings, how)
 
 
