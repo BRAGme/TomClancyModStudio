@@ -7,20 +7,22 @@ this module runs them, remembers every original, and can put them all back.
 Two things are different, and both make it safer.
 
 **There is no archive to relocate inside.** A loose file is written straight to
-disk; a glob member or a `.umd` slot is written in place at the byte it already
-occupies. So there is no free-space pool to exhaust and no entry that can end up
-pointing somewhere else. The cost is that a file in a fixed slot must keep its
-length -- and that is checked per key, not globally, which is what lets the
-`.ASS` server scripts, which exist only loose in every one of these games, be
-rewritten with values of a different width.
+disk, or into its own sectors on a disc image; a glob member or a `.umd` slot is
+written in place at the byte it already occupies. So there is no free-space pool
+to exhaust and no entry that can end up pointing somewhere else. The cost is
+that a file in a fixed slot must keep its length -- and that is checked per key,
+not globally, which is what lets the `.ASS` server scripts, which exist only
+loose in every one of these games, be rewritten with values of a different
+width.
 
 **A logical file may live in more than one place.** `gamedir.Root` keys loose
 copies and packed copies separately but `Root.write` writes all the copies of a
 key, so the loose `mission\\m01_caves.mis` and the copy inside `ikedata.glb`
 cannot drift apart.
 
-Originals go into a sidecar folder beside the game folder before the first
-change, so undoing puts every file back byte for byte a month later.
+Originals go into a sidecar folder beside the game -- next to the disc image or
+next to the extracted folder -- before the first change, so undoing puts every
+file back byte for byte a month later.
 """
 
 from __future__ import annotations
@@ -248,18 +250,6 @@ class Store:
 # apply / revert
 # ---------------------------------------------------------------------------
 
-def _is_packed(root, key) -> bool:
-    """True when any copy of this file lives in a fixed slot.
-
-    A loose file may change length freely -- it is its own file on disk. A glob
-    member or a `.umd` slot may not, because its neighbours' positions are
-    implied by its length. Checking per key rather than globally is what lets
-    the `.ASS` server scripts, which exist only loose, be rewritten with values
-    of a different width.
-    """
-    return any(p.packed for p in root.files[key].places)
-
-
 def plan_data(root, edits):
     """Which keys each edit would rewrite, without touching anything."""
     rows = []
@@ -305,7 +295,7 @@ def apply_data(root, edits, store, progress=None):
                     plain = root.read(key)
                     store.remember(key, plain)
             new, n = op(plain, edit.params)
-            if len(new) != len(plain) and _is_packed(root, key):
+            if len(new) != len(plain) and root.packed(key):
                 raise DataEditError(
                     "%s: %s changed the file length, which neither a glob nor "
                     "a .umd slot can survive" % (key, edit.op))
@@ -321,7 +311,6 @@ def apply_data(root, edits, store, progress=None):
         written += 1
         if written % 100 == 0:
             say("  %d of %d files rewritten" % (written, len(pending)))
-    packed = root.flush()
 
     # Put back anything we touched on a previous run that no longer matches an
     # edit. Without this, turning an option off would leave its files changed.
@@ -333,13 +322,12 @@ def apply_data(root, edits, store, progress=None):
         if original is not None and root.read(key) != original:
             root.write(key, original)
             restored += 1
-    packed += root.flush()
+    root.flush()
 
     if written or restored:
-        say("Rewrote %d file%s%s, in %d container%s"
+        say("Rewrote %d file%s%s"
             % (written, "" if written == 1 else "s",
-               (" and put %d back" % restored) if restored else "",
-               packed, "" if packed == 1 else "s"))
+               (" and put %d back" % restored) if restored else ""))
     return {"files": written, "restored": restored, "changes": counts}
 
 

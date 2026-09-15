@@ -1,19 +1,23 @@
-"""Applying a settings dict to an extracted game folder, and undoing it again.
+"""Applying a settings dict to a game, and undoing it again.
 
-Three rules make this safe to run over and over, and they are the PS2 tool's
-rules with the disc taken out:
+Three rules make this safe to run over and over, and they are the PS2 tool's:
 
   1. Every write starts from the file as it SHIPPED, never from whatever is in
-     the folder now. The originals are on disk in the backup folder, so applying
+     the game now. The originals are on disk in the backup folder, so applying
      twice gives the same result as applying once, and clearing an option really
      removes it -- an apply puts back every file it touched before that no
      longer matches an edit.
 
-  2. Nothing is written until the folder has been positively identified as the
-     game the profile is for, by the title id in its own executable.
+  2. Nothing is written until the game has been positively identified as the
+     one the profile is for, by the title id in its own executable.
 
   3. Everything replaced is copied into a `.tcxms-backup` folder beside the
-     game folder first, so a mod can still be undone a month later.
+     game -- next to the disc image, or next to the extracted folder -- first,
+     so a mod can still be undone a month later.
+
+A disc image is edited in place. It is opened read-only to plan and read-write
+only for the moments an apply or a revert is actually writing, so a tool left
+sitting on a game does not hold the image open against an emulator.
 """
 
 from __future__ import annotations
@@ -53,6 +57,13 @@ class Plan:
 
 
 def backup_dir_for(game_path) -> str:
+    """Where a game's originals live.
+
+    Beside the game, named for it, whether that is a folder or a disc image --
+    so a shelf with both an `.iso` and the folder someone extracted from it
+    keeps two independent sets and neither can restore the other's bytes into
+    the wrong one.
+    """
     game_path = os.path.abspath(str(game_path))
     root = os.path.join(os.path.dirname(game_path), BACKUP_DIR)
     return os.path.join(root, os.path.basename(game_path))
@@ -86,15 +97,19 @@ def plan(game_path, profile, values, root=None) -> Plan:
     edits = profile.build_data(values) if profile.build_data else []
     rows = []
     if edits:
+        own = root is None
         r = root or Root(game_path)
         try:
             rows = dataedit.plan_data(r, edits)
         except dataedit.DataEditError as exc:
             warnings.append(str(exc))
+        finally:
+            if own:
+                r.close()
         asked = {e.op for e in edits}
         hit = {e.op for _k, e in rows}
         for op in sorted(asked - hit):
-            warnings.append("nothing in this folder matches the %s edit" % op)
+            warnings.append("nothing in this game matches the %s edit" % op)
     return Plan(profile.title, rows, warnings)
 
 
@@ -113,14 +128,21 @@ def apply(game_path, profile, values, progress=None, root=None) -> dict:
               "when": time.strftime("%Y-%m-%d %H:%M:%S")}
 
     say("Reading %s" % os.path.basename(str(game_path)))
-    r = root or Root(game_path)
-    say("Editing the game's own data files")
-    out = dataedit.apply_data(r, edits, store, progress=progress)
-    report.update(out)
+    own = root is None
+    r = root or Root(game_path, writable=True)
+    try:
+        say("Editing the game's own data files")
+        out = dataedit.apply_data(r, edits, store, progress=progress)
+        report.update(out)
+    finally:
+        if own:
+            r.close()
 
-    say("Verifying against the folder")
-    check = Root(game_path)
-    good, bad = dataedit.verify_data(check, store)
+    # Re-opened rather than re-used: reading the files back through the handle
+    # that just wrote them would confirm this tool's own buffers, not the game.
+    say("Verifying against the game")
+    with Root(game_path) as check:
+        good, bad = dataedit.verify_data(check, store)
     report["verified"], report["broken"] = good, bad
     return report
 
@@ -129,9 +151,9 @@ def revert(game_path, profile, progress=None) -> dict:
     folder = backup_dir_for(game_path)
     store = dataedit.Store(folder)
     if not store.keys():
-        raise EngineError("nothing recorded for this folder -- there is "
+        raise EngineError("nothing recorded for this game -- there is "
                           "nothing to undo")
-    r = Root(game_path)
-    out = dataedit.revert_data(r, store, progress=progress)
+    with Root(game_path, writable=True) as r:
+        out = dataedit.revert_data(r, store, progress=progress)
     out["restored"] = out["files"] > 0
     return out

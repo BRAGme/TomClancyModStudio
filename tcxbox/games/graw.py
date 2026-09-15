@@ -185,5 +185,7 @@ GRAW = GameProfile(
     settings=SETTINGS,
     build_data=build_data,
     notes=NOTES,
-    ui_art={"backdrop": "LoadingScreens/Background.tga", "kind": "image"},
+    ui_art={"backdrop": "LoadingScreens/Background.tga",
+            "emblem": "LoadingScreens/Splash.dds",
+            "emblem_key": (75, 185)},
 )

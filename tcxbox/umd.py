@@ -45,40 +45,56 @@ class Entry:
     size: int
 
 
-def _walk(data: bytes, start: int, end: int):
+def _walk(read, start: int, end: int, total: int):
     o = start
     out = []
     while o < end:
-        nlen = data[o]
+        chunk = read(o, 1)
+        if not chunk:
+            return None
+        nlen = chunk[0]
         o += 1
         if nlen == 0 or o + nlen + 12 > end:
             return None
-        raw = data[o:o + nlen]
+        rest = read(o, nlen + 12)
+        if len(rest) < nlen + 12:
+            return None
+        raw = rest[:nlen]
         if not raw.endswith(b"\0") or not all(32 <= c < 127 for c in raw[:-1]):
             return None
-        o += nlen
-        offset, size, zero = struct.unpack_from("<III", data, o)
-        o += 12
-        if zero != 0 or offset + size > len(data):
+        offset, size, zero = struct.unpack_from("<III", rest, nlen)
+        o += nlen + 12
+        if zero != 0 or offset + size > total:
             return None
         out.append(Entry(raw[:-1].decode("latin1"), offset, size))
     return out if o == end else None
 
 
-def parse(data: bytes):
-    """(entries, footerBytes) for a bundle."""
-    if len(data) < FOOTER + 8:
+def parse_stream(read, total: int):
+    """Every entry in a bundle, read through `read(offset, length)`.
+
+    Streamed rather than taken as one bytes object because a bundle is 2.4 MB
+    and a game is opened every time one is picked in the window -- and on a disc
+    image, holding it would mean pulling it off the disc as well.
+    """
+    if total < FOOTER + 8:
         raise UmdError("too short to be a .umd")
-    end = len(data) - FOOTER
-    _hash, index_at, total, version, _magic = struct.unpack_from(
-        "<IIIII", data, end)
-    if total != len(data) or version != 2:
+    end = total - FOOTER
+    footer = read(end, FOOTER)
+    _hash, index_at, recorded, version, _magic = struct.unpack("<IIIII", footer)
+    if recorded != total or version != 2:
         raise UmdError("footer does not describe this file")
     for start in range(max(0, index_at - 4), min(end, index_at + 8)):
-        got = _walk(data, start, end)
+        got = _walk(read, start, end, total)
         if got is not None:
-            return got, data[end:]
+            return got
     raise UmdError("could not find the index -- footer points at 0x%X" % index_at)
+
+
+def parse(data: bytes):
+    """(entries, footerBytes) for a bundle already in memory."""
+    entries = parse_stream(lambda off, n: data[off:off + n], len(data))
+    return entries, data[len(data) - FOOTER:]
 
 
 def is_umd(data: bytes) -> bool:

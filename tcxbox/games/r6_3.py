@@ -1,25 +1,24 @@
-"""Rainbow Six 3 on Xbox, and its Black Arrow prototype disc.
+"""Rainbow Six 3 on Xbox, and Black Arrow.
 
-Retail Rainbow Six 3 looks unmoddable and is not. `System\\` holds 98 cooked
-`.lin` packages and two ini files, and the interesting ones are not among them
--- they are inside `System\\xboxdynamic.umd`, a 2.4 MB bundle of 536 files that
-carries the 16 KB gameplay table, 37 more ini files and all 115 terrorist
-templates. `tcxbox.umd` opens it and `gamedir` writes into it in place, so from
-this page it looks like any other folder.
+Both look unmoddable and are not. `System\\` holds 98 cooked `.lin` packages and
+two ini files, and the interesting ones are not among them -- they are inside
+`System\\xboxdynamic.umd`, a 2.4 MB bundle of 536 files carrying the 16 KB
+gameplay table, 37 more ini files and all 115 terrorist templates. `tcxbox.umd`
+opens it and `gamedir` writes into it in place, so from these pages it looks
+like any other folder. Black Arrow is the same disc again with a little more of
+it: 120 templates and 42 ini files.
 
-The Black Arrow prototype is the same engine with the lid off. Its disc is a
-demo *installer* -- `default.xbe` at the top is Microsoft's stub, title id
-FFFFFF00 -- and the game sits under `Files\\Black_Arrow_XBOX_media` with its
-executable still named `RainbowSix3_Release.xbe` and its title name still
-reading "Rainbow Six White Release E:\\XBox\\Folder". Nothing is bundled: the
-System folder is loose, the 96 terrorist templates are loose under
-`template\\`, and each map has its own ini beside them. Pointing this tool at
-the folder you downloaded is enough -- identification walks down to find the
-real root.
+They get the same cards because it is the same table -- 240 keys, identical in
+both -- and the templates differ only in which weapon each one carries.
 
-Both get the same cards, because both ship the same `R6GameSettings.ini` with
-the same 240 keys, and the templates differ only in which weapon each one
-carries.
+Black Arrow's *prototype* disc carries the same title id, `55530037`, so one
+profile serves both. That is the right answer rather than a shortcut: the
+selectors here name files, not places. The prototype is a demo *installer* --
+`default.xbe` at its top is Microsoft's stub with title id FFFFFF00, and the
+game sits under `Files\\Black_Arrow_XBOX_media` with its executable still called
+`RainbowSix3_Release.xbe` and its title name still reading "Rainbow Six White
+Release E:\\XBox\\Folder". Nothing on it is bundled, so the same edits land on
+loose files instead, and identification walks down to find it.
 """
 
 from __future__ import annotations
@@ -154,16 +153,20 @@ RETAIL_NOTES = (
     "these pages are badged as applied rather than as experiments."
 )
 
-PROTOTYPE_NOTES = (
-    "This disc is a demo installer, so the game is not at the top of it -- "
-    "default.xbe is Microsoft's stub and the build sits under "
-    "Files\\Black_Arrow_XBOX_media with its executable still called "
-    "RainbowSix3_Release.xbe. Point this tool at either; it walks down.\n\n"
-    "Nothing on this disc is bundled. The System folder is loose, the 96 "
-    "terrorist templates are loose under template\\, and every map has its own "
-    "ini next to them -- so edits here can change a file's length freely, "
-    "unlike the retail disc.\n\n"
-    "It is a prototype. Treat anything you change as a prototype too."
+BLACK_ARROW_NOTES = (
+    "Black Arrow keeps its real System folder inside System\\xboxdynamic.umd, "
+    "the same way Rainbow Six 3 does, and ships a little more of it: 120 "
+    "terrorist templates and 42 ini files against 115 and 38. Everything on "
+    "these pages reaches into that bundle and writes at the byte each file "
+    "already occupies.\n\n"
+    "The prototype disc that circulates carries the same title id, so this "
+    "profile loads it too. That one is a demo installer -- the game is under "
+    "Files\\Black_Arrow_XBOX_media and its executable is still called "
+    "RainbowSix3_Release.xbe -- and nothing on it is bundled, so the same "
+    "edits land on loose files instead. Point the tool at either.\n\n"
+    "The gameplay table is live: its own comments tell you to type "
+    "REFRESHGAMESETTINGS in the console to reload it. That is why the dials on "
+    "these pages are badged as applied rather than as experiments."
 )
 
 RAINBOW_SIX_3 = GameProfile(
@@ -177,20 +180,20 @@ RAINBOW_SIX_3 = GameProfile(
     settings=_settings("r63_"),
     build_data=_build("r63_"),
     notes=RETAIL_NOTES,
-    ui_art={"backdrop": "Splash.tga", "kind": "image"},
+    ui_art={"backdrop": "Splash.tga", "emblem": "Splash.tga"},
 )
 
-BLACK_ARROW_PROTOTYPE = GameProfile(
-    id="black_arrow_proto_xbox",
-    title="Tom Clancy's Rainbow Six 3: Black Arrow (prototype)",
+BLACK_ARROW = GameProfile(
+    id="black_arrow_xbox",
+    title="Tom Clancy's Rainbow Six 3: Black Arrow",
     short="Black Arrow",
     title_id="55530037",
-    xbe="RainbowSix3_Release.xbe",
-    root_hint=r"Files\Black_Arrow_XBOX_media",
-    markers=[Marker("system", "the loose System folder"),
-             Marker("template", "the terrorist templates")],
+    markers=[Marker("System", "the cooked packages and the bundle")],
     settings=_settings("ba_"),
     build_data=_build("ba_"),
-    notes=PROTOTYPE_NOTES,
-    ui_art={"backdrop": "Splash.tga", "kind": "image"},
+    notes=BLACK_ARROW_NOTES,
+    # Black Arrow's wordmark is printed on a lit amber panel rather than on
+    # black, so its ramp sits much higher than Rainbow Six 3's.
+    ui_art={"backdrop": "Splash.tga", "emblem": "Splash.tga",
+            "emblem_key": (135, 225)},
 )

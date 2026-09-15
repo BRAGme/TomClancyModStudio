@@ -173,6 +173,6 @@ PRESETS = {
     "ghost_recon2_xbox": _gr2("gr2_"),
     "summit_strike_xbox": _gr2("ss_"),
     "rainbow_six_3_xbox": _r6("r63_"),
-    "black_arrow_proto_xbox": _r6("ba_"),
+    "black_arrow_xbox": _r6("ba_"),
     "graw_xbox": _graw(),
 }

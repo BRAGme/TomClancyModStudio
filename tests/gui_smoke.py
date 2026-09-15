@@ -18,15 +18,23 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tcxbox.detect import scan_folder          # noqa: E402
+from tcxbox.detect import scan                 # noqa: E402
 
 
 def main(argv):
     shelf = argv[0] if argv else r"E:\XBOX Classic Games"
-    found = scan_folder(shelf)
+    found = scan(shelf)
     if not found:
-        print("no supported game folders under %s" % shelf)
+        print("no supported games under %s" % shelf)
         return 1
+    # One of each game is enough to prove every page builds, and this shelf has
+    # most of them twice -- as a disc image and as an extracted folder.
+    seen, unique = set(), []
+    for det in found:
+        if det.profile.id not in seen:
+            seen.add(det.profile.id)
+            unique.append(det)
+    found = unique
 
     from gui.app import App                     # noqa: E402  (needs a display)
 

@@ -12,6 +12,12 @@ What each group is actually asserting:
 
   containers   every glob, bundle and executable on the shelf parses, and a
                round trip through the writer is byte-identical to the original.
+  images       every disc image's filesystem walks, and the same game read as
+               an `.iso` and as an extracted folder gives identical bytes --
+               which is the only real proof that the two paths agree.
+  xiso write   growing, shrinking and overwriting a file inside a disc image,
+               against a small image built for the purpose rather than a 4 GB
+               retail one.
   transforms   each edit does what it says AND keeps the file's length, which
                is the invariant the packed formats depend on.
   census       the two sides of the war are separable on the games that
@@ -33,9 +39,12 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import (dataedit, engine, globfile, rsb, transforms,  # noqa: E402
-                    umd, xbe, xpr)
-from tcxbox.detect import identify, scan_folder                   # noqa: E402
+                    umd, xbe, xiso, xpr)
+from tcxbox.detect import identify, scan                          # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import make_xiso                                                  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -62,46 +71,46 @@ def must(cond, message):
 def test_globs(games):
     total = entries = 0
     for det in games:
-        folder = os.path.join(det.path, "globs")
-        if not os.path.isdir(folder):
-            continue
-        for name in sorted(os.listdir(folder)):
-            if not name.lower().endswith(".glb"):
-                continue
-            with open(os.path.join(folder, name), "rb") as fh:
-                data = fh.read()
-            ents = globfile.parse(data)
-            total += 1
-            entries += len(ents)
-            for ent in ents[:4]:
-                blob = globfile.read(data, ent)
-                must(globfile.replace(data, ent, blob) == data,
-                     "%s: writing an entry back changed the file" % name)
+        with Root(det.path) as root:
+            for relpath, size in root.source.iter_files():
+                if not relpath.lower().endswith(".glb"):
+                    continue
+                read = root._reader(relpath)
+                ents = globfile.parse_stream(read, size)
+                total += 1
+                entries += len(ents)
+                for ent in ents[:4]:
+                    blob = read(ent.offset, ent.size)
+                    must(len(blob) == ent.size,
+                         "%s: short read of %s" % (relpath, ent.name))
     must(total > 0, "no globs found")
-    return "%d globs, %d entries, writer is a no-op" % (total, entries)
+    return "%d globs, %d entries" % (total, entries)
 
 
 def test_umds(games):
     total = files = 0
     for det in games:
-        for dirpath, _dirs, names in os.walk(det.path):
-            for name in names:
-                if not name.lower().endswith(".umd"):
+        with Root(det.path) as root:
+            for relpath, size in root.source.iter_files():
+                if not relpath.lower().endswith(".umd"):
                     continue
-                with open(os.path.join(dirpath, name), "rb") as fh:
-                    data = fh.read()
-                ents, _footer = umd.parse(data)
+                read = root._reader(relpath)
+                ents = umd.parse_stream(read, size)
                 total += 1
                 files += len(ents)
-                ent = ents[len(ents) // 2]
-                must(umd.replace(data, ent, umd.read(data, ent)) == data,
-                     "%s: writing an entry back changed the bundle" % name)
+                mid = ents[len(ents) // 2]
+                must(len(read(mid.offset, mid.size)) == mid.size,
+                     "%s: short read of %s" % (relpath, mid.name))
     return "%d bundles, %d files inside them" % (total, files)
 
 
 def test_xbes(games):
     for det in games:
-        image = xbe.load(det.xbe_path)
+        with Root(det.path) as root:
+            rel = (root.source.resolve("default.xbe")
+                   or root.source.resolve("RainbowSix3_Release.xbe"))
+            must(rel, "%s: no executable" % det.profile.short)
+            image = xbe.parse(root.source.read(rel))
         must(image.title_id_hex.upper() == det.profile.title_id.upper(),
              "%s: title id %s does not match the profile"
              % (det.profile.short, image.title_id_hex))
@@ -110,27 +119,25 @@ def test_xbes(games):
 
 
 def test_art(games):
+    from tcxbox import art
+
     shot = 0
     for det in games:
-        folder = os.path.join(det.path, "shell", "art")
-        if not os.path.isdir(folder):
-            continue
-        for name in sorted(os.listdir(folder)):
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path):
-                continue
-            with open(path, "rb") as fh:
-                data = fh.read()
-            if name.lower().endswith(".rsb"):
-                must(rsb.to_image(data).size[0] > 0, "%s decoded empty" % name)
-                shot += 1
-            elif name.lower().endswith(".xpr") and xpr.is_xpr(data):
-                _o, code, _w, _h, _m = xpr.parse(data)
-                if code in (0x05, 0x06, 0x07, 0x0C, 0x0E, 0x0F):
-                    must(xpr.to_image(data).size[0] > 0,
-                         "%s decoded empty" % name)
-                    shot += 1
-    return "%d shell bitmaps decoded" % shot
+        banner = art.banner_image(det)
+        emblem = art.emblem_image(det)
+        must(banner is not None,
+             "%s: no backdrop could be read" % det.profile.short)
+        must(emblem is not None,
+             "%s: no wordmark could be read" % det.profile.short)
+        must(emblem.width >= 200,
+             "%s: the wordmark came out %d wide, which means it fell back to a "
+             "dashboard icon rather than the splash screen"
+             % (det.profile.short, emblem.width))
+        must(emblem.getchannel("A").getextrema()[0] == 0,
+             "%s: the wordmark has no transparent pixel, so its plate was not "
+             "keyed out" % det.profile.short)
+        shot += 2
+    return "%d bitmaps decoded, every wordmark at least 200px wide" % shot
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +228,125 @@ def test_enemy_templates(games):
 
 
 # ---------------------------------------------------------------------------
+# disc images
+# ---------------------------------------------------------------------------
+
+def test_iso_matches_folder(shelf):
+    """The same game, read as an image and as a folder, is the same bytes.
+
+    This is the check that makes supporting both shapes safe: two independent
+    readers -- an XDVDFS walk and an os.walk -- have to agree.
+
+    Compared by file NAME rather than by key, because a key carries the
+    container a file was found in and the two copies of a game are not always
+    packed the same way. Black Arrow is the case in point: the retail disc keeps
+    its System folder inside `xboxdynamic.umd` and the prototype keeps the same
+    files loose, so their key sets do not intersect at all while their contents
+    do. Names intersect, and names are what the edits select on.
+    """
+    games = scan(shelf)
+    pairs = 0
+    checked = 0
+    notes = []
+    skipped = []
+    for det in games:
+        if det.kind != "iso":
+            continue
+        # Matched on the TITLE NAME in the executable, not just the title id.
+        # Black Arrow's prototype disc carries the same title id as the retail
+        # one on purpose -- that is why one profile serves both -- but it is a
+        # different build with 96 terrorist templates against 120, so comparing
+        # the two would be asserting that a prototype equals a shipped game.
+        twin = next((d for d in games
+                     if d.kind == "folder"
+                     and d.profile.id == det.profile.id
+                     and d.title_name == det.title_name), None)
+        if twin is None:
+            skipped.append(det.profile.short)
+            continue
+        with Root(det.path) as a, Root(twin.path) as b:
+            left = _by_name(a)
+            right = _by_name(b)
+            common = sorted(set(left) & set(right))
+            smaller = min(len(left), len(right))
+            must(smaller and len(common) >= smaller * 0.85,
+                 "%s: %d names in common, against %d on the smaller side"
+                 % (det.profile.short, len(common), smaller))
+            same = differ = 0
+            for name in common[::13]:
+                if a.read(left[name]) == b.read(right[name]):
+                    same += 1
+                else:
+                    differ += 1
+            must(differ == 0,
+                 "%s: %d of %d sampled files differ between the image and the "
+                 "folder" % (det.profile.short, differ, same + differ))
+            checked += same
+        pairs += 1
+        notes.append(det.profile.short)
+    must(pairs, "no game on this shelf exists as both an image and a folder")
+    tail = ("; no same-build folder for " + ", ".join(sorted(set(skipped)))
+            if skipped else "")
+    return "%d game(s) present twice (%s), %d files byte-identical%s" % (
+        pairs, ", ".join(notes), checked, tail)
+
+
+def _by_name(root):
+    """{base name: key}, keeping only names that appear once."""
+    seen = {}
+    for key, f in root.files.items():
+        seen.setdefault(f.name, []).append(key)
+    return {n: keys[0] for n, keys in seen.items() if len(keys) == 1}
+
+
+def test_xiso_writer(where):
+    """Overwrite, shrink and grow a file inside a disc image."""
+    path = make_xiso.build(os.path.join(where, "tiny.iso"), {
+        "default.xbe": b"x" * 40,
+        "notes.ini": b"a=1\r\nb=2\r\n",
+    })
+    before = os.path.getsize(path)
+
+    with xiso.Xiso(path, writable=True) as iso:
+        entry = iso.files["/NOTES.INI"]
+        must(entry.size == 10, "size read back as %d" % entry.size)
+        must(entry.allocated == 2048, "allocation is %d" % entry.allocated)
+
+        iso.write(entry, 2, b"9")
+        must(iso.read(entry) == b"a=9\r\nb=2\r\n", "in-place write did not land")
+
+        grown = b"a=1\r\nb=2\r\nc=3\r\n"
+        iso.replace(entry, grown)
+        must(iso.files["/NOTES.INI"].size == len(grown),
+             "the directory entry was not told the new length")
+
+    with xiso.Xiso(path) as iso:
+        entry = iso.files["/NOTES.INI"]
+        must(entry.size == len(grown), "the new length did not survive a reopen")
+        must(iso.read(entry) == grown, "the grown file read back wrong")
+
+    with xiso.Xiso(path, writable=True) as iso:
+        entry = iso.files["/NOTES.INI"]
+        iso.replace(entry, b"a=1\r\n")
+        must(iso.read(entry) == b"a=1\r\n", "the shrunk file read back wrong")
+        tail = iso.read(entry, 5, 16)
+        must(tail == b"\0" * 16, "the old tail was left behind: %r" % tail)
+
+    must(os.path.getsize(path) == before,
+         "the image changed size, which means something was relocated")
+
+    with xiso.Xiso(path, writable=True) as iso:
+        entry = iso.files["/NOTES.INI"]
+        try:
+            iso.replace(entry, b"z" * 5000)
+        except xiso.XisoError:
+            pass
+        else:
+            raise AssertionError("a file was allowed to grow past its sectors")
+    return "in place, grown, shrunk, and a 5 KB write into a 2 KB slot refused"
+
+
+# ---------------------------------------------------------------------------
 # the whole cycle, on a copy
 # ---------------------------------------------------------------------------
 
@@ -236,9 +362,9 @@ FIXTURE_PARTS = {
                            "globs/ikedata.glb"],
     "rainbow_six_3_xbox": ["default.xbe", "System/RainbowSix3Xbox.ini",
                            "System/xboxdynamic.umd"],
-    "black_arrow_proto_xbox": ["RainbowSix3_Release.xbe",
-                               "system/R6GameSettings.ini",
-                               "system/RainbowSix3Xbox.ini", "template"],
+    "black_arrow_xbox": ["RainbowSix3_Release.xbe",
+                         "system/R6GameSettings.ini",
+                         "system/RainbowSix3Xbox.ini", "template"],
     "graw_xbox": ["default.xbe", "System/R6GameSettings.ini",
                   "System/GR3XBoxAI.ini", "System/TWeapon.ini",
                   "System/RainbowSix3Xbox.ini"],
@@ -259,8 +385,14 @@ def _snapshot(folder):
 
 
 def _fixture(det, where):
+    """A folder copy of the parts of a game its own edits reach.
+
+    Only for games this shelf also has extracted. Copying a 4 GB disc image to
+    exercise an edit is not a test anyone would run twice, so the image path is
+    covered by `test_iso_matches_folder` and `test_xiso_writer` instead.
+    """
     parts = FIXTURE_PARTS.get(det.profile.id)
-    if parts is None:
+    if parts is None or det.kind != "folder":
         return None
     dst = os.path.join(where, det.profile.id)
     os.makedirs(dst, exist_ok=True)
@@ -277,14 +409,24 @@ def _fixture(det, where):
     return dst
 
 
-def test_cycle(games, where):
+def _folder_twin(everything, det):
+    """The extracted copy of this game, if the shelf has one."""
+    if det.kind == "folder":
+        return det
+    return next((d for d in everything
+                 if d.kind == "folder" and d.profile.id == det.profile.id), None)
+
+
+def test_cycle(games, where, everything):
     from gui.presets import PRESETS
 
     done = []
     for det in games:
-        folder = _fixture(det, where)
+        twin = _folder_twin(everything, det)
+        folder = _fixture(twin, where) if twin else None
         if folder is None:
             continue
+        det = twin
         copy = identify(folder)
         must(copy.ok, "the copy of %s was not recognised" % det.profile.short)
         before = _snapshot(folder)
@@ -310,14 +452,18 @@ def test_cycle(games, where):
     return "every preset applied then reverted clean: " + ", ".join(done)
 
 
-def test_idempotent(games, where):
+def test_idempotent(games, where, everything):
     """Applying the same settings twice leaves the same folder as applying once."""
     from gui.presets import PRESETS
 
     for det in games:
         if det.profile.id != "ghost_recon_xbox":
             continue
-        folder = _fixture(det, where)
+        twin = _folder_twin(everything, det)
+        folder = _fixture(twin, where) if twin else None
+        if folder is None:
+            continue
+        det = twin
         copy = identify(folder)
         _name, values = PRESETS[det.profile.id][3]
         full = dict(det.profile.defaults())
@@ -329,7 +475,7 @@ def test_idempotent(games, where):
         must(once == twice, "a second apply changed the folder again")
         engine.revert(copy.path, copy.profile)
         return "applying twice is the same as applying once"
-    raise AssertionError("Ghost Recon is not on this shelf")
+    raise AssertionError("Ghost Recon is not on this shelf as a folder")
 
 
 # ---------------------------------------------------------------------------
@@ -337,10 +483,11 @@ def test_idempotent(games, where):
 def main(argv):
     shelf = argv[0] if argv else r"E:\XBOX Classic Games"
     print("shelf: %s" % shelf)
-    games = scan_folder(shelf)
+    games = scan(shelf)
     if not games:
         print("no supported game folders found")
         return 1
+    everything = list(games)
     seen = {}
     for det in games:
         seen.setdefault(det.profile.id, det)
@@ -354,6 +501,10 @@ def main(argv):
     check("every executable identifies its game", lambda: test_xbes(games))
     check("every shell bitmap decodes", lambda: test_art(games))
 
+    print("disc images")
+    check("an image and its extracted folder agree byte for byte",
+          lambda: test_iso_matches_folder(shelf))
+
     print("transforms")
     check("edits keep the file's length", lambda: test_length_preserved(games))
     check("template skills clamp", lambda: test_clamps(games))
@@ -366,10 +517,11 @@ def main(argv):
 
     print("apply and revert, on copies")
     with tempfile.TemporaryDirectory(prefix="tcxms-tests-") as where:
+        check("writing inside a disc image", lambda: test_xiso_writer(where))
         check("every preset applies and reverts clean",
-              lambda: test_cycle(games, where))
+              lambda: test_cycle(games, where, everything))
         check("applying twice equals applying once",
-              lambda: test_idempotent(games, where))
+              lambda: test_idempotent(games, where, everything))
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, _exc, tb in FAIL:

@@ -126,6 +126,51 @@ or the channel order is rotated, so the code does what was observed and says so.
 
 ---
 
+## XDVDFS — the filesystem on the disc images
+
+`tcxbox/xiso.py`. Reading these games out of the `.iso` they were ripped as,
+rather than out of a folder somebody extracted, is worth the module: it is
+faster, it is what is actually on the shelf, and it means a shelf never ends up
+with a modded folder and an unmodded image of the same game.
+
+```
+sector 32 (0x10000)   the volume descriptor
+    0x00  char  magic[20]   "MICROSOFT*XBOX*MEDIA"
+    0x14  u32   rootDirectorySector
+    0x18  u32   rootDirectorySize
+    0x7EC char  magic[20]   again, as a terminator
+
+a directory is a run of sectors holding a binary search tree of entries,
+each 4-byte aligned:
+    u16  leftOffset     in 4-byte units from the start of the directory
+    u16  rightOffset    0xFFFF (or 0) means no child
+    u32  startSector
+    u32  size
+    u8   attributes     0x10 = directory
+    u8   nameLength
+    char name[nameLength]
+```
+
+**The tree is over the file NAMES, not the directory hierarchy.** One folder
+with a few thousand files in it is a single node chain thousands deep, so
+walking it by recursion hits Python's recursion limit on a real disc. It is
+walked iteratively.
+
+**Some images carry a global offset.** Plain xiso rips start the filesystem at
+byte 0; redump-style XGD1 and XGD2 images put a lead-in in front of it (0x18300000
+and 0x2080000 among others). The descriptor is searched for at each known base
+and the one that answers is used.
+
+**A file is sector-aligned and therefore usually has slack.** Its entry records
+an exact byte size but the disc gave it a whole number of 2 KB sectors, so a
+file can grow into its own padding without anything moving -- and the size field
+is four bytes at a known offset, so telling the game about it is a 32-bit write
+rather than a rebuild. That is what lets the `.ASS` server scripts, which
+legitimately change length, be edited on an image as well as in a folder. A file
+that will not fit its own sectors is refused, not relocated.
+
+---
+
 ## `.XPR` — Xbox Packed Resources
 
 `tcxbox/xpr.py`. Ghost Recon 2 and Summit Strike replaced `.RSB` with the
@@ -184,13 +229,17 @@ working folder.
 
 ## Where each game keeps what
 
-| | Ghost Recon / Island Thunder | Ghost Recon 2 / Summit Strike | Rainbow Six 3 | Black Arrow proto | GRAW |
+| | Ghost Recon / Island Thunder | Ghost Recon 2 / Summit Strike | Rainbow Six 3 | Black Arrow | GRAW |
 | --- | --- | --- | --- | --- | --- |
 | Order of battle | `.MIS` `<Units>`, loose **and** in `ikedata.glb` | none — Igor objects only | — | — | — |
-| Enemy stats | `.ATR`, only in `*_chars.glb` | in the engine | `.TPT` in the bundle | `.TPT` loose | ini |
+| Enemy stats | `.ATR`, only in `*_chars.glb` | in the engine | 115 `.TPT` in the bundle | 120 `.TPT` in the bundle | ini |
 | Weapons | `.GUN` in globs | `.GUN` in globs | — | — | `TWeapon.ini` |
 | Hit model | `CMBTMODL.XML` in `ikedata.glb` | the same, **loose and packed** | `R6GameSettings.ini` | the same, loose | the same, loose |
-| Rules | — | `script\*.ass`, loose | `RainbowSix3Xbox.ini` ×2 | loose | loose |
+| Rules | — | `script\*.ass`, loose | `RainbowSix3Xbox.ini` ×2 | ×2 | loose |
+
+Rainbow Six: Critical Hour has no row because it has no entry to put in one: no
+ini, no templates, no globs, and cooked-binary missions. `tcxbox/games/critical_hour.py`
+carries the census.
 | Teammate AI | — | — | — | — | `GR3XBoxAI.ini` |
 
 ## One honest caveat on the Unreal three

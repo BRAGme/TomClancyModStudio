@@ -179,8 +179,8 @@ GHOST_RECON_2 = GameProfile(
     build_data=_build_data("gr2_"),
     notes=NOTES,
     ui_art={"backdrop": "shell/art/UI_STARTBkgd_US.xpr",
-            "emblem": "shell/art/dash_gr-logo.xpr",
-            "kind": "xpr"},
+            "emblem": "shell/art/Splash.xpr",
+            "emblem_key": (62, 170)},
 )
 
 SUMMIT_STRIKE = GameProfile(
@@ -195,6 +195,6 @@ SUMMIT_STRIKE = GameProfile(
     build_data=_build_data("ss_"),
     notes=NOTES,
     ui_art={"backdrop": "shell/art/UI_STARTBkgd_US.xpr",
-            "emblem": "shell/art/dash_gr-logo.xpr",
-            "kind": "xpr"},
+            "emblem": "shell/art/Splash.xpr",
+            "emblem_key": (62, 170)},
 )

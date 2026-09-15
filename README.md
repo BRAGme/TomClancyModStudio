@@ -1,10 +1,15 @@
 # Tom Clancy Xbox Mod Studio
 
 A windowed mod tool for the Tom Clancy games on the original Xbox. Point it at
-a folder an Xbox disc was extracted into, pick options off pages skinned in that
-game's own artwork, and press **Apply to game**. Every file it changes is copied
-first, and **Restore folder** puts every one of them back at the byte it came
-from.
+a game -- **the `.iso` itself**, or a folder one was extracted into -- pick
+options off pages skinned in that game's own artwork, and press **Apply to
+game**. Every file it changes is copied first, and **Restore folder** puts every
+one of them back at the byte it came from.
+
+Disc images are edited **in place**. XDVDFS gives every file a whole number of
+2 KB sectors, so a file can grow into its own padding and the directory entry's
+size field is a 32-bit write away -- nothing is rebuilt, relocated or
+re-authored, and a 4 GB image is opened, changed and closed in about a second.
 
 It is the sibling of [Tom Clancy PS2 Mod Studio][ps2] — same window, same
 declarative model, same two safety rules — with the disc image replaced by a
@@ -24,19 +29,22 @@ almost everything interesting in plain text.
 | Ghost Recon 2 | `55530005` | combat model, 114 weapons, dedicated-server rules |
 | Ghost Recon 2: Summit Strike | `5553004D` | the same, 162 weapons |
 | Rainbow Six 3 | `55530013` | the gameplay table and 115 terrorist templates, inside `xboxdynamic.umd` |
-| Rainbow Six 3: Black Arrow (prototype) | `55530037` | the same, loose, plus per-map ini |
+| Rainbow Six 3: Black Arrow | `55530037` | the same bundle, 120 templates and 42 ini files |
 | Ghost Recon: Advanced Warfighter | `55530054` | the shared gameplay table, plus teammate AI and enemy weapon tables |
+| Rainbow Six: Critical Hour | `5553005F` | **nothing yet** -- recognised, and the page says why |
 
-The game is identified by the **title id in its own executable**, not by the
-folder's name, so a renamed folder still works and a folder holding some other
-game is never mistaken for one of these. Black Arrow's prototype disc is a demo
-installer whose payload sits three levels down; point the tool at the folder you
-downloaded and it walks down to find the game.
+The game is identified by the **title id in its own executable**, not by its
+file name, so a renamed disc still works and one holding some other game is
+never mistaken for these. Black Arrow's prototype disc carries the same title id
+as retail and is an installer whose payload sits three levels down; point the
+tool at either and it finds the game.
 
-Each game wears its own menu. Advanced Warfighter's tactical display, over its
-own loading backdrop:
-
-![GRAW, the enemy weapons page](docs/screens/graw-enemy-weapons.png)
+Critical Hour is listed because it is on the shelf and the tool loads it, and it
+has no options because it has nothing to offer: all 19,085 entries on that disc
+were enumerated and **not one of them is text** -- no ini files, no terrorist
+templates, no globs, and 146 cooked-binary mission files where every other Red
+Storm game here ships XML. That census is on its About page rather than in a
+footnote, because a page of dials that quietly did nothing would be worse.
 
 ## Running it
 
@@ -48,11 +56,13 @@ Or, without a window:
 
 ```bash
 python ModStudio.py --cli scan "E:\XBOX Classic Games"
-python ModStudio.py --cli show "E:\XBOX Classic Games\Tom Clancy's Ghost Recon (USA)"
-python ModStudio.py --cli plan "...\Ghost Recon (USA)" --preset 2
-python ModStudio.py --cli apply "...\Ghost Recon (USA)" --set gr_all_difficulties=true --set gr_tier=up1
-python ModStudio.py --cli revert "...\Ghost Recon (USA)"
+python ModStudio.py --cli show "E:\XBOX Classic Games\Tom Clancy's Ghost Recon (USA).xiso.iso"
+python ModStudio.py --cli plan "...\Ghost Recon (USA).xiso.iso" --preset 2
+python ModStudio.py --cli apply "...\Ghost Recon (USA).xiso.iso" --set gr_all_difficulties=true --set gr_tier=up1
+python ModStudio.py --cli revert "...\Ghost Recon (USA).xiso.iso"
 ```
+
+Every one of those takes a disc image or a folder; `scan` lists both.
 
 `python build_exe.py` produces a single `dist\ModStudio.exe` that serves both
 modes — the windowed build attaches to the console it was started from when it
@@ -71,6 +81,10 @@ data, and every transform keeps the file's length, which is not a style choice:
 * Rainbow Six 3's `.UMD` bundle *does* have an index, but the tool writes inside
   a slot anyway, so the bundle stays byte-identical everywhere the edit did not
   reach.
+* A loose file is the exception and may change length -- in a folder it is just
+  rewritten, and inside a disc image it grows into the sector padding XDVDFS
+  already gave it. That is checked per file, not globally, which is what lets
+  the `.ASS` server scripts be rewritten with values of a different width.
 
 Where a file has to grow — a terrorist skill going from `50` to `100` is one
 character longer — the difference is taken out of the file's own blank lines,
@@ -83,6 +97,25 @@ Ghost Recon 2 ships its combat model both loose and packed. Rainbow Six 3 ships
 two *different* copies of `RainbowSix3Xbox.ini`, 5,393 bytes loose and 5,155
 inside the bundle. The folder index keys every copy and writes all of them, so
 "I edited the file and nothing happened" is not a failure mode here.
+
+## The skins are the Xbox ones
+
+Each game wears its own menu, and the colours were sampled out of its own shell
+art rather than inherited from the PS2 tool -- which matters, because they are
+not the same games' skins. The PS2 Ghost Recon shell is gold on navy; the Xbox
+one is **steel blue** (`#384878`, measured off `shell_bgd-01.rsb`). The full
+set, ground and accent: Ghost Recon `#081028`/`#384878`, Island Thunder
+`#001008`/`#306858`, Ghost Recon 2 `#000000`/`#60c030`, Summit Strike the same
+shell iced to `#58a0d8`, Rainbow Six 3 `#080808`/`#b01f22`, Black Arrow
+`#181010`/`#a84830`, GRAW `#000808`/`#38c0b8`, Critical Hour `#300000`/`#682020`.
+
+The wordmarks are each game's own, at its own resolution -- `STARTscreen.rsb` is
+512 x 128, `Splash.xpr` is 512 x 512, the Rainbow Six splashes are 640 x 480 --
+lifted out by finding the brightest mass in the picture and keying the plate
+behind it away over a soft ramp. The first version used the 64-pixel dashboard
+icons and it showed.
+
+![GRAW, the enemy weapons page](docs/screens/graw-enemy-weapons.png)
 
 ## The two rules that make it safe to run twice
 
@@ -101,10 +134,10 @@ Every card carries a badge, and this build is honest about the fact that none of
 them says *verified in game*:
 
 * **measured, not play-tested** — the files are confirmed rewritten and read
-  back. This is 181 of the 195 options.
+  back. This is 181 of the 196 options.
 * **untested** — reasoned from the data, never tried. Seven options.
 * **not working** — shipped visible and disabled with the reason written on the
-  card, because "why is that missing" is worth answering in the interface. Seven
+  card, because "why is that missing" is worth answering in the interface. Eight
   options, and each one names what was looked at: Ghost Recon has no wave dial
   because reading all 28 script variables in every `.gtf` in the game turns up
   text ids and capture timers and no enemy count; Ghost Recon 2 has no
@@ -128,6 +161,11 @@ the test suite:
   not 36, and the bit depths in the header do not always describe the storage.
 * **`.XPR` packed resources** — `tcxbox/xpr.py`, including the Morton deswizzle
   the uncompressed formats need.
+* **XDVDFS**, the filesystem on the disc images — `tcxbox/xiso.py`. A directory
+  is a binary search tree of the *file names*, so a folder with a few thousand
+  files is one chain thousands deep and has to be walked iteratively; and the
+  volume descriptor sits at a global offset that differs between a plain xiso
+  rip and a redump image, so it is searched for rather than assumed.
 
 Plus `tcxbox/xbe.py`, which reads enough of an Xbox executable to get the title
 id and the section map.
@@ -139,12 +177,18 @@ python tests\run_tests.py "E:\XBOX Classic Games"
 python tests\gui_smoke.py "E:\XBOX Classic Games"
 ```
 
-The first runs eleven checks against the real extracted discs — every container
-parses and round-trips, every edit keeps its file's length, the two sides of the
-war are separable where the data allows it, and every preset on every game
-applies and then reverts to a byte-identical folder. **Nothing retail is ever
-opened for writing**: the apply/revert cycle copies what it needs into the
-system temp folder and works there.
+The first runs thirteen checks against the real discs — every container parses,
+every edit keeps its file's length, the two sides of the war are separable where
+the data allows it, and every preset on every game applies and then reverts to a
+byte-identical folder. **Nothing retail is ever opened for writing**: the
+apply/revert cycle copies what it needs into the system temp folder and works
+there, and the disc-image writer is exercised against a small XDVDFS image built
+by `tests/make_xiso.py` rather than a 4 GB retail one.
+
+One of those checks is worth naming. Six of these games are on the shelf twice,
+as an image and as an extracted folder, and the suite reads both through their
+two completely independent readers and compares: 580 files byte-identical. That
+is the only real evidence that the two paths agree.
 
 The second opens the real window on every game and walks every page, which is
 how a broken card or a missing palette colour is found.

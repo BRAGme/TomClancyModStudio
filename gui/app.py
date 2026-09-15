@@ -6,10 +6,11 @@ the way it does in the games' own menus. Which skin is in force follows the
 disc: gunmetal for Rainbow Six 3, gold-on-navy for Ghost Recon, gold-on-teal for
 Island Thunder.
 
-What you point it at is a FOLDER -- an extracted Xbox disc, the thing
-Cxbx-Reloaded loads -- not an image file. The identity comes from the title id
-in the folder's own default.xbe, so a renamed folder is still recognised and a
-folder holding some other game is never mistaken for this one.
+What you point it at is a game: either the `.iso` it was ripped as, or a folder
+someone extracted it into. Both are edited in place and neither is preferred.
+The identity comes from the title id in the game's own default.xbe, so a renamed
+file is still recognised and a disc holding some other game is never mistaken
+for one of these.
 """
 
 from __future__ import annotations
@@ -137,8 +138,10 @@ class App(tk.Tk):
                              pady=theme.px(7))
         self.path_entry.bind("<Return>",
                              lambda _e: self._load_folder(self.path_var.get()))
-        self.browse = ActionButton(row, "Browse", self._browse)
+        self.browse = ActionButton(row, "Disc image", self._browse)
         self.browse.pack(side="left", padx=(theme.px(10), 0))
+        self.browse_dir = ActionButton(row, "Folder", self._browse_folder)
+        self.browse_dir.pack(side="left", padx=(theme.px(6), 0))
 
         self.status = tk.Label(self.stage, text="", bg=p.bg, fg=p.dim,
                                font=theme.F("body", 9), anchor="w")
@@ -239,8 +242,8 @@ class App(tk.Tk):
         self.logwrap.place(x=x, y=log_top, width=width, height=px(LOG_H))
         self.logwrap.set_height(px(LOG_H))
 
-        for b in (self.browse, self.apply_btn, self.revert_btn,
-                  self.discord_btn):
+        for b in (self.browse, self.browse_dir, self.apply_btn,
+                  self.revert_btn, self.discord_btn):
             b.configure(width=b.width_needed())
 
     def _path_indent(self):
@@ -297,6 +300,16 @@ class App(tk.Tk):
     # -- disc --------------------------------------------------------------
     def _browse(self):
         start = self.path_var.get() or ""
+        path = filedialog.askopenfilename(
+            title="Choose an Xbox disc image",
+            initialdir=os.path.dirname(start) if start else None,
+            filetypes=[("Xbox disc images", "*.iso *.xiso *.bin"),
+                       ("All files", "*.*")])
+        if path:
+            self._load_folder(path)
+
+    def _browse_folder(self):
+        start = self.path_var.get() or ""
         path = filedialog.askdirectory(
             title="Choose an extracted Xbox game folder",
             initialdir=os.path.dirname(start) if start else None,
@@ -329,7 +342,9 @@ class App(tk.Tk):
         self._restyle()
 
         tone = theme.P.warn if det.missing else theme.P.good
-        line = "title id %s   •   %s" % (det.title_id, det.title_name or "?")
+        line = "%s   •   title id %s   •   %s" % (
+            "disc image" if det.kind == "iso" else "extracted folder",
+            det.title_id, det.title_name or "?")
         if os.path.normcase(det.path) != os.path.normcase(det.chosen):
             line += "   •   game root: %s" % os.path.basename(det.path)
         if det.message:
@@ -459,7 +474,9 @@ class App(tk.Tk):
         det = self.detection
         card = Chrome(body, kind="panel", pad=theme.px(16))
         card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
-        rows = [("Game folder", det.path),
+        rows = [("Kind", "disc image, edited in place" if det.kind == "iso"
+                 else "extracted folder"),
+                ("Game", det.path),
                 ("You chose", det.chosen
                  if os.path.normcase(det.chosen) != os.path.normcase(det.path)
                  else "the same folder"),
@@ -598,7 +615,7 @@ class App(tk.Tk):
             return False
         if not (self.detection and self.detection.ok):
             messagebox.showinfo(APP_NAME,
-                                "Load a supported game folder first.")
+                                "Load a supported game first.")
             return False
         return True
 
@@ -640,6 +657,9 @@ class App(tk.Tk):
             lines.append("")
             lines += ["• " + w for w in pl.warnings]
         lines += ["", "Close the emulator first -- it holds these files open."]
+        if self.detection.kind == "iso":
+            lines.insert(-2, "This writes into the disc image itself. Every "
+                             "file stays where it is; nothing is rebuilt.")
         if not messagebox.askokcancel(APP_NAME, "\n".join(lines)):
             return
 
@@ -727,7 +747,7 @@ class App(tk.Tk):
         self._recent = data.get("recent", [])
         self._saved_values = data.get("profiles", {})
         for p in self._recent:
-            if os.path.isdir(p):
+            if os.path.exists(p):
                 self.after(250, lambda q=p: (self.detection is None
                                              and self._load_folder(q)))
                 break
@@ -738,7 +758,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     app = App()
     for arg in argv:
-        if os.path.isdir(arg):
+        if os.path.exists(arg):
             app.after(150, lambda q=arg: app._load_folder(q))
             break
     app.mainloop()

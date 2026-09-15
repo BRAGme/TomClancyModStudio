@@ -61,44 +61,60 @@ class Entry:
     raw_size: int = 0      # length once expanded
 
 
-def _walk(data: bytes, head: int):
+def _walk(read, size: int, head: int):
     """Entries for a given header size, or None if the walk does not land
-    exactly on the end of the file."""
-    # `head`, not `head + 4`: Ghost Recon 2's opposing_force.glb is an empty
-    # glob -- a 16-byte header, a count of zero and nothing after it.
-    if len(data) < head:
+    exactly on the end of the container.
+
+    `read(offset, length)` rather than a bytes object, because a glob can be
+    2.7 MB of mostly texture and there are 254 of them: indexing a game should
+    not mean pulling half a gigabyte through memory, and on a disc image it
+    would mean pulling it off the disc as well.
+    """
+    # `size < head`, not `size < head + 4`: Ghost Recon 2's opposing_force.glb
+    # is an empty glob -- a 16-byte header, a count of zero, nothing after it.
+    if size < head:
         return None
-    version, count = struct.unpack_from("<II", data, 0)
+    header = read(0, head)
+    if len(header) < 8:
+        return None
+    version, count = struct.unpack_from("<II", header, 0)
     if version != 2 or not 0 <= count < 100000:
         return None
     out = []
     o = head
-    n = len(data)
     for _ in range(count):
-        if o + 4 > n:
+        chunk = read(o, 4)
+        if len(chunk) < 4:
             return None
-        (nlen,) = struct.unpack_from("<I", data, o)
-        if not 0 < nlen < 512 or o + 4 + nlen + 12 > n:
+        (nlen,) = struct.unpack_from("<I", chunk, 0)
+        if not 0 < nlen < 512 or o + 4 + nlen + 12 > size:
             return None
         start = o
-        name = data[o + 4:o + 4 + nlen].split(b"\0")[0].decode("latin1")
-        o += 4 + nlen
-        stored, packed, raw = struct.unpack_from("<III", data, o)
-        o += 12
-        if packed not in (0, 1) or o + stored > n:
+        rest = read(o + 4, nlen + 12)
+        if len(rest) < nlen + 12:
+            return None
+        name = rest[:nlen].split(b"\0")[0].decode("latin1")
+        stored, packed, raw = struct.unpack_from("<III", rest, nlen)
+        o += 4 + nlen + 12
+        if packed not in (0, 1) or o + stored > size:
             return None
         out.append(Entry(name, o, stored, start, bool(packed), raw))
         o += stored
-    return out if o == n else None
+    return out if o == size else None
 
 
-def parse(data: bytes):
-    """Every entry in a glob, whichever of the two header shapes it uses."""
+def parse_stream(read, size: int):
+    """Every entry in a glob, read through `read(offset, length)`."""
     for head in (8, 16):
-        got = _walk(data, head)
+        got = _walk(read, size, head)
         if got is not None:
             return got
     raise GlobError("not a .glb glob, or a shape this tool does not know")
+
+
+def parse(data: bytes):
+    """Every entry in a glob already in memory."""
+    return parse_stream(lambda off, n: data[off:off + n], len(data))
 
 
 def is_glob(data: bytes) -> bool:

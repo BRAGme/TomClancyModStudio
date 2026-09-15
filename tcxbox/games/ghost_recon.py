@@ -256,8 +256,9 @@ GHOST_RECON = GameProfile(
     build_data=_build_data("gr_", GR_MISSIONS),
     notes=notes_for("Ghost Recon", GR_MISSIONS, 48),
     ui_art={"backdrop": "shell/art/shell_bgd-01.rsb",
-            "emblem": "shell/art/dash_gr-logo.rsb",
-            "kind": "rsb"},
+            # The 512 x 128 wordmark off the start screen, not the 64-pixel
+            # dashboard disc: same logo, eight times the pixels.
+            "emblem": "shell/art/STARTscreen.rsb"},
 )
 
 ISLAND_THUNDER = GameProfile(
@@ -272,6 +273,11 @@ ISLAND_THUNDER = GameProfile(
     build_data=_build_data("it_", IT_MISSIONS),
     notes=notes_for("Island Thunder", IT_MISSIONS, 61),
     ui_art={"backdrop": "shell/art/shell_bgd-01.rsb",
-            "emblem": "shell/art/dash_gr-logo.rsb",
-            "kind": "rsb"},
+            # Island Thunder's start screen carries the plain Ghost Recon
+            # wordmark, so its own subtitle comes off the main menu page --
+            # the box art crop, top-left of a 1024 x 512 sheet.
+            "emblem": "shell/art/main_menu-01.rsb",
+            "emblem_box": (0.02, 0.03, 0.66, 0.26),
+            # the wordmark sits on a mid-grey plate here, not on black
+            "emblem_key": (105, 205)},
 )

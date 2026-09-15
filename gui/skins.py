@@ -1,36 +1,54 @@
 """One skin per game, so the tool looks like the menu you would be standing in.
 
-Three chrome families cover the Xbox shelf, in seven colourways:
+Three chrome families cover the Xbox shelf, in eight colourways:
 
   ``rs3``  Rainbow Six 3's gunmetal HUD -- translucent slate panels with a
            hairline light edge, corners cut at 45 degrees, wide letterspaced
-           uppercase titles, and a red tab on the selected row.
+           uppercase titles, and a red tab on the selected row. Black Arrow and
+           Critical Hour wear the same chrome in their own colours.
 
   ``graw`` Advanced Warfighter's tactical display. Not Rainbow Six 3's chrome
            in another colour -- a different shape: every frame is a rounded
-           rectangle drawn twice, an outer bright cyan stroke and a second one
-           inset a few pixels inside it, over near-black. Menu rows are bars
-           with the top-right corner sheared off, each one led by a small solid
-           triangle, and the selected row inverts to a pale fill with dark
-           lettering. Read off the language, profile and difficulty screens.
+           rectangle drawn twice, an outer bright stroke and a second one inset
+           a few pixels inside it, over near-black. Menu rows are bars with the
+           top-right corner sheared off, each one led by a small solid triangle,
+           and the selected row inverts to a pale fill with dark lettering.
 
   ``gr``   The console shell the Red Storm games use -- flat translucent panels
            inside a bright rule, rounded buttons that fill solid when selected,
-           and a heavy white title. Ghost Recon is gold on navy, Island Thunder
-           the same in the teal its own shell is drawn in, and the two Ghost
-           Recon 2s in the lime-on-drab theirs are framed in.
+           and a heavy white title. Ghost Recon, Island Thunder and the two
+           Ghost Recon 2s wear this, each in its own hue.
+
+**These are the XBOX colours, not the PS2 ones, and that distinction is the
+reason this file was rewritten rather than copied.** The PS2 Ghost Recon shell
+is gold on navy; the Xbox one is not gold at all. Every ground and accent below
+was sampled out of the game's own shell art -- `shell_bgd-01.rsb`,
+`UI_STARTBkgd_US.xpr`, `Splash.tga`, Critical Hour's Magma menu textures -- by
+taking the most common near-black as the ground and the most common saturated
+mid-tone as the accent. What that turned up:
+
+    Ghost Recon      ground #081028   accent #384878   steel blue, not gold
+    Island Thunder   ground #001008   accent #306858   green-teal
+    Ghost Recon 2    ground #000000   accent #60c030   lime on black
+    Summit Strike    ground #000000   accent #58a0d8   the same shell, iced
+    Rainbow Six 3    ground #080808   accent #b01f22   gunmetal and red
+    Black Arrow      ground #181010   accent #a84830   burnt orange
+    GRAW             ground #000808   accent #38c0b8   teal
+    Critical Hour    ground #300000   accent #682020   crimson on black
+
+The accents are lifted a little from the raw samples, because a colour measured
+off a photograph is sitting under that photograph's exposure and reads muddy as
+a hairline on a panel. The hue is the measurement's; the value is not.
 
 A fourth family, ``lock``, is inherited from the PS2 tool along with these
-painters. No Xbox title in this shelf wears it, and it is left in place rather
-than picked out of eight hundred lines of drawing code that the other three
-share.
+painters. No Xbox title here wears it, and it is left in place rather than
+picked out of eight hundred lines of drawing code the other three share.
 
-Every skin ranges its title and its game line to the right, so the seven look
-like one tool wearing seven uniforms rather than seven different tools.
+Every skin ranges its title and its game line to the right, so the eight look
+like one tool wearing eight uniforms rather than eight different tools.
 
-Colours were read off the games themselves rather than invented; the artwork is
-pulled out of the user's own extracted disc at run time and cached, never
-redistributed.
+The artwork itself is pulled out of the user's own disc at run time and cached,
+never redistributed.
 """
 
 from __future__ import annotations
@@ -43,8 +61,8 @@ class Palette:
     #: which chrome painter to use
     chrome: str = "rs3"
 
-    bg: str = "#0c0f13"          # window behind everything
-    veil: str = "#0a0d11"        # what the background art fades into
+    bg: str = "#08090b"          # window behind everything
+    veil: str = "#050607"        # what the background art fades into
     panel: str = "#161b22"       # a card or a group box
     panel2: str = "#1d242c"      # a raised strip inside one
     edge: str = "#8ea3b5"        # the bright hairline
@@ -87,21 +105,21 @@ RS3 = Palette()
 
 GR = Palette(
     chrome="gr",
-    bg="#091321",
-    veil="#07101c",
-    panel="#14243f",
-    panel2="#1d3255",
-    edge="#d3a83b",
-    edge_dim="#6b5a25",
-    text="#b9d6f2",
-    dim="#7fa3c6",
-    faint="#4d6a86",
+    bg="#081028",
+    veil="#060c1e",
+    panel="#132043",
+    panel2="#1c2c5a",
+    edge="#6f8fd8",
+    edge_dim="#33456f",
+    text="#c2d4f0",
+    dim="#8098c4",
+    faint="#516685",
     title="#ffffff",
-    accent="#d3a83b",
-    accent_dim="#8d6f24",
-    sel_fill="#e2b944",
-    sel_text="#14243f",
-    tab="#d3a83b",
+    accent="#6f8fd8",
+    accent_dim="#3f5a93",
+    sel_fill="#5c7ac0",
+    sel_text="#0a1430",
+    tab="#6f8fd8",
     warn="#f0c24a",
     bad="#e2705a",
     good="#8fd257",
@@ -115,34 +133,24 @@ GR = Palette(
     glyph_triangle="#46b79c",
 )
 
-JS = Palette(
-    chrome="gr",
-    bg="#061513",
-    veil="#04100f",
-    panel="#0e2f2d",
-    panel2="#154340",
-    edge="#d3a83b",
-    edge_dim="#6b5a25",
-    text="#bfe6e0",
-    dim="#7fbdb5",
-    faint="#4a7a75",
-    title="#ffffff",
-    accent="#d3a83b",
-    accent_dim="#8d6f24",
-    sel_fill="#e2b944",
-    sel_text="#0e2f2d",
-    tab="#d3a83b",
-    warn="#f0c24a",
-    bad="#e2705a",
-    good="#8fd257",
-    title_align="right",
-    title_track=0,
-    title_upper=False,
-    title_font="Arial Black, Segoe UI Black",
-    body_font="Arial, Segoe UI",
-    bold_font="Arial Bold, Segoe UI Semibold",
-    glyph_cross="#5b93de",
-    glyph_triangle="#46b79c",
+#: Island Thunder is Ghost Recon's shell again, and its own start screen is
+#: near-black green where Ghost Recon's is navy.
+JS = replace(
+    GR,
+    bg="#04140e",
+    veil="#030f0a",
+    panel="#0d2b22",
+    panel2="#143c30",
+    edge="#4fb391",
+    edge_dim="#2a6153",
+    text="#c3e7da",
+    dim="#86b8a7",
+    faint="#54786c",
+    accent="#4fb391",
+    accent_dim="#2f7362",
+    sel_fill="#4fb391",
+    sel_text="#0d2b22",
+    tab="#4fb391",
 )
 
 #: Advanced Warfighter is Rainbow Six 3's engine and its menus follow that
@@ -153,45 +161,45 @@ JS = Palette(
 GRAW = replace(
     RS3,
     chrome="graw",
-    bg="#04090a",
-    veil="#030607",
-    panel="#08181a",
-    panel2="#0d2427",
-    edge="#3ee0e0",
-    edge_dim="#1d5c5f",
+    bg="#000808",
+    veil="#000405",
+    panel="#07171a",
+    panel2="#0c2327",
+    edge="#38c0b8",
+    edge_dim="#1c5f5c",
     text="#cdeced",
     dim="#8fb9ba",
     faint="#54797b",
     title="#e8fbfb",
-    accent="#3ee0e0",
-    accent_dim="#227e80",
+    accent="#38c0b8",
+    accent_dim="#1f7a76",
     # the game inverts the selected row: pale plate, dark lettering
-    sel_fill="#9fc9c9",
-    sel_text="#062022",
-    tab="#3ee0e0",
+    sel_fill="#9ecac7",
+    sel_text="#052020",
+    tab="#38c0b8",
     good="#5fcf9a",
-    glyph_triangle="#3ee0e0",
+    glyph_triangle="#38c0b8",
 )
 
-#: Ghost Recon 2's shell is the Red Storm frame again, drab olive ruled in the
-#: lime its wordmark and every panel edge are drawn in (#b4e198, measured off
-#: the language screens).
+#: Ghost Recon 2 and Summit Strike put the Red Storm frame on flat black. The
+#: lime is the one saturated colour in either shell -- 2,200 samples of #60c030
+#: across the start screen, the splash and the wordmark bar.
 GR2 = replace(
     GR,
-    bg="#0b120a",
-    veil="#080d07",
-    panel="#182415",
-    panel2="#23321c",
-    edge="#b4e198",
-    edge_dim="#4e6b3f",
-    text="#d5e9c8",
-    dim="#9bba8b",
-    faint="#66805a",
-    accent="#b4e198",
-    accent_dim="#6f9457",
-    sel_fill="#b4e198",
-    sel_text="#182415",
-    tab="#b4e198",
+    bg="#050705",
+    veil="#030403",
+    panel="#141a10",
+    panel2="#1e2717",
+    edge="#7ee04a",
+    edge_dim="#3f6f28",
+    text="#d8ecc6",
+    dim="#9fbb88",
+    faint="#6a7f58",
+    accent="#7ee04a",
+    accent_dim="#4a8a2c",
+    sel_fill="#7ee04a",
+    sel_text="#141a10",
+    tab="#7ee04a",
     warn="#e2d05a",
     good="#9fe57a",
     title_font="Bahnschrift SemiBold SemiConden, Bahnschrift SemiBold, "
@@ -200,86 +208,73 @@ GR2 = replace(
     bold_font="Franklin Gothic Medium, Segoe UI Semibold",
 )
 
-SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
-               panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#5a7d60",
-               sel_text="#16241a",
-               title_ink="#d2a047",
-               title_shadow="#4a3208",
-               title_font="Impact, Arial Black",
-               body_font="Corbel, Segoe UI",
-               bold_font="Corbel Bold, Segoe UI Semibold")
-
-#: Measured off the game's own loading frame rather than invented: the ground
-#: is flat black (30,856 of 36,000 sampled pixels are #000000), the plate is a
-#: cold steel blue clustered tightly at hue 208-210 (#1c252d through #293642),
-#: and the lettering is #eaeaea. The crimson is the "Rainbow Six" half of the
-#: wordmark. It keeps the cut-cornered chrome; see the note in the profile for
-#: why the shape language is not copied from the game's own shell textures.
-LOCKDOWN = replace(
-    RS3,
-    chrome="lock",
-    bg="#16233a",
-    veil="#0e1728",
-    panel="#1e2e47",
-    panel2="#2b3f5c",
-    edge="#7fc4ea",
-    edge_dim="#3c5878",
-    text="#dce8f4",
-    dim="#9fb6cd",
-    faint="#6a8199",
-    title="#ffffff",
-    accent="#7fc4ea",
-    accent_dim="#42648a",
-    sel_fill="#5a6b80",
-    sel_text="#ffffff",
-    tab="#7fc4ea",
-    title_shadow="#8c1c16",
-    warn="#e0b552",
-    bad="#d2604a",
-    good="#7fc14a",
-    title_track=6,
-)
-
-#: Black Arrow is Rainbow Six 3 with the accent warmed: its own wordmark and
-#: every selected row in the prototype's shell are amber rather than red.
-BLACK_ARROW = replace(
-    RS3,
-    bg="#0d0e0c",
-    veil="#0a0b09",
-    panel="#181a16",
-    panel2="#22251d",
-    edge="#c9a24a",
-    edge_dim="#5d4c25",
-    text="#ddd6c4",
-    dim="#9c9484",
-    accent="#c9a24a",
-    accent_dim="#7a6229",
-    tab="#c9a24a",
-)
-
-#: Summit Strike is Ghost Recon 2 moved from Korea to Kazakhstan, and its shell
-#: follows: the same frame, sand instead of lime.
+#: Summit Strike is the same shell with a second hue in it: its wordmark and
+#: its start screen carry an ice blue (#58a0d8, 200 samples) the base game has
+#: nowhere. Two games that shipped a year apart should not be indistinguishable
+#: in a tool that loads both.
 SUMMIT = replace(
     GR2,
-    bg="#12100a",
-    veil="#0d0b07",
-    panel="#241f14",
-    panel2="#332b1c",
-    edge="#e0c489",
-    edge_dim="#6d5c38",
-    text="#e7dcc6",
-    dim="#b9a988",
-    faint="#7e7050",
-    accent="#e0c489",
-    accent_dim="#94794a",
-    sel_fill="#e0c489",
-    sel_text="#241f14",
-    tab="#e0c489",
+    bg="#04060a",
+    veil="#020407",
+    panel="#111823",
+    panel2="#19222f",
+    edge="#72b8e8",
+    edge_dim="#345a76",
+    text="#cfe2f2",
+    dim="#93aec4",
+    faint="#61798c",
+    accent="#72b8e8",
+    accent_dim="#3f7ba1",
+    sel_fill="#72b8e8",
+    sel_text="#111823",
+    tab="#72b8e8",
+)
+
+#: Black Arrow is Rainbow Six 3 in burnt orange: its splash panel and its own
+#: wordmark measure #a84830, lifted here so a hairline still reads.
+BLACK_ARROW = replace(
+    RS3,
+    bg="#0f0b09",
+    veil="#0a0706",
+    panel="#1b1512",
+    panel2="#261d18",
+    edge="#d1683c",
+    edge_dim="#6b3a22",
+    text="#e4d6c8",
+    dim="#a89684",
+    faint="#6f6153",
+    accent="#d1683c",
+    accent_dim="#8a4425",
+    sel_fill="#3a2a20",
+    sel_text="#f4e6d8",
+    tab="#d1683c",
+)
+
+#: Critical Hour's menus are crimson on black -- #300000 grounds with #682020
+#: and #703010 on them, measured off its own Magma background textures. It is
+#: the only game on the shelf whose shell is red rather than accented with red.
+CRITICAL = replace(
+    RS3,
+    bg="#140404",
+    veil="#0c0202",
+    panel="#241010",
+    panel2="#331818",
+    edge="#c0504c",
+    edge_dim="#67282a",
+    text="#e8d2d0",
+    dim="#b08e8c",
+    faint="#7a5c5c",
+    accent="#c0504c",
+    accent_dim="#7c3030",
+    sel_fill="#3d1a1a",
+    sel_text="#f6e4e2",
+    tab="#c0504c",
 )
 
 BY_PROFILE = {
     "rainbow_six_3_xbox": RS3,
-    "black_arrow_proto_xbox": BLACK_ARROW,
+    "black_arrow_xbox": BLACK_ARROW,
+    "critical_hour_xbox": CRITICAL,
     "ghost_recon_xbox": GR,
     "island_thunder_xbox": JS,
     "ghost_recon2_xbox": GR2,
