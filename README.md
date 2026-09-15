@@ -33,10 +33,12 @@ almost everything interesting in plain text.
 | Ghost Recon: Advanced Warfighter | `55530054` | the shared gameplay table, plus teammate AI and enemy weapon tables |
 | Rainbow Six: Critical Hour | `5553005F` | **nothing yet** -- recognised, and the page says why |
 
-Point it at a game, **or at the folder your games live in** -- a folder with
-more than one game under it is a shelf rather than a game, so it fills the
-picker beside the path instead of the tool choosing one of them, and everything
-it found stays one click away afterwards.
+Point it at a game, **or at the folder your games live in**. A folder with more
+than one game under it is a shelf rather than a game, so it fills the picker
+instead of the tool choosing one of them. The two fields read as the two
+questions in order -- **Games folder**, then **Game** -- and the top one keeps
+holding the folder after a game loads, so trying the next game is one click
+rather than another trip through a file dialog.
 
 ![Sixteen games on one shelf](docs/screens/shelf-picker.png)
 

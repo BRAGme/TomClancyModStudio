@@ -36,7 +36,7 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import art, engine  # noqa: E402
-from tcxbox.detect import look  # noqa: E402
+from tcxbox.detect import identify, look  # noqa: E402
 from tcxbox.model import BOOL, INT  # noqa: E402
 
 from . import discorddialog, presence, skins, theme  # noqa: E402
@@ -57,6 +57,12 @@ HEADER = 148
 ACTION_H = 46
 LOG_H = 88
 GUTTER = 22
+
+#: Both field labels are given the same width in characters so the entry and
+#: the picker below it start at the same x. Left to size themselves, "GAME" and
+#: "GAMES HERE" put the two fields a centimetre apart and the panel looked
+#: assembled rather than laid out.
+LABEL_W = 13
 
 
 def settings_path():
@@ -131,7 +137,8 @@ class App(tk.Tk):
         self.disc = Chrome(self.stage, kind="panel", pad=theme.px(9))
         row = tk.Frame(self.disc.body, bg=p.panel)
         row.pack(fill="x")
-        self.disc_lbl = tk.Label(row, text="GAME", bg=p.panel, fg=p.dim,
+        self.disc_lbl = tk.Label(row, text="GAMES FOLDER", width=LABEL_W,
+                                 anchor="w", bg=p.panel, fg=p.dim,
                                  font=theme.F("body", 9))
         self.disc_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
         self.path_var = tk.StringVar()
@@ -155,13 +162,16 @@ class App(tk.Tk):
         self.browse_dir = ActionButton(row, "Folder", self._browse_folder)
         self.browse_dir.pack(side="left", padx=(theme.px(6), 0))
 
-        # Second line: every other game in the same place. Filled whenever a
-        # folder is read, and left filled, so switching games is one click
-        # rather than another trip through a file dialog.
+        # Second line: which game, out of the ones in that folder. The two
+        # fields are the two questions in order -- where are your games, and
+        # which one -- and the top one keeps holding the FOLDER after a game
+        # loads, so the pair stays readable as a sentence instead of the top
+        # field jumping to a file path the moment you choose something.
         pick = tk.Frame(self.disc.body, bg=p.panel)
         pick.pack(fill="x", pady=(theme.px(9), 0))
-        self.shelf_lbl = tk.Label(pick, text="GAMES HERE", bg=p.panel,
-                                  fg=p.dim, font=theme.F("body", 9))
+        self.shelf_lbl = tk.Label(pick, text="GAME", width=LABEL_W,
+                                  anchor="w", bg=p.panel, fg=p.dim,
+                                  font=theme.F("body", 9))
         self.shelf_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
         self.game_var = tk.StringVar()
         self.game_box = ttk.Combobox(pick, textvariable=self.game_var,
@@ -374,17 +384,36 @@ class App(tk.Tk):
         if path:
             self._load_folder(path)
 
+    def _select_in_shelf(self, path):
+        for label, known in self._shelf.items():
+            if os.path.normcase(known) == os.path.normcase(path):
+                self.game_var.set(label)
+                return
+
     def _load_folder(self, path):
         path = path.strip().strip('"')
         if not path:
             return
-        self.path_var.set(path)
         self._say("Reading %s" % (os.path.basename(path.rstrip("\\/")) or path))
-        det, shelf = look(path)
+
+        # Reading a shelf again costs a second -- it opens every disc image on
+        # it -- and can only find what it just found, so a game chosen out of
+        # the picker skips straight to identifying that one.
+        parent = os.path.dirname(path.rstrip("\\/"))
+        cached = (self._shelf_dir
+                  and os.path.normcase(parent) == os.path.normcase(self._shelf_dir))
+        if cached:
+            det, shelf = identify(path), []
+        else:
+            det, shelf = look(path)
+
+        folder = os.path.dirname(det.chosen or det.path) if det.ok else path
+        self.path_var.set(folder)
         if shelf:
-            self._fill_shelf(
-                os.path.dirname(det.chosen or path) if det.ok else path,
-                shelf, current=det.path if det.ok else None)
+            self._fill_shelf(folder, shelf,
+                             current=det.path if det.ok else None)
+        elif det.ok:
+            self._select_in_shelf(det.path)
         self.detection = det
 
         if not det.ok:
