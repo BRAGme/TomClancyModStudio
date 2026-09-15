@@ -231,6 +231,12 @@ def _save_backup(path, container):
 # ---------------------------------------------------------------------------
 
 def plan(iso_path, profile, values) -> Plan:
+    # The warnings are about what the player ASKED for, so they read the values
+    # as stored. `effective` neutralises a withdrawn or unmet option, which is
+    # right for the builders below and would be exactly wrong here: it would
+    # silence the one message that explains why the option is not going to do
+    # anything.
+    asked = profile.normalise(values)
     values = profile.effective(values)
     warnings = []
     edits = profile.build_edits(values) if profile.build_edits else []
@@ -242,14 +248,14 @@ def plan(iso_path, profile, values) -> Plan:
         # something. "stock", False and 0 all mean "leave this alone", so they
         # are never worth a warning even when their master switch is off -- and
         # neither is a value still sitting on its own default.
-        value = values.get(s.key)
+        value = asked.get(s.key)
         asking = value not in (None, False, 0, "stock", s.default)
         if not s.enabled and asking:
             warnings.append("%s is disabled in this build: %s"
                             % (s.label, s.disabled_reason))
-        if asking and profile.unmet(s.key, values):
+        if asking and profile.unmet(s.key, asked):
             warnings.append("%s does nothing without: %s"
-                            % (s.label, ", ".join(profile.unmet(s.key, values))))
+                            % (s.label, ", ".join(profile.unmet(s.key, asked))))
 
     how = ""
     if profile.overlays:

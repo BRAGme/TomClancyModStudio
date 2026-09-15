@@ -1173,6 +1173,28 @@ def run_withdrawn_options(args, work):
     pn = [w for w in profile.build_pnach(vals) if w.va == 0x00142048]
     check("and no cheat line either", not pn, str(pn))
 
+    # Every withdrawn option, on every profile, must be inert from stored
+    # values alone. `canon_team` is why this exists: it was withdrawn for
+    # hanging the split-screen level load, and a profile saved while it still
+    # looked fine would otherwise have gone on applying it -- the build site
+    # for a data edit had no `enabled` check, only the word sites did.
+    from tcps2.games import BY_ID as _ALL
+    for pid, prof in sorted(_ALL.items()):
+        off = [s.key for s in prof.settings if not s.enabled]
+        if not off:
+            continue
+        got = prof.effective({k: True for k in off})
+        live = [k for k in off if got[k] != prof.setting(k).default]
+        check("%s: all %d withdrawn options are neutralised" % (pid, len(off)),
+              not live, str(live))
+    check("canon_team is withdrawn", not profile.setting("canon_team").enabled)
+    check("and says why", "hangs the split-screen level load"
+          in profile.setting("canon_team").disabled_reason)
+    check("and emits no data edit even when stored true",
+          not [e for e in profile.build_data(
+                  profile.effective(dict(profile.defaults(), canon_team=True)))
+               if e.op == "canon_team"])
+
     dial = profile.setting("p2_look_speed")
     check("the dial replaces it", dial is not None and dial.enabled)
     check("and is stock at 1", dial.default == 1)

@@ -207,6 +207,16 @@ class GameProfile:
         require one that itself requires another).
         """
         out = self.normalise(values)
+        # A withdrawn option must be inert no matter what is stored against it.
+        # Greying the widget out does not clear the saved value, so a profile
+        # written while the option still worked would go on emitting its edit
+        # after it had been withdrawn -- and the reason an option gets withdrawn
+        # is usually that it broke something, which is the worst thing to keep
+        # silently applying. Each profile also omits the write at its own build
+        # site; this is the guard that does not depend on remembering to.
+        for s in self.settings:
+            if not s.enabled:
+                out[s.key] = s.default
         for _ in range(len(self.settings) + 1):
             changed = False
             for s in self.settings:

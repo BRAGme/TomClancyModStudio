@@ -381,7 +381,29 @@ def card(prefix, group):
 
     return Setting(
         prefix + "canon_team", "Player 2 is the mission's own operative",
-        BOOL, False, group, confidence="experimental", touches="data",
+        BOOL, False, group, confidence="broken", touches="data",
+        enabled=False,
+        disabled_reason=(
+            "Withdrawn after testing, 2026-09-15. It hangs the split-screen "
+            "level load -- caught on Island Estate, the map it was built for, "
+            "freezing near the end of the load. Bisected: with every other "
+            "experimental option off, the same split-screen map loaded fine, "
+            "and turning this one on alone brought the hang back. That is the "
+            "fifth attempt to hang in this function.\n\n"
+            "What has been ruled out, so the next attempt does not repeat it. "
+            "The edit is structurally correct: both inserted jumps land "
+            "exactly on the first statement of the switch arm they target "
+            "(0x1fd Loiselle, 0x283 Weber, each the byte after its Case "
+            "header), every arm still converges on the same join point, the "
+            "file length is unchanged and the package still yields its full "
+            "6,789 parseable script blocks. It is not an interaction with the "
+            "other two script edits either -- applied together, all three read "
+            "back correctly and the block count is unchanged. And it is not a "
+            "missing asset: the operative classes are not in the level "
+            "packages for EITHER mode, so Weber is no less available than "
+            "Price.\n\n"
+            "So the fault is semantic and downstream of this function, which "
+            "needs a debugger rather than more static inspection."),
         help="In split screen player 2 is Eddie Price on every mission. The "
              "story disagrees, and so does the disc: each map's INI carries the "
              "roster, and Island Estate is Chavez and Weber while the Parking "
