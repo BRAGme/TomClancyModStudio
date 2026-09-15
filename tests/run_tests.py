@@ -116,6 +116,7 @@ def main():
         run_loadout_units()
         run_uscode_units()
         run_vokes_regrow(args)
+        run_switch_off_restores(args, work)
         run_combination_warnings()
     finally:
         if not args.keep:
@@ -3155,6 +3156,88 @@ def run_combination_warnings():
     check("it reaches the plan, not just the profile",
           PROFILE.combination_warnings is combination_warnings)
 
+
+
+def run_switch_off_restores(args, work):
+    """Turning a data-file setting off must actually take it off the disc.
+
+    The bug this pins down shipped, and it was the worst kind: `apply` reported
+    success, `verify_data` reported the files read back cleanly, and the edit
+    was still there. Two separate paths caused it. A setting at its default
+    emits no FileEdit at all, so the loop over edits never visited the file;
+    and when an edit WAS emitted with a do-nothing value, the writer compared
+    the bytes it had just built against the STORED ORIGINAL -- which of course
+    matched -- and skipped the write, leaving whatever an earlier run had put
+    on the disc. Both are exercised here, in that order.
+
+    Writes are shadowed, so the disc this reads is never modified.
+    """
+    from tcps2 import dataedit, lin, rsesidearm
+    from tcps2.iso import Iso
+    from tcps2.model import FileEdit
+    from tcps2.vokes import Region, open_archives
+
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    print("\n[switching a data setting off puts the file back]")
+
+    class Shadow(Region):
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    with Iso(iso_path) as iso:
+        arcs = open_archives(iso, r"/VOKES0\.IMG$")
+        if not arcs:
+            return
+        arc = arcs[0]
+        arc.r = Shadow(arc.r)
+        key = "/COMMON.LIN"
+        if key.upper() not in arc.files:
+            return
+        stock = arc.read_file(key)
+        store = dataedit.Store(os.path.join(work, "switchoff"))
+        real = dataedit._archives
+        dataedit._archives = lambda _iso, _profile: {arc.r.name.upper(): arc}
+        try:
+            on = FileEdit("ai_sidearm", r"/COMMON\.LIN$", "",
+                          {"chance": 40, "in_contact": True, "say_chance": 0})
+            dataedit.apply_data(iso, PROFILE, [on], store)
+            after = arc.read_file(key)
+            check("the edit lands", rsesidearm.reads(lin.decompress(after))[0] == 40)
+            check("and does not change the file length", len(after) == len(stock))
+
+            # a setting at its default emits no edit at all
+            r = dataedit.apply_data(iso, PROFILE, [], store)
+            back = arc.read_file(key)
+            check("clearing the setting puts the file back byte for byte",
+                  back == stock)
+            check("and it is reported, not done silently", r.get("restored") == 1,
+                  "restored=%r" % r.get("restored"))
+
+            # and again through an edit that is present but does nothing
+            dataedit.apply_data(iso, PROFILE, [on], store)
+            check("re-applying puts it back on",
+                  rsesidearm.reads(lin.decompress(arc.read_file(key)))[0] == 40)
+            off = FileEdit("ai_sidearm", r"/COMMON\.LIN$", "",
+                           {"chance": 0, "in_contact": True, "say_chance": 0})
+            r = dataedit.apply_data(iso, PROFILE, [off], store)
+            check("an edit that asks for stock also puts the file back",
+                  arc.read_file(key) == stock)
+            check("and that is reported too", r.get("restored") == 1,
+                  "restored=%r" % r.get("restored"))
+        finally:
+            dataedit._archives = real
 
 if __name__ == "__main__":
     raise SystemExit(main())

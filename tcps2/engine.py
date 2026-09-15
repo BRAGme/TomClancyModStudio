@@ -313,9 +313,12 @@ def apply(iso_path, profile, values, progress=None) -> dict:
                 ov.store()
             store.save()
 
-        if data:
+        # Run the data pass even with nothing to write: the store may remember
+        # files an earlier run edited, and switching every data setting back off
+        # has to put those back rather than quietly leave them on the disc.
+        dstore = dataedit.Store(folder)
+        if data or dstore.entries():
             say("Editing the game's own data files")
-            dstore = dataedit.Store(folder)
             report["data"] = dataedit.apply_data(iso, profile, data, dstore,
                                                  progress=progress)
 
@@ -326,7 +329,7 @@ def apply(iso_path, profile, values, progress=None) -> dict:
             ok = sum(1 for e in edits if ov.read_word(e.va) == e.value)
             report["verified"] = ok
             report["failed"] = [e for e in edits if ov.read_word(e.va) != e.value]
-        if data:
+        if report["data"]:
             good, bad = dataedit.verify_data(iso, profile,
                                              dataedit.Store(folder))
             report["data"]["verified"] = good

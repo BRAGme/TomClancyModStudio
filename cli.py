@@ -161,8 +161,10 @@ def cmd_apply(args):
           % (r["verified"], r["applied"]))
     if r.get("data"):
         d = r["data"]
-        print("%d data file(s) rewritten, %d read back cleanly%s"
-              % (d.get("files", 0), d.get("verified", 0),
+        print("%d data file(s) rewritten%s, %d read back cleanly%s"
+              % (d.get("files", 0),
+                 (", %d put back" % d["restored"]) if d.get("restored") else "",
+                 d.get("verified", 0),
                  (", %d BROKEN" % d["broken"]) if d.get("broken") else ""))
         for op, n in sorted(d.get("changes", {}).items()):
             print("   %-18s %d change(s)" % (op, n))

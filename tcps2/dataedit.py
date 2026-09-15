@@ -439,14 +439,58 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                     counts[edit.op] = counts.get(edit.op, 0) + n
                 pending[slot] = (arc, ent, new)
 
+    # Anything an earlier run edited that this one does not want back.
+    #
+    # `pending` is the whole of what the current settings ask for, so a file the
+    # store remembers and `pending` does not name is a leftover from a setting
+    # that has since been switched off. The loop above cannot see it: it walks
+    # the edits, and a setting at its default produces no edit, so the file is
+    # never visited and its modified bytes stay on the disc. That breaks the
+    # promise the comment above makes -- moving a setting back to its default
+    # must actually undo it -- and it breaks it silently, because `verify_data`
+    # only asks whether the file still decodes, which a leftover edit does.
+    restored = 0
+    if selector is None:
+        for rec in store.entries():
+            arc = arcs.get(rec["archive"].upper())
+            if arc is None:
+                continue
+            ent = arc.files.get(rec["path"].upper())
+            if ent is None or (rec["archive"], ent.path) in pending:
+                continue
+            got = store.original(rec["archive"], rec["path"])
+            if got is None:
+                continue
+            data, offset = got
+            if ent.offset == offset and arc.read_entry(ent) == data:
+                continue                   # already stock, nothing to undo
+            if ent.offset != offset:
+                arc.r.write(ent.offset, b"\x00" * ent.size)
+            arc.r.write(offset, data)
+            arc._set_entry(ent, offset, len(data))
+            restored += 1
+        if restored:
+            say("Put back %d file%s an earlier run had edited"
+                % (restored, "" if restored == 1 else "s"))
+
     # write, biggest first
-    built = []
+    built, put_back = [], 0
     for (arc_name, path), (arc, ent, plain) in pending.items():
         original = store.original(arc_name, path)
         source = original[0] if original else arc.read_entry(ent)
         kind, was = _unpack(source, path)
         if was == plain:
-            continue                       # nothing actually changed
+            # The settings ask for the stock file. That is not the same as
+            # "nothing to do": an earlier run may have written an edit here,
+            # and `was`/`plain` are both computed from the STORED ORIGINAL, so
+            # they agree with each other while disagreeing with the disc. Put
+            # the original bytes back rather than re-pack them -- a LIN does
+            # not deflate to the same bytes twice, so re-packing would be a
+            # gratuitous rewrite that cannot even be checked for equality.
+            if original and arc.read_entry(ent) != original[0]:
+                built.append((len(original[0]), arc, ent, original[0]))
+                put_back += 1
+            continue
         packed = _repack(kind, source, plain)
         built.append((len(packed), arc, ent, packed))
     built.sort(key=lambda r: -r[0])
@@ -462,7 +506,8 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
             say("  %d of %d data files rewritten" % (written, len(built)))
     if built:
         say("Rewrote %d data file%s" % (written, "" if written == 1 else "s"))
-    return {"files": written, "changes": counts}
+    return {"files": written - put_back, "restored": restored + put_back,
+            "changes": counts}
 
 
 def revert_data(iso, profile, store, progress=None):
