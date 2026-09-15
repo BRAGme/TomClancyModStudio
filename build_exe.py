@@ -1,10 +1,18 @@
-"""Produce dist/ModStudio.exe.
+"""Produce dist/XboxModStudio.exe.
 
     python build_exe.py
 
 One file, no installer, no Python needed on the target machine. The imports are
 listed explicitly because the entry point defers them until it knows whether it
 is opening a window or running a command, which PyInstaller's scan cannot see.
+
+**The binary is NOT called ModStudio.exe**, which is what the PS2 Mod Studio
+builds. Two tools with the same file name and a similar icon in the same
+Downloads folder is exactly the confusion the teal icon is there to avoid, and
+a name is the half of that a shell shows in a list view. It also sidesteps
+Windows' icon cache, which is keyed on the path: rebuilding a different icon
+into the same ModStudio.exe leaves Explorer showing the old one until the cache
+is cleared, and the first thing that looks like is "the icon did not change".
 """
 
 from __future__ import annotations
@@ -16,7 +24,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-NAME = "ModStudio"
+NAME = "XboxModStudio"
 
 HIDDEN = [
     "cli", "gui", "gui.app", "gui.theme", "gui.widgets", "gui.controls",
@@ -107,11 +115,21 @@ def main():
         args += ["--exclude-module", e]
     args.append(os.path.join(ROOT, "%s.py" % NAME))
 
+    script = os.path.join(ROOT, "%s.py" % NAME)
+    if not os.path.exists(script):
+        raise SystemExit("no %s.py to build -- the entry script is named after "
+                         "NAME, so the two have to move together" % NAME)
+
     print(" ".join(args))
     rc = subprocess.call(args, cwd=ROOT)
     if rc:
         return rc
     exe = os.path.join(ROOT, "dist", NAME + ".exe")
+    # PyInstaller has been seen to exit 0 without producing anything; a build
+    # script that says nothing in that case is worse than no build script.
+    if not os.path.exists(exe):
+        raise SystemExit("PyInstaller exited cleanly but %s is not there"
+                         % os.path.basename(exe))
     print("\n%s  v%s  (%.1f MB)"
           % (exe, version, os.path.getsize(exe) / 1048576.0))
     shutil.rmtree(os.path.join(ROOT, "build"), ignore_errors=True)

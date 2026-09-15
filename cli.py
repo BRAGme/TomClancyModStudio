@@ -1,10 +1,10 @@
 """The same tool without the window.
 
-    ModStudio.exe --cli scan   [shelf folder]
-    ModStudio.exe --cli show   <game>
-    ModStudio.exe --cli plan   <game> [--set key=value ...] [--preset N]
-    ModStudio.exe --cli apply  <game> [--set key=value ...] [--preset N]
-    ModStudio.exe --cli revert <game>
+    XboxModStudio.exe --cli scan   [shelf folder]
+    XboxModStudio.exe --cli show   <game>
+    XboxModStudio.exe --cli plan   <game> [--set key=value ...] [--preset N]
+    XboxModStudio.exe --cli apply  <game> [--set key=value ...] [--preset N]
+    XboxModStudio.exe --cli revert <game>
 
 A <game> is either a disc image or a folder one was extracted into; `scan`
 lists both, images first. `scan` with no argument looks in the current folder.
@@ -151,7 +151,7 @@ def cmd_revert(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="ModStudio --cli",
+    ap = argparse.ArgumentParser(prog="XboxModStudio --cli",
                                  description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 

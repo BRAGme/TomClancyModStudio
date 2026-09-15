@@ -17,8 +17,13 @@ icons apart at 16 pixels: the **hue**, and the **silhouette**.
              printed inside exactly that frame, and they change the outline
              enough that the two icons do not read as the same shape.
 
-Written at 256 and saved into a multi-size `.ico`, so Windows has a real 16 and
-32 rather than a downsample of a 256.
+**The small sizes are drawn, not downsampled.** A 1024-pixel drawing resampled
+to 16 turns the ring into a grey smudge and the brackets into four dirty
+pixels, and a smudge reads as "some icon", not as this one -- which is the whole
+job at taskbar size. So anything under 32 pixels is drawn again at 4x with a
+heavier ring, a bigger centre and no brackets at all, then brought down. The
+brackets are the first thing to go because they are the first thing that stops
+resolving.
 """
 
 from __future__ import annotations
@@ -29,7 +34,6 @@ from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-S = 1024                      # drawn big, resampled down
 PLATE = (17, 22, 26, 255)     # near-black, a shade cooler than the PS2 one
 EDGE = (44, 60, 66, 255)
 INK = (62, 200, 216, 255)     # the teal
@@ -37,52 +41,60 @@ INK_DIM = (36, 122, 134, 255)
 
 SIZES = (256, 128, 64, 48, 32, 24, 16)
 
+#: below this, the icon is drawn in its simplified form
+SMALL = 32
 
-def draw() -> Image.Image:
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+
+def draw(side: int, simple: bool) -> Image.Image:
+    """The icon at `side` pixels, drawn at 4x and brought down."""
+    s = side * 4
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    pad = int(S * 0.045)
-    d.rounded_rectangle([pad, pad, S - pad, S - pad], radius=int(S * 0.17),
-                        fill=PLATE, outline=EDGE, width=int(S * 0.012))
+    pad = int(s * (0.02 if simple else 0.045))
+    d.rounded_rectangle([pad, pad, s - pad, s - pad],
+                        radius=int(s * (0.20 if simple else 0.17)),
+                        fill=PLATE, outline=EDGE,
+                        width=max(1, int(s * 0.012)))
 
-    cx = cy = S // 2
-    ring = int(S * 0.225)
-    weight = int(S * 0.055)
+    cx = cy = s // 2
+    ring = int(s * (0.275 if simple else 0.225))
+    weight = max(1, int(s * (0.075 if simple else 0.055)))
     d.ellipse([cx - ring, cy - ring, cx + ring, cy + ring],
               outline=INK, width=weight)
 
-    arm = int(S * 0.345)
-    gap = int(S * 0.115)
+    arm = int(s * (0.40 if simple else 0.345))
+    gap = int(s * (0.145 if simple else 0.115))
     for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
         d.line([cx + dx * gap, cy + dy * gap, cx + dx * arm, cy + dy * arm],
                fill=INK, width=weight)
-    d.ellipse([cx - weight, cy - weight, cx + weight, cy + weight], fill=INK)
+    dot = int(weight * (1.35 if simple else 1.0))
+    d.ellipse([cx - dot, cy - dot, cx + dot, cy + dot], fill=INK)
 
-    # the briefing-screenshot brackets, which is what makes the outline this
-    # tool's rather than the PS2 one's
-    inset = int(S * 0.115)
-    leg = int(S * 0.115)
-    thin = int(S * 0.028)
-    for ox, oy in ((0, 0), (1, 0), (0, 1), (1, 1)):
-        x = inset if ox == 0 else S - inset
-        y = inset if oy == 0 else S - inset
-        sx = 1 if ox == 0 else -1
-        sy = 1 if oy == 0 else -1
-        d.line([x, y, x + sx * leg, y], fill=INK_DIM, width=thin)
-        d.line([x, y, x, y + sy * leg], fill=INK_DIM, width=thin)
-    return img
+    if not simple:
+        # the briefing-screenshot brackets, which is what makes the outline
+        # this tool's rather than the PS2 one's
+        inset = int(s * 0.115)
+        leg = int(s * 0.115)
+        thin = max(1, int(s * 0.028))
+        for ox, oy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            x = inset if ox == 0 else s - inset
+            y = inset if oy == 0 else s - inset
+            sx = 1 if ox == 0 else -1
+            sy = 1 if oy == 0 else -1
+            d.line([x, y, x + sx * leg, y], fill=INK_DIM, width=thin)
+            d.line([x, y, x, y + sy * leg], fill=INK_DIM, width=thin)
+
+    return img.resize((side, side), Image.LANCZOS)
 
 
 def main():
-    big = draw()
-    png = os.path.join(HERE, "icon.png")
-    big.resize((256, 256), Image.LANCZOS).save(png)
-    frames = [big.resize((n, n), Image.LANCZOS) for n in SIZES]
+    frames = [draw(n, simple=n < SMALL) for n in SIZES]
+    frames[0].save(os.path.join(HERE, "icon.png"))
     frames[0].save(os.path.join(HERE, "icon.ico"), format="ICO",
                    sizes=[(n, n) for n in SIZES], append_images=frames[1:])
-    print("wrote icon.png and icon.ico (%s)"
-          % ", ".join("%dx%d" % (n, n) for n in SIZES))
+    print("wrote icon.png and icon.ico (%s; under %d drawn simplified)"
+          % (", ".join("%d" % n for n in SIZES), SMALL))
 
 
 if __name__ == "__main__":

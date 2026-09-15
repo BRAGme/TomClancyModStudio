@@ -49,23 +49,23 @@ footnote, because a page of dials that quietly did nothing would be worse.
 ## Running it
 
 ```bash
-python ModStudio.py
+python XboxModStudio.py
 ```
 
 Or, without a window:
 
 ```bash
-python ModStudio.py --cli scan "E:\XBOX Classic Games"
-python ModStudio.py --cli show "E:\XBOX Classic Games\Tom Clancy's Ghost Recon (USA).xiso.iso"
-python ModStudio.py --cli plan "...\Ghost Recon (USA).xiso.iso" --preset 2
-python ModStudio.py --cli apply "...\Ghost Recon (USA).xiso.iso" --set gr_all_difficulties=true --set gr_tier=up1
-python ModStudio.py --cli revert "...\Ghost Recon (USA).xiso.iso"
+python XboxModStudio.py --cli scan "E:\XBOX Classic Games"
+python XboxModStudio.py --cli show "E:\XBOX Classic Games\Tom Clancy's Ghost Recon (USA).xiso.iso"
+python XboxModStudio.py --cli plan "...\Ghost Recon (USA).xiso.iso" --preset 2
+python XboxModStudio.py --cli apply "...\Ghost Recon (USA).xiso.iso" --set gr_all_difficulties=true --set gr_tier=up1
+python XboxModStudio.py --cli revert "...\Ghost Recon (USA).xiso.iso"
 ```
 
 Every one of those takes a disc image or a folder; `scan` lists both.
 
-`python build_exe.py` produces a single `dist\ModStudio.exe` that serves both
-modes — the windowed build attaches to the console it was started from when it
+`python build_exe.py` produces a single `dist\XboxModStudio.exe` that serves
+both modes — the windowed build attaches to the console it was started from when it
 sees `--cli`.
 
 Needs Python 3.10+ and Pillow. Tkinter ships with Python on Windows.
@@ -213,4 +213,20 @@ stem, because the two do not always agree -- `m10_ruined_city.mis` asks for
 are siblings and should look it -- in **teal instead of green**, inside the four
 corner brackets Ghost Recon prints around every briefing screenshot. Hue and
 silhouette are the two things that tell icons apart at 16 pixels, and both
-differ, so the two never get picked up for each other on a taskbar.
+differ.
+
+The sizes under 32 pixels are drawn again rather than downsampled from the 256.
+A big drawing resampled that far turns the ring into a smudge and the brackets
+into four dirty pixels, and a smudge reads as "some icon" rather than as this
+one, which is the entire job at taskbar size.
+
+The binary is `XboxModStudio.exe`, not `ModStudio.exe` -- that is what the PS2
+tool builds, and two identically named files with similar icons in one Downloads
+folder is the confusion this is all meant to avoid. It also sidesteps Windows'
+icon cache, which is keyed on the path: rebuild a new icon into the same
+`ModStudio.exe` and Explorer keeps showing the old one, which looks exactly like
+the icon not having changed. If you ever do need to clear it:
+
+```bash
+ie4uinit.exe -show
+```

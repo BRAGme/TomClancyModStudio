@@ -1,8 +1,8 @@
 """Entry point for both the window and the command line.
 
-    ModStudio.exe                  -- open the window
-    ModStudio.exe <game folder>    -- open the window on that game
-    ModStudio.exe --cli ...        -- do it from a script instead
+    XboxModStudio.exe              -- open the window
+    XboxModStudio.exe <game>       -- open the window on that disc or folder
+    XboxModStudio.exe --cli ...    -- do it from a script instead
 
 Kept as one executable so a release is a single file to download.
 """
