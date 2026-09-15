@@ -303,7 +303,7 @@ def _mission_settings():
 #: poking bytes in place. All of them are withdrawn together, because the
 #: evidence says the fault is the rewrite path and not the individual features.
 #: Delete this list to put them back once `uscode` is understood.
-REASSEMBLED = ("canon_team", "ss_man_down", "ai_sidearm",
+REASSEMBLED = ("canon_team", "ai_sidearm",
                "ai_sidearm_contact", "ai_say_dry",
                "ss_chatter_kill", "ss_chatter_hostage")
 
@@ -352,8 +352,7 @@ REASSEMBLED_REASON = (
 
 
 #: Back on offer, but the padding fix has not yet survived a level load.
-RETRY = ("ss_man_down", "ai_sidearm", "ai_sidearm_contact", "ai_say_dry",
-         "ss_chatter_kill", "ss_chatter_hostage")
+RETRY = ("ss_man_down",)
 
 RETRY_NOTE = (
     "The hang that withdrew this is understood and fixed -- the edit used to "

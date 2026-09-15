@@ -21,7 +21,10 @@ only the chunks whose plain bytes actually changed, and pads each one back to
 its original compressed size so the container's own length never moves either.
 
 Padding is safe because the loader inflates a stream and stops at its end;
-trailing bytes inside the chunk are never looked at.
+trailing bytes inside the chunk are never looked at -- `rpg_speed` ships 163
+bytes of it and works. `_deflate_exact` avoids needing it where it can, because
+the disc's own packer never leaves a byte after a stream in any shipped COMMON
+package, and matching that is worth a tenth of a second.
 """
 
 from __future__ import annotations
@@ -114,6 +117,90 @@ def _zopfli(plain: bytes, iterations: int = 15):
         return None
 
 
+#: An empty, non-final STORED deflate block: three header bits (BFINAL=0,
+#: BTYPE=00), padding to the byte boundary, then LEN=0 and its complement. It
+#: is exactly the marker `Z_SYNC_FLUSH` emits, it decodes to nothing, and it can
+#: be repeated -- so a stream can be lengthened five bytes at a time without
+#: changing what it decompresses to.
+EMPTY_STORED = b"\x00\x00\x00\xff\xff"
+
+
+def _deflate_exact(plain: bytes, budget: int):
+    """A zlib stream of EXACTLY `budget` bytes, or None.
+
+    Why bother: the game's own packer never leaves a byte after the end of a
+    stream -- measured, zero such chunks in any shipped COMMON package -- while
+    this rebuild used to zero-pad every chunk that re-deflated smaller than its
+    slot. Matching what the disc actually does is worth having for its own
+    sake, and it costs a tenth of a second.
+
+    It is NOT known to fix anything. It was reached while chasing a hang, on
+    the observation that the failing edits padded and the working ones did not
+    -- and then `rpg_speed`, which works, turned out to pad 163 bytes, almost
+    exactly what the failing ss_man_down padded. So the correlation is broken
+    and this is tidiness, not a cure. When it cannot hit the slot exactly the
+    caller falls back to padding, because refusing would break `rpg_speed`.
+
+    The slack is taken up INSIDE the stream instead, as empty stored blocks in
+    front of the real data. They are only insertable five bytes at a time, so
+    the search sweeps levels and strategies until one lands on a length whose
+    shortfall is a multiple of five.
+    """
+    want = struct.pack(">I", zlib.adler32(plain))
+    for level in range(9, 0, -1):
+        for strategy in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED,
+                         zlib.Z_RLE, zlib.Z_HUFFMAN_ONLY, zlib.Z_FIXED):
+            # Empty stored blocks only come in fives, so the shortfall has to
+            # land on a multiple of five. Moving the first few bytes into a
+            # stored block of their own shifts the total by about one byte a
+            # time, which is what makes every residue reachable.
+            for lead in range(0, 24):
+                prefix, rest = plain[:lead], plain[lead:]
+                try:
+                    co = zlib.compressobj(level, zlib.DEFLATED, -15, 9, strategy)
+                    body = co.compress(rest) + co.flush()
+                except (zlib.error, ValueError):
+                    break
+                stored = b""
+                if lead:
+                    stored = (b"\x00" + struct.pack("<HH", lead, lead ^ 0xFFFF)
+                              + prefix)
+                slack = budget - (2 + len(stored) + len(body) + 4)
+                if slack < 0:
+                    break                      # longer `lead` only grows it
+                if slack % 5:
+                    continue
+                out = (b"\x78\x9c" + EMPTY_STORED * (slack // 5)
+                       + stored + body + want)
+                if len(out) == budget:
+                    try:
+                        if zlib.decompress(out) == plain:
+                            return out
+                    except zlib.error:
+                        pass
+
+    # Some chunks on these discs are packed tighter than zlib can match, so the
+    # sweep above never even gets under the slot and zopfli is the only thing
+    # that fits. Its length is not steerable by strategy, but it does move with
+    # the iteration count, which is enough to find one whose shortfall is a
+    # multiple of five.
+    for iterations in range(5, 61):
+        packed = _zopfli(plain, iterations)
+        if packed is None:
+            break
+        slack = budget - len(packed)
+        if slack < 0 or slack % 5:
+            continue
+        out = packed[:2] + EMPTY_STORED * (slack // 5) + packed[2:]
+        if len(out) == budget:
+            try:
+                if zlib.decompress(out) == plain:
+                    return out
+            except zlib.error:
+                pass
+    return None
+
+
 def _deflate_within(plain: bytes, budget: int):
     """The smallest deflate of `plain` that fits `budget`, or None."""
     best = None
@@ -156,6 +243,7 @@ def substitute(data: bytes, edit) -> tuple:
     out = bytearray()
     pos = 0
     touched = 0
+    padded = 0
     for raw, comp, off in parts:
         old_slice = plain[pos:pos + raw]
         new_slice = new_plain[pos:pos + raw]
@@ -163,7 +251,10 @@ def substitute(data: bytes, edit) -> tuple:
         if new_slice == old_slice:
             out += struct.pack("<II", raw, comp) + data[off:off + comp]
             continue
-        packed = _deflate_within(new_slice, comp)
+        # Fill the slot exactly if at all possible -- see `_deflate_exact`.
+        # Zero padding after the end of a stream is the one thing this rebuild
+        # used to do that the game's own packer never does.
+        packed = _deflate_exact(new_slice, comp) or _deflate_within(new_slice, comp)
         if packed is None:
             # Name the likely cause. Some chunks were packed tighter than
             # `zlib` can manage, so without zopfli they refuse EVERY edit --
@@ -178,6 +269,8 @@ def substitute(data: bytes, edit) -> tuple:
                 "chunk at 0x%X re-deflates larger than its %d-byte slot; the "
                 "container length cannot move, so this edit cannot be applied%s"
                 % (off, comp, extra))
+        if len(packed) < comp:
+            padded += 1
         packed = packed + b"\x00" * (comp - len(packed))
         out += struct.pack("<II", raw, comp) + packed
         touched += 1

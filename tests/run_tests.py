@@ -16,6 +16,7 @@ import hashlib
 import os
 import shutil
 import struct
+import zlib
 import sys
 import tempfile
 
@@ -119,6 +120,7 @@ def main():
         run_vokes_regrow(args)
         run_vokes_stay_home(args)
         run_mem_size_preserved(args)
+        run_chunks_fill_exactly(args)
         run_switch_off_restores(args, work)
         run_combination_warnings()
     finally:
@@ -3529,6 +3531,80 @@ def run_mem_size_preserved(args):
                 packed = dataedit._repack("lin", raw, new)
                 check("%s: %s still repacks and round-trips" % (path[1:], name),
                       len(packed) == len(raw) and lin.decompress(packed) == new)
+
+
+def run_chunks_fill_exactly(args):
+    """A rewritten chunk must fill its slot exactly, never be zero-padded.
+
+    This is what made every bytecode edit fail while every byte-poke edit
+    worked, and it had nothing to do with the bytecode. A chunk that re-deflates
+    SMALLER than its slot used to be padded out with zeros, leaving bytes after
+    the end of the stream that the game's own packer never emits. A byte-poke
+    edit changes so little that the chunk re-deflates to the same size and is
+    never padded; a bytecode edit compresses smaller and always was. Measured on
+    COMMON.LIN: ss_man_down left 167 trailing zeros, split_wheel left none.
+
+    The slack is now taken up inside the stream, as empty stored blocks, so the
+    container is byte-for-byte the length it was with no trailing garbage.
+    """
+    from tcps2 import (dataedit, lin, rsecanon, rsechatter, rsemandown,
+                       rsesidearm)
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    print("\n[LIN chunks fill their slot exactly]")
+
+    check("an empty stored block is five bytes and decodes to nothing",
+          len(lin.EMPTY_STORED) == 5
+          and zlib.decompress(b"\x78\x9c" + lin.EMPTY_STORED * 3
+                              + zlib.compress(b"hi")[2:]) == b"hi")
+    for budget_extra in (0, 5, 17, 123, 400):
+        body = b"rainbow six three " * 500
+        base = min((zlib.compress(body, l) for l in (9, 8, 7, 6, 5)), key=len)
+        got = lin._deflate_exact(body, len(base) + budget_extra)
+        check("a stream can be grown by exactly %d bytes" % budget_extra,
+              got is not None and len(got) == len(base) + budget_extra
+              and zlib.decompress(got) == body)
+
+    with Iso(iso_path) as iso:
+        arcs = open_archives(iso, r"/VOKES0\.IMG$")
+        if not arcs:
+            return
+        arc = arcs[0]
+        for path in ("/COMMON.LIN", "/COMMON_SS.LIN"):
+            if path.upper() not in arc.files:
+                continue
+            raw = arc.read_entry(arc.files[path.upper()])
+            plain = lin.decompress(raw)
+            # Only these two reach an exact fill on this disc; ss_chatter and
+            # canon_team land on a chunk no reachable compression fills, and
+            # fall back to padding, which is allowed -- rpg_speed ships padded
+            # and works.
+            cases = [("ss_man_down", lambda p: rsemandown.apply(p, True)[0]),
+                     ("ai_sidearm", lambda p: rsesidearm.apply(p, 40, True, 0)[0])]
+            for name, fn in cases:
+                edited = fn(plain)
+                # `substitute` refuses outright if any chunk would be padded,
+                # so getting a container back at all is the assertion.
+                packed = dataedit._repack("lin", raw, edited)
+                check("%s: %s packs with no zero padding" % (path[1:], name),
+                      len(packed) == len(raw))
+                check("%s: %s still round-trips" % (path[1:], name),
+                      lin.decompress(packed) == edited)
+                # and every touched chunk's stream really is its full slot
+                short = []
+                for (rawlen, comp, off) in lin.parse(packed)[0]:
+                    blob = packed[off:off + comp]
+                    d = zlib.decompressobj()
+                    d.decompress(blob)
+                    if len(d.unused_data) > 0:
+                        short.append((off, len(d.unused_data)))
+                check("%s: %s leaves nothing after any stream"
+                      % (path[1:], name), not short,
+                      "%d chunk(s) with trailing bytes" % len(short))
 
 if __name__ == "__main__":
     raise SystemExit(main())
