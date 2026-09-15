@@ -68,6 +68,46 @@ CHEAT_KEYS = (("m_bCheatChavezNoDie", "Chavez"),
               ("m_bCheatLoiselleNoDie", "Loiselle"),
               ("m_bCheatWeberNoDie", "Weber"))
 
+#: The PS2 build's aim table, read out of its own disc rather than invented:
+#: `R6GAMESETTINGS.INI` inside `vokes0.img` at offset 0x20C90 (17,267 bytes),
+#: section `[Engine.R6GameplaySettings]`. The Xbox copy of the same file lives
+#: inside `System\xboxdynamic.umd` at 0x126140 (16,690 bytes) and is the only
+#: place either disc defines these keys -- they are UE2 `config` properties
+#: declared in `Engine.u`, not constants in `default.xbe`.
+#:
+#: 54 aim-related keys were diffed across the two discs: 27 are already
+#: identical (all six `*Sensitivity*` keys among them, so the in-game slider is
+#: NOT the difference), 11 are PS2-only and cannot be ported, and these 16 are
+#: the ones that both exist on Xbox and differ.
+#:
+#: The 11 control points are the stick-deflection-to-turn-rate curve. Xbox's is
+#: quadratic -- exactly 2.7*n^2 for n=1..8 -- so half deflection asks for
+#: 67.5 deg/s where PS2 asks for 30. That is the acceleration people feel. The
+#: dead zone compounds it: Xbox spends 40% of stick travel doing nothing, so
+#: every correction begins in the steep part of the curve.
+PS2_AIM = {
+    "m_afRotationControlPoints[0]": 1,
+    "m_afRotationControlPoints[1]": 6,
+    "m_afRotationControlPoints[2]": 12,
+    "m_afRotationControlPoints[3]": 18,
+    "m_afRotationControlPoints[4]": 24,
+    "m_afRotationControlPoints[5]": 30,
+    "m_afRotationControlPoints[6]": 50,
+    "m_afRotationControlPoints[7]": 80,
+    "m_afRotationControlPoints[8]": 120,
+    "m_afRotationControlPoints[9]": 140,
+    "m_afRotationControlPoints[10]": 270,
+    "m_fRotationControlPoint": 90,
+    "m_fRotationZoomingMultiplier": 0.7,
+    "m_fSmoothingTime": "0.20",
+    "m_fAimDamping": 0.8,
+    "m_fDeadZone": 0.1,
+}
+
+#: `m_fDeadZone` is split out of `PS2_AIM` by the "keep" choice. PS2 sticks were
+#: new when that 0.1 was chosen; a worn Xbox controller can drift inside it.
+AIM_DEADZONE = "m_fDeadZone"
+
 
 
 def _scale_card(key, label, group, help_text, caution="", down=True):
@@ -229,6 +269,31 @@ def cards(prefix, has_templates):
                     "The X and Y multipliers the gamepad runs through, which "
                     "ship at 0.70 and 0.60. This is the same number the "
                     "in-game menu moves, set outside it."),
+        Setting(prefix + "aim_ps2", "Aiming response", CHOICE, "stock", FEEL,
+                choices=[
+                    Choice("stock", "As shipped",
+                           "The Xbox curve: 2.7*n^2, and 40% of the stick "
+                           "dead."),
+                    Choice("ps2", "PlayStation 2",
+                           "The PS2 disc's own numbers, all 16 of them, dead "
+                           "zone included."),
+                    Choice("ps2_keep_deadzone", "PlayStation 2, stock dead zone",
+                           "The PS2 curve, but the Xbox 0.40 dead zone left "
+                           "alone."),
+                ],
+                confidence="applied",
+                help="Replaces the turn-rate curve with the one the PS2 "
+                     "version ships. Xbox ramps as the square of stick "
+                     "deflection, so half a push asks for 67.5 deg/s where "
+                     "the PS2 asks for 30 -- that is the acceleration that "
+                     "makes it hard to settle on a target. Also brings over "
+                     "the dead zone (0.40 to 0.10), the zoom multiplier "
+                     "(1.0 to 0.7, so zoomed aim slows down), smoothing and "
+                     "damping. Look sensitivity is untouched: both discs "
+                     "already ship the same numbers.",
+                caution="The PS2 dead zone is 0.10. On a worn controller that "
+                        "can let the stick drift on its own -- if it does, use "
+                        "the stock dead zone choice."),
         _scale_card(prefix + "reload", "Reload speed", FEEL,
                     "m_fReloadSpeed, which ships at 1.0. Bigger is faster."),
         _scale_card(prefix + "ragdoll", "Ragdoll force", FEEL,
@@ -351,6 +416,13 @@ def edits(prefix, v, has_templates):
                             {"chance": sidearm, "in_contact": contact,
                              "say_chance": say},
                             "; ".join(notes)))
+
+    aim = v.get(prefix + "aim_ps2", "stock")
+    if aim != "stock":
+        for key, value in PS2_AIM.items():
+            if key == AIM_DEADZONE and aim == "ps2_keep_deadzone":
+                continue
+            setters[key] = value
 
     for key, who in CHEAT_KEYS:
         choice = v.get(prefix + "cheat_" + who.lower(), "stock")
