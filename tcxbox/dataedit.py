@@ -105,7 +105,32 @@ def _op_scale_gun(plain, params):
     return rseguns.scale(plain, params)
 
 
+def _op_ai_sidearm(raw, params):
+    """The teammate reload/sidearm roll, inside a cooked Unreal package.
+
+    This is the one op that is not text, and the one that has to look at its
+    own container: Rainbow Six 3 keeps the function in `System\\Common.lin`,
+    which is zlib-chunked, AND in `System\\R6Engine.u` inside
+    `System\\xboxufiles.umd`, which is not. Both are length-preserving either
+    way -- the script edit pays for itself out of a dead log line, and `lin`
+    re-packs into the same container extent.
+    """
+    from . import lin, rsesidearm
+    if lin.is_lin(raw):
+        plain = lin.decompress(raw)
+        new, n = rsesidearm.apply(plain, int(params.get("chance", 0)),
+                                  bool(params.get("in_contact", True)),
+                                  int(params.get("say_chance", 0)))
+        if not n:
+            return raw, 0
+        return lin.substitute(raw, lambda _old: new)[0], n
+    return rsesidearm.apply(raw, int(params.get("chance", 0)),
+                            bool(params.get("in_contact", True)),
+                            int(params.get("say_chance", 0)))
+
+
 OPS = {
+    "ai_sidearm": _op_ai_sidearm,
     "strip_difficulty": _op_strip_difficulty,
     "reveal_hidden": _op_reveal_hidden,
     "bump_tier": _op_bump_tier,

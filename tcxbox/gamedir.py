@@ -56,10 +56,16 @@ SKIP_DIRS = {"textures", "sounds", "sound", "videos", "video", "media",
              "commandmaps", "mapobjects", "rendererdata", "briefings",
              "stream", "preload", "uix", "shaders", "binary"}
 
-#: extensions worth indexing loose. Everything this tool edits is text.
+#: Extensions worth indexing loose. Nearly everything this tool edits is text.
+#:
+#: The two that are not are Rainbow Six 3's cooked Unreal packages. `.lin` and
+#: `.u` hold compiled UnrealScript, and one function inside them -- the one that
+#: decides whether a teammate reloads or draws his sidearm -- is editable with
+#: `tcxbox/uscode.py`. Indexing costs nothing beyond a name, an offset and a
+#: size: no member is read until an edit actually selects it.
 DATA_SUFFIXES = (".mis", ".atr", ".gun", ".kit", ".wsf", ".gtf", ".ass",
                  ".cgs", ".cms", ".prj", ".itm", ".vcl", ".env", ".ini",
-                 ".tpt", ".xml", ".kil")
+                 ".tpt", ".xml", ".kil", ".lin", ".u")
 
 #: containers whose members are indexed alongside the loose files
 GLOB_SUFFIX = ".glb"

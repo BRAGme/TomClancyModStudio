@@ -181,6 +181,66 @@ def test_mission_art(games):
 # transforms
 # ---------------------------------------------------------------------------
 
+def test_script_edit(games):
+    """The one edit that rewrites compiled UnrealScript rather than text.
+
+    Every place these discs keep `R6RainbowAI.RainbowReloadWeapon` must parse,
+    round-trip unchanged, and take the edit without changing length -- a `.umd`
+    slot and a `.lin` container can survive nothing else. Retail Rainbow Six 3
+    holds it twice and both copies are written.
+    """
+    from tcxbox import dataedit, lin, rsesidearm, uscode
+    from tcxbox.games.r6engine import SCRIPT_FILES
+    seen = 0
+    discs = 0
+    for det in games:
+        root = Root(det.path)
+        keys = root.match(SCRIPT_FILES)
+        if not keys:
+            continue
+        before = seen
+        for key in keys:
+            raw = root.read(key)
+            plain = lin.decompress(raw) if lin.is_lin(raw) else raw
+            if rsesidearm.SIGNATURE not in plain:
+                # Another game's package of the same name. Only Rainbow Six 3
+                # and Black Arrow carry this function, and a profile's selector
+                # only ever runs against its own disc -- this loop is the one
+                # place every disc is tried at once.
+                continue
+            at = rsesidearm.find_block(plain)
+            blk = uscode.Script.at(plain, at)
+            disk, mem = blk.assemble(blk.disk_len)
+            must(disk == plain[at + 4:at + 4 + blk.disk_len] and mem == blk.mem_len,
+                 "%s: the function does not round-trip" % key)
+            must(rsesidearm.reads(plain) == (0, False),
+                 "%s: does not read as stock" % key)
+            for params in ({"chance": 40, "in_contact": True},
+                           {"chance": 40, "in_contact": False},
+                           {"chance": 0, "say_chance": 25},
+                           {"chance": 40, "say_chance": 25}):
+                out, n = dataedit.OPS["ai_sidearm"](raw, params)
+                must(len(out) == len(raw),
+                     "%s: %r changed the file length" % (key, params))
+                must(n == 1, "%s: %r changed nothing" % (key, params))
+                back = lin.decompress(out) if lin.is_lin(out) else out
+                # `in_contact` defaults to True when the caller omits it
+                want = (params["chance"],
+                        bool(params.get("in_contact", True))
+                        if params["chance"] else False)
+                must(rsesidearm.reads(back) == want,
+                     "%s: %r read back as %r" % (key, params,
+                                                 rsesidearm.reads(back)))
+            must(dataedit.OPS["ai_sidearm"](raw, {"chance": 0})[1] == 0,
+                 "%s: a zero chance wrote something" % key)
+            seen += 1
+        if seen > before:
+            discs += 1
+    must(discs >= 2, "fewer than two discs carried the function")
+    return "%d cop%s across %d disc(s), every one parsed, edited and kept its length" % (
+        seen, "y" if seen == 1 else "ies", discs)
+
+
 def test_length_preserved(games):
     checked = 0
     for det in games:
@@ -547,6 +607,8 @@ def main(argv):
 
     print("transforms")
     check("edits keep the file's length", lambda: test_length_preserved(games))
+    check("the script edit parses, applies and keeps its length",
+          lambda: test_script_edit(games))
     check("template skills clamp", lambda: test_clamps(games))
     check("ini value shapes survive scaling", lambda: test_ini_shapes(games))
 

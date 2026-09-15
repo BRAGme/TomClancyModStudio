@@ -69,6 +69,7 @@ CHEAT_KEYS = (("m_bCheatChavezNoDie", "Chavez"),
               ("m_bCheatWeberNoDie", "Weber"))
 
 
+
 def _scale_card(key, label, group, help_text, caution="", down=True):
     choices = [Choice("stock", "As shipped", "")]
     if down:
@@ -79,6 +80,81 @@ def _scale_card(key, label, group, help_text, caution="", down=True):
                 Choice("much_more", "Double", "")]
     return Setting(key, label, CHOICE, "stock", group, choices=choices,
                    confidence="applied", help=help_text, caution=caution)
+
+
+#: Every place these discs keep `R6RainbowAI.RainbowReloadWeapon`. Retail
+#: Rainbow Six 3 has it twice -- in the cooked `System\\Common.lin` and in
+#: `System\\R6Engine.u` inside `System\\xboxufiles.umd` -- and the two copies are
+#: byte-identical. Black Arrow ships only the cooked one; the Black Arrow
+#: prototype ships only a loose `R6Engine.u` under
+#: `Files\\Black_Arrow_XBOX_media`. This regex names all of them, and
+#: `apply_data` simply writes whichever a given disc has.
+#:
+#: Editing both copies on retail is deliberate. Which one the running game
+#: loads is NOT settled: both copies of `RainbowSix3Xbox.ini` declare
+#: `Paths=d:\\System\\*.u` and no `*.lin` path at all, yet there is not one
+#: loose `.u` on the disc, and `default.xbe` names only `xboxdynamic.umd`.
+#: Since the copies are identical and the edit is deterministic and
+#: length-preserving, writing both makes the question moot.
+SCRIPT_FILES = r"/COMMON\.LIN$|/R6ENGINE\.U$"
+
+
+def _sidearm_cards(prefix):
+    from .. import rsesidearm
+    from ..model import BOOL
+    need = {prefix + "unlimited_teammate_ammo": ["false"]}
+    return [
+        Setting(prefix + "sidearm", "Chance of drawing the pistol instead of "
+                "reloading", INT, 0, SQUAD, minimum=0,
+                maximum=rsesidearm.MAX_CHANCE, unit="%",
+                confidence="untested", requires=need,
+                help="Stock, a teammate reaches for his sidearm only when the "
+                     "rifle is completely spent -- he never transitions "
+                     "mid-fight the way the animation and the loadout plainly "
+                     "expect. The decision is one test in "
+                     "`R6RainbowAI.RainbowReloadWeapon`, which reloads whenever "
+                     "any magazine remains. This puts a roll on that test, so "
+                     "this percentage of dry magazines end with the pistol "
+                     "coming out instead. 0% is the game exactly as it "
+                     "shipped.",
+                caution="Not play-tested, and this one rewrites compiled "
+                        "UnrealScript rather than a line of text: the roll is "
+                        "inserted, every jump in the function is re-based "
+                        "around it, and the space is paid for by deleting a "
+                        "debug log line that cannot run. The result is read "
+                        "back through the same parser before it is written. "
+                        "Capped at %d%% because a teammate who never reloads "
+                        "would swap between two weapons that both still report "
+                        "ammunition." % rsesidearm.MAX_CHANCE),
+        Setting(prefix + "say_dry", "Chance of calling out a reload", INT, 0,
+                SQUAD, minimum=0, maximum=100, unit="%",
+                confidence="untested",
+                help="**There is no reloading line in this game.** All three "
+                     "operatives have 101 voice events each and exactly one is "
+                     "about ammunition; the only reload sounds on the disc are "
+                     "a shotgun and a grenade launcher. So this does the "
+                     "nearest honest thing: it plays the ammunition line -- "
+                     "\"No ammo, sir\" / \"Weapon's dry\" -- when a teammate "
+                     "reloads, this often. It is the game's own call, copied "
+                     "from the branch that fires when both weapons are spent "
+                     "and inserted into the reload branch behind a roll.",
+                caution="Not play-tested. Unlike the card above this one needs "
+                        "no other setting -- it sits in the branch that runs "
+                        "either way, so it works on a stock disc where "
+                        "teammates reload constantly. Start low; 15-25% is "
+                        "about one call-out every few magazines."),
+        Setting(prefix + "sidearm_contact", "...only when they are in contact",
+                BOOL, True, SQUAD, confidence="untested",
+                requires={prefix + "sidearm":
+                          list(range(1, rsesidearm.MAX_CHANCE + 1))},
+                help="With this on, the roll only happens to a teammate who "
+                     "currently has an enemy -- one with nobody shooting at him "
+                     "always reloads, which is what he should do. The test is "
+                     "the game's own: the function already checks "
+                     "`Enemy != None` to decide whether to break off an attack "
+                     "before reloading, and the reference is lifted from there "
+                     "rather than hardcoded."),
+    ]
 
 
 def cards(prefix, has_templates):
@@ -128,7 +204,13 @@ def cards(prefix, has_templates):
                 confidence="applied",
                 help="m_bUnlimitedRainbowMagazines ships true: your AI "
                      "teammates have infinite magazines and you do not. "
-                     "Turning it off is a realism option."),
+                     "Turning it off is a realism option.",
+                caution="It is also the switch the two cards below depend on. "
+                        "While magazines are unlimited the engine pins every "
+                        "teammate weapon's clip count at 1 for the whole "
+                        "mission, so the branch that draws a sidearm can never "
+                        "be reached."),
+    ] + _sidearm_cards(prefix) + [
         Setting(prefix + "falling_damage", "Falling damage", CHOICE, "stock",
                 SQUAD, confidence="applied",
                 choices=[Choice("stock", "As shipped", ""),
@@ -249,6 +331,26 @@ def edits(prefix, v, has_templates):
     ammo_switch = v.get(prefix + "unlimited_teammate_ammo", "stock")
     if ammo_switch != "stock":
         setters["m_bUnlimitedRainbowMagazines"] = ammo_switch
+
+    # Gated on the ammunition switch, not merely shown beneath it: while
+    # magazines are unlimited the clip count is pinned at 1 and the branch this
+    # reaches is unreachable, so writing the script alone would be a change to
+    # the game that could not do anything.
+    sidearm = int(v.get(prefix + "sidearm", 0)) if ammo_switch == "false" else 0
+    say = int(v.get(prefix + "say_dry", 0))
+    if sidearm or say:
+        contact = bool(v.get(prefix + "sidearm_contact", True))
+        notes = []
+        if sidearm:
+            notes.append("%d%% chance of drawing the pistol instead of "
+                         "reloading%s"
+                         % (sidearm, " while in contact" if contact else ""))
+        if say:
+            notes.append("%d%% chance of calling out a reload" % say)
+        out.append(FileEdit("ai_sidearm", SCRIPT_FILES,
+                            {"chance": sidearm, "in_contact": contact,
+                             "say_chance": say},
+                            "; ".join(notes)))
 
     for key, who in CHEAT_KEYS:
         choice = v.get(prefix + "cheat_" + who.lower(), "stock")
