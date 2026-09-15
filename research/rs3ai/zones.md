@@ -140,3 +140,59 @@ Shipyard A, in memory, nothing written to a disc:
 So per-map spawner tuning is done as a mechanism. What it tunes is every
 authored count in one mission, wave zones and story spawners alike, which is a
 per-map knob of real use even without per-zone attribution.
+
+## The equipment wheel in split screen (open)
+
+Rainbow Six 3 opens an equipment wheel when you hold L1. In split screen it
+does not: L1 cycles one item per press instead, which costs time in a
+firefight. What is known so far, so this is not restarted from nothing:
+
+**The switch is named.** `COMMON.LIN`'s script package at `0x86a7f` exports
+`m_bUseWheel` as a **BoolProperty** (export #388 of that package), with
+`m_OpeningWheelSound` and `m_ClosingWheelSound` as ObjectProperties beside it.
+That is a class member declaration, not an authored value.
+
+**Ruled out:**
+
+* It is not a config variable. `m_bUseWheel` does not appear in
+  `R6GAMESETTINGS.INI` on any of the three Unreal-engine discs, nor in the
+  Xbox build's `xboxdynamic.umd`. Nothing named `*Wheel*` or `*Split*` is a
+  settable key on any of them, so there is no plain-text edit to make.
+* It has no Function export named for it. Searching that package's 2,061
+  `Function` exports for `wheel` returns nothing; the nearest relatives are
+  `GadgetOne`, `GadgetTwo`, `ResetGadgetGroup`, `EquipWeapon`, `EquipHands`.
+* The three byte patterns matching `EX_InstanceVariable + compact(388)` at
+  `0x1dcab7`, `0x209c1d` and `0x209c5f` are **probably not** bytecode reads.
+  Their neighbourhoods look like table data (runs of aligned u32s), none of
+  the expected names sit within 900 bytes of them, and a three-byte pattern in
+  a 5 MB package is around the rate chance alone predicts. Do not build on
+  these without a real disassembler.
+
+**The promising lead is native, not script.** Split-screen behaviour on this
+disc runs through a flags word. At `0x00302D90` the routine that already
+carries one of our patches does:
+
+    00302d90  lw   $v0, -0x6ffc($gp)     ; a mode-flags global
+    00302d94  or   $v0, $v1, $v0         ; ORed into
+    00302d98  sw   $v0, 0x4e4($s1)       ; the object's flags word
+    00302d9c  lw   $v0, 0x4e4($s1)
+    00302da0  beqz $v0, 0x302dac
+    00302da4  nop
+    00302da8  sw   zero, -0x7f34($gp)    ; g_bDrawFirstPersonWeapon = 0
+                                         ; (this is the patch we already ship)
+
+So `s1+0x4e4` is a split-screen mode-flags word assembled from gp-relative
+globals, and the first-person-weapon suppression we already undo is one
+consumer of it. The wheel suppression is very likely another, either as a
+second bit in the same word or a sibling store in the same routine.
+
+**Two ways to finish it, either of which is bounded:**
+
+1. A UnrealScript (UE2) bytecode disassembler for these packages. It would
+   settle whether `m_bUseWheel` is read in script at all, and it would serve
+   the weapon-pickup question too, which is stuck on the same missing tool.
+2. Two savestates from a player -- one single-player, one split screen, both
+   in a mission -- and `research/code/p2s.py diff` between them. The flag is a
+   byte that differs between the two and does not differ between two states of
+   the same mode. That is one afternoon's difference narrowed to a handful of
+   addresses in one command, and it does not need any new tooling.

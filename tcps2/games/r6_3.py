@@ -721,10 +721,14 @@ def combination_warnings(v: dict) -> list:
     """Settings that are fine alone and run the console out of memory together.
 
     The PS2 has 32 MB and no way to ask for more. Each of these on its own is
-    survivable; the combination is what fills it. A level that keeps spawning
-    while nothing is ever removed has only one ending, and it arrives after a
-    few minutes rather than immediately, which is what makes it hard to
-    attribute to any one switch.
+    survivable; the combination is what fills it.
+
+    It bites hardest on RESTART. The report this was written from is a freeze
+    in the mission-fail menu on the third or fourth retry from insertion, not
+    during play -- so what runs the console out is the teardown-and-reload
+    path, with each attempt leaving more behind than the last. That is also
+    what makes it so hard to attribute: nothing goes wrong while you are
+    alive, and the switch that caused it was set several sessions ago.
     """
     out = []
     feeding = (v.get("wave_enable")
@@ -738,9 +742,10 @@ def combination_warnings(v: dict) -> list:
         out.append(
             "Bodies never despawning AND every deployment zone feeding is the "
             "combination that fills the console's 32 MB: the level keeps "
-            "spawning and nothing is ever removed. Expect a freeze a few "
-            "minutes in, on the levels with the most zones. Set bodies back "
-            "to a timer, or let only the player's zone feed.")
+            "spawning and nothing is ever removed. It shows up on RESTART "
+            "rather than during play -- retry a mission three or four times "
+            "from insertion and it can freeze on the fail screen. Set bodies "
+            "back to a timer, or let only the player's zone feed.")
     if forever and ring > 64:
         out.append(
             "Bodies never despawning with a decal ring of %d holds every "
