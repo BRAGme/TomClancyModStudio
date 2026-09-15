@@ -303,7 +303,7 @@ def _mission_settings():
 #: poking bytes in place. All of them are withdrawn together, because the
 #: evidence says the fault is the rewrite path and not the individual features.
 #: Delete this list to put them back once `uscode` is understood.
-REASSEMBLED = ("canon_team", "ai_sidearm",
+REASSEMBLED = ("canon_team", "ss_man_down", "ai_sidearm",
                "ai_sidearm_contact", "ai_say_dry",
                "ss_chatter_kill", "ss_chatter_hostage")
 
@@ -343,6 +343,14 @@ REASSEMBLED_REASON = (
     "ss_man_down was rebuilt that way, put on a disc reading mem=375 disk=283 "
     "against a stock 375/283, and STILL hung the initial load. So the declared "
     "size is not it either.\n\n"
+    "THE CHUNK PADDING WAS NOT IT EITHER. The disc's own packer never "
+    "leaves a byte after a compressed stream -- zero such chunks in any "
+    "shipped COMMON package -- while this rebuild zero-padded any chunk "
+    "that re-deflated smaller than its slot, 167 bytes for ss_man_down. "
+    "lin._deflate_exact now fills the slot exactly; ss_man_down went onto "
+    "a disc with zero trailing bytes anywhere and hung just the same. And "
+    "rpg_speed, which works, pads 163 bytes, so the correlation was "
+    "already broken before the test.\n\n"
     "Where that leaves it: the bytes reaching the console are provably the "
     "bytes intended (assembler round-trips 6,726 of 6,789 blocks byte-exactly, "
     "container decompresses back identically, archive layout unchanged, "
@@ -352,7 +360,7 @@ REASSEMBLED_REASON = (
 
 
 #: Back on offer, but the padding fix has not yet survived a level load.
-RETRY = ("ss_man_down",)
+RETRY = ()
 
 RETRY_NOTE = (
     "The hang that withdrew this is understood and fixed -- the edit used to "
