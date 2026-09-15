@@ -495,17 +495,23 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
             # not deflate to the same bytes twice, so re-packing would be a
             # gratuitous rewrite that cannot even be checked for equality.
             if original and arc.read_entry(ent) != original[0]:
-                built.append((len(original[0]), arc, ent, original[0]))
+                built.append((len(original[0]), arc, ent, original[0],
+                              (original[1], len(original[0]))))
                 put_back += 1
             continue
         packed = _repack(kind, source, plain)
-        built.append((len(packed), arc, ent, packed))
+        # The offset the file SHIPPED at. An edit that makes a file bigger than
+        # its slot has to relocate it, and a single byte is enough; passing home
+        # through means the next edit that fits puts it back, instead of leaving
+        # it wherever the first overflow landed.
+        built.append((len(packed), arc, ent, packed,
+                      (original[1], len(original[0])) if original else None))
     built.sort(key=lambda r: -r[0])
 
     written = 0
-    for size, arc, ent, packed in built:
+    for size, arc, ent, packed, home in built:
         try:
-            arc.write(ent.path, packed)
+            arc.write(ent.path, packed, home=home)
         except VokesError as exc:
             raise DataEditError("%s: %s" % (ent.path, exc)) from exc
         written += 1

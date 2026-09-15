@@ -117,6 +117,7 @@ def main():
         run_loadout_units()
         run_uscode_units()
         run_vokes_regrow(args)
+        run_vokes_stay_home(args)
         run_switch_off_restores(args, work)
         run_combination_warnings()
     finally:
@@ -3346,6 +3347,86 @@ def run_switch_off_restores(args, work):
                   "restored=%r" % r.get("restored"))
         finally:
             dataedit._archives = real
+
+
+def run_vokes_stay_home(args):
+    """A file that grows by a byte must not be exiled to the end of the archive.
+
+    This shipped, and it was expensive: one setting made R6GAMESETTINGS.INI a
+    single byte longer, which pushed it out of its slot and into the 64 KB pad
+    at the end -- up to a gigabyte from everything a level reads alongside it.
+    These archives exist in three redundant copies precisely to keep DVD seeks
+    short, so the whole point of the layout was lost, and the only symptom was
+    slow loading with a normal frame rate.
+
+    Two separate faults, both checked here. The file could not use the packer's
+    own alignment padding, because the blankness test that (rightly) protects
+    unreferenced data also refused the few bytes between a file and the next
+    one. And once moved it never came back: every later edit is built from the
+    same stored original, so an edit that fitted again was simply written at
+    whatever offset the first overflow happened to reach.
+
+    Writes are shadowed, so the disc is never modified.
+    """
+    from tcps2.iso import Iso
+    from tcps2.vokes import Region, open_archives
+
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    print("\n[vokes -- a file that grows a byte stays where it was]")
+
+    class Shadow(Region):
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    with Iso(iso_path) as iso:
+        arcs = open_archives(iso, r"/VOKES0\.IMG$")
+        if not arcs:
+            return
+        arc = arcs[0]
+        arc.r = Shadow(arc.r)
+        key = "/R6GAMESETTINGS.INI"
+        if key.upper() not in arc.files:
+            return
+        ent = arc.files[key.upper()]
+        home, size = ent.offset, ent.size
+        body = arc.read_file(key)
+
+        slack = arc._align_slack(ent)
+        check("the packer left alignment padding after it", slack > 0,
+              "%d bytes" % slack)
+        check("and it is padding, never a whole missing file", slack < arc.ALIGN)
+
+        arc.write(key, body + b" ", home=(home, size))
+        check("one byte longer still fits in its own slot",
+              arc.files[key.upper()].offset == home,
+              "moved to 0x%x" % arc.files[key.upper()].offset)
+        check("and the record grew with it",
+              arc.files[key.upper()].size == size + 1)
+        check("the next file is still where it was",
+              min(o.offset for o in arc.files.values() if o.offset > home)
+              == home + size + slack)
+
+        # now force a real relocation, then check it comes home again
+        arc.write(key, body + b" " * (slack + 64), home=(home, size))
+        moved = arc.files[key.upper()].offset
+        check("a growth past the padding does relocate", moved != home)
+        arc.write(key, body, home=(home, size))
+        check("and shrinking back brings it home", 
+              arc.files[key.upper()].offset == home,
+              "left at 0x%x" % arc.files[key.upper()].offset)
+        check("with its bytes intact", arc.read_file(key) == body)
 
 if __name__ == "__main__":
     raise SystemExit(main())

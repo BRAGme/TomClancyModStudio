@@ -234,13 +234,19 @@ class Vokes:
                 return False
         return True
 
-    def allocate(self, size, exclude=None):
+    def allocate(self, size, exclude=None, near=None):
         """Offset of a 16-byte-aligned, provably empty run of `size` bytes.
 
         Best fit, so a relocated file lands in the slot a previous relocation
         vacated instead of eating the 64 KB pad at the end of the archive.
         Every candidate is read and required to be all zeros first: an
         unreferenced range is not necessarily an unused one.
+
+        `near` asks for the closest such run to a byte offset rather than the
+        tightest one anywhere. These archives ship in three redundant copies to
+        keep DVD seeks short, so where a file lands is a load-time cost, not
+        bookkeeping: the pad at the end of a 2.6 GB image is a very long seek
+        from everything a level reads alongside it.
         """
         candidates = []
         for start, length in self.free_blocks(exclude):
@@ -251,7 +257,11 @@ class Vokes:
         if not candidates:
             raise VokesError("%s has no free run of %d bytes left"
                              % (self.r.name, size))
-        for _usable, offset in sorted(candidates):
+        if near is not None:
+            candidates.sort(key=lambda c: (abs(c[1] - near), c[0]))
+        else:
+            candidates.sort()
+        for _usable, offset in candidates:
             if self._is_blank(offset, size):
                 return offset
         raise VokesError("%s: every free run big enough for %d bytes holds data "
@@ -276,14 +286,72 @@ class Vokes:
                 return 0
         return 0
 
-    def write(self, path, data, raw_size=None):
+    def _go_home(self, e, data, home):
+        """Put a previously relocated file back at `home` = (offset, size).
+
+        A file only has to move when an edit makes it bigger than its slot, and
+        one byte is enough to do it. What it must not do is STAY moved: every
+        later edit is built from the same stored original, so the very next one
+        that happens to fit would otherwise be written wherever the first
+        overflow happened to land. On Rainbow Six 3 that is R6GAMESETTINGS.INI,
+        read at every level load, exiled up to a gigabyte from the rest of the
+        files read with it -- which shows up as slow loading and nothing else,
+        because once a level is up the file is not read again.
+
+        Home is only offered when nothing else has claimed it in the meantime.
+        """
+        off, size = home
+        if off < self.data_start or len(data) > size or e.offset == off:
+            return False
+        for other in self.files.values():
+            if other is e and other.offset == e.offset:
+                continue
+            if other.offset < off + size and off < other.offset + other.size:
+                return False                  # someone else lives there now
+        old_off, old_size = e.offset, e.size
+        self.r.write(off, data)
+        if len(data) < size:
+            self.r.write(off + len(data), b"\x00" * (size - len(data)))
+        self._set_entry(e, off, len(data))
+        self.r.write(old_off, b"\x00" * old_size)
+        return True
+
+    def _align_slack(self, e):
+        """The packer's own 16-byte padding after a file, which it may use.
+
+        `_tail_room` will not touch a run that is not all zeros, and it is right
+        not to: an unreferenced range is not necessarily an unused one, and one
+        of these archives carries megabytes of real data no entry points at.
+        But the few bytes between a file's end and the START OF THE NEXT FILE
+        are a different thing -- they exist only because the next file is
+        16-byte aligned, and nothing can reach them. Refusing them costs far
+        more than it saves: on Rainbow Six 3 a ONE BYTE growth of
+        R6GAMESETTINGS.INI was enough to exile it to the pad at the end of the
+        archive, a gigabyte from everything read with it at level load.
+
+        Capped below ALIGN so this can only ever be alignment padding, never a
+        gap left by a file that is simply missing.
+        """
+        end = e.offset + e.size
+        nxt = min((o.offset for o in self.files.values()
+                   if o is not e and o.offset >= end), default=self.filesize)
+        gap = nxt - end
+        return gap if 0 < gap < self.ALIGN else 0
+
+    def write(self, path, data, raw_size=None, home=None):
         """Replace a file, relocating it if it has outgrown its slot.
 
         Small enough, and it goes back where it was. Too big, and it moves to
         free space and its old slot is zeroed, which both makes the change
         reversible and puts that run back in the pool for the next file.
+
+        `home` is the (offset, size) the file shipped at. When it is given and
+        the file has been relocated by an earlier edit, it goes back there if it
+        fits and nothing else has taken the space -- see `_go_home`.
         """
         e = self.files[path.upper()]
+        if home and self._go_home(e, data, home):
+            return e.offset
         if e.offset < self.data_start:
             # A handful of records point at offset 0 with a byte or two of
             # length -- stubs for files the tree lists but the archive does not
@@ -291,7 +359,7 @@ class Vokes:
             raise VokesError("%s: %s is a stub record (offset 0x%x is before "
                              "the data area) and cannot be replaced"
                              % (self.r.name, e.path, e.offset))
-        if len(data) <= e.size + self._tail_room(e):
+        if len(data) <= e.size + self._tail_room(e) + self._align_slack(e):
             # Fits where it already is -- possibly by growing back into slack it
             # gave up earlier. A file that SHRINKS has its recorded extent
             # shrunk with it, so the rest of its original slot stops being
@@ -307,7 +375,8 @@ class Vokes:
             self._set_entry(e, e.offset, len(data))
             return e.offset
         old_off, old_size = e.offset, e.size
-        dest = self.allocate(len(data), exclude=e)
+        dest = self.allocate(len(data), exclude=e,
+                             near=home[0] if home else e.offset)
         self.r.write(dest, data)
         self._set_entry(e, dest, len(data), raw_size)
         # Release the old run -- but only the part of it the new one does not
