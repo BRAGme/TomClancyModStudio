@@ -410,3 +410,59 @@ Verdict: not a dead end, but not a weekend either. The next concrete step, if
 anyone wants it, is to run the same overlay-and-menu reachability test across
 all 453 unnamed script classes and see how many table slots are genuinely
 free. That is one script and it answers the whole question.
+
+### The reachability test, run across all 453 -- and a correction
+
+**Correction first.** The earlier figure of "4,280 bytes from six unreachable
+classes" was too high. `R6ConsoleXbox` (664 bytes) is named in `DEFAULT.INI`,
+`DEFAULTXBOX.INI` and `PSX2GAME.INI`, which the six-class check never looked
+at. The real figure for those six is 3,616.
+
+That is exactly the failure mode this pass was built to catch, so the test was
+tightened three times, each time on a name that looked wrong:
+
+1. **Level name tables.** 453 classes are named by no level and are not
+   implemented natively. Checking each against the overlay, `MENU.LIN` and
+   `COMMON.LIN` itself leaves **238**.
+2. **Level raw bytes.** A level can name a class in a string without the name
+   ever entering its name table. Searching all 80 level packages raw removes
+   **36 more** -- the `R61stHands*` first-person weapon classes among them.
+   Leaves 202.
+3. **Everything that is not a `.LIN`.** `R6MObjRescueHostage` being called
+   unreachable on a disc with hostage missions was the tell. Searching every
+   INI, DAT and loose ISO file removes **9 more**: `R6ConsoleXbox`,
+   `R6MolotovGadget` and `R6PhosphorusGrenade` (named in `MAPS/*.INI`), the
+   four `R6MapList*` classes (`SERVER.INI`, `USER.INI`),
+   `R6RainbowChavezWinter` and `R6THeadAttachment`.
+
+**Final: 193 classes, 30,881 bytes, that nothing on the disc can reach.**
+Script: `research/code/free_classes.py`.
+
+### Route 1 has enough of everything
+
+    needed                    available
+    29 export rows            193
+    3,057 object bytes        30,881
+    29 name entries           28 of 29 matchable at their own length
+
+The one that does not match is `R6GetCircumstantialActionTexID` at 30
+characters, and there is no free 30-character name. That is not a blocker:
+the name is ours to choose -- nothing outside the code we would be writing
+refers to it -- so it can be called something 29 or 31 characters long and
+take one of those slots instead.
+
+So the resource question is settled. Route 1 is viable on rows, on bytes and
+on name lengths.
+
+### What is left is the thing that was never about space
+
+A dead class is dead because nothing spawns it. Every byte above can be found
+and the pickup still will not happen until something in the pawn-death path
+creates an `R6IOGroundWeapon` where the body fell. That call site does not
+exist in Rainbow Six 3, and adding it means editing the bytecode of a function
+that does exist -- in place, at the same length.
+
+That is the next question worth answering, and it is a different kind of
+question from this one: not "is there room" but "is there a function whose
+bytecode has room for a spawn call". Nothing so far has needed an
+UnrealScript disassembler; that one does.
