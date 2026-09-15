@@ -33,6 +33,13 @@ almost everything interesting in plain text.
 | Ghost Recon: Advanced Warfighter | `55530054` | the shared gameplay table, plus teammate AI and enemy weapon tables |
 | Rainbow Six: Critical Hour | `5553005F` | **nothing yet** -- recognised, and the page says why |
 
+Point it at a game, **or at the folder your games live in** -- a folder with
+more than one game under it is a shelf rather than a game, so it fills the
+picker beside the path instead of the tool choosing one of them, and everything
+it found stays one click away afterwards.
+
+![Sixteen games on one shelf](docs/screens/shelf-picker.png)
+
 The game is identified by the **title id in its own executable**, not by its
 file name, so a renamed disc still works and one holding some other game is
 never mistaken for these. Black Arrow's prototype disc carries the same title id

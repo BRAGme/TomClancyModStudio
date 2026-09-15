@@ -13,6 +13,13 @@ someone extracted it into. Both are edited in place and neither is preferred.
 The identity comes from the title id in the game's own default.xbe, so a renamed
 file is still recognised and a disc holding some other game is never mistaken
 for one of these.
+
+A folder with more than one game under it is a SHELF rather than a game, so it
+fills the picker beside the path instead of the tool choosing one of them --
+pointing at the folder the games live in used to load whichever was reached
+first, which looks like picking at random. Everything found stays one click
+away afterwards, which is the usual reason to open one of these in the first
+place: to compare it with the one next to it.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import art, engine  # noqa: E402
-from tcxbox.detect import identify  # noqa: E402
+from tcxbox.detect import look  # noqa: E402
 from tcxbox.model import BOOL, INT  # noqa: E402
 
 from . import discorddialog, presence, skins, theme  # noqa: E402
@@ -71,6 +78,9 @@ class App(tk.Tk):
 
         self.detection = None
         self.profile = None
+        #: label -> path for whatever the picker is currently offering
+        self._shelf = {}
+        self._shelf_dir = ""
         self.vars, self.cards, self.nav_items = {}, {}, {}
         self.active_group = None
         self.busy = False
@@ -144,6 +154,21 @@ class App(tk.Tk):
         self.browse.pack(side="left", padx=(theme.px(10), 0))
         self.browse_dir = ActionButton(row, "Folder", self._browse_folder)
         self.browse_dir.pack(side="left", padx=(theme.px(6), 0))
+
+        # Second line: every other game in the same place. Filled whenever a
+        # folder is read, and left filled, so switching games is one click
+        # rather than another trip through a file dialog.
+        pick = tk.Frame(self.disc.body, bg=p.panel)
+        pick.pack(fill="x", pady=(theme.px(9), 0))
+        self.shelf_lbl = tk.Label(pick, text="GAMES HERE", bg=p.panel,
+                                  fg=p.dim, font=theme.F("body", 9))
+        self.shelf_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
+        self.game_var = tk.StringVar()
+        self.game_box = ttk.Combobox(pick, textvariable=self.game_var,
+                                     state="readonly", values=[])
+        self.game_box.pack(side="left", fill="x", expand=True,
+                           padx=(0, theme.px(4)), pady=theme.px(2))
+        self.game_box.bind("<<ComboboxSelected>>", self._pick_game)
 
         self.status = tk.Label(self.stage, text="", bg=p.bg, fg=p.dim,
                                font=theme.F("body", 9), anchor="w")
@@ -319,19 +344,55 @@ class App(tk.Tk):
         if path:
             self._load_folder(path)
 
+    def _shelf_label(self, det):
+        """What one entry in the picker reads as.
+
+        A game on this shelf is here twice as often as not -- once as an image
+        and once extracted -- so the kind and the file name are both part of
+        the name, or half the list would read the same.
+        """
+        return "%s   ·   %s   ·   %s" % (
+            det.profile.short, "disc image" if det.kind == "iso" else "folder",
+            os.path.basename(det.path)[:46])
+
+    def _fill_shelf(self, folder, found, current=None):
+        self._shelf_dir = folder
+        self._shelf = {}
+        for det in sorted(found, key=lambda d: (d.profile.short, d.kind)):
+            self._shelf[self._shelf_label(det)] = det.path
+        names = list(self._shelf)
+        widest = max((len(n) for n in names), default=30)
+        self.game_box.configure(values=names, width=min(74, widest + 2))
+        for label, path in self._shelf.items():
+            if current and os.path.normcase(path) == os.path.normcase(current):
+                self.game_var.set(label)
+                return
+        self.game_var.set("")
+
+    def _pick_game(self, _event=None):
+        path = self._shelf.get(self.game_var.get())
+        if path:
+            self._load_folder(path)
+
     def _load_folder(self, path):
         path = path.strip().strip('"')
         if not path:
             return
         self.path_var.set(path)
-        self._say("Reading %s" % os.path.basename(path))
-        det = identify(path)
+        self._say("Reading %s" % (os.path.basename(path.rstrip("\\/")) or path))
+        det, shelf = look(path)
+        if shelf:
+            self._fill_shelf(
+                os.path.dirname(det.chosen or path) if det.ok else path,
+                shelf, current=det.path if det.ok else None)
         self.detection = det
 
         if not det.ok:
             self.profile = None
-            self.status.configure(text=det.message, fg=theme.P.bad)
-            self._say(det.message, "bad")
+            # A shelf is not a failure, it is a question, so it is not red.
+            tone = theme.P.warn if self._shelf else theme.P.bad
+            self.status.configure(text=det.message, fg=tone)
+            self._say(det.message, "warn" if self._shelf else "bad")
             self.area.clear()
             self._set_buttons(False)
             return
@@ -376,6 +437,8 @@ class App(tk.Tk):
         for wdg in self.disc.body.winfo_children():
             wdg.configure(bg=p.panel)
         self.disc_lbl.configure(bg=p.panel, fg=p.dim)
+        self.shelf_lbl.configure(bg=p.panel, fg=p.dim)
+        self.shelf_lbl.master.configure(bg=p.panel)
         self.path_well.configure(bg=p.bg)
         self.path_entry.configure(bg=p.bg, fg=p.text, insertbackground=p.text)
         self.log.configure(bg=p.panel, fg=p.dim)
@@ -688,7 +751,7 @@ class App(tk.Tk):
                     messagebox.showerror(APP_NAME,
                                          "%d file(s) could not be read back "
                                          "afterwards." % result["broken"])
-            self.detection = identify(path)
+            self.detection = look(path)[0]
             self._set_buttons(True)
 
         self._run(lambda: engine.apply(path, profile, vals,
@@ -700,7 +763,8 @@ class App(tk.Tk):
             return
         if not messagebox.askokcancel(
                 APP_NAME, "Put %s back exactly as it shipped?\n\nClose the "
-                          "xemu first." % os.path.basename(self.detection.path)):
+                          "xemu first."
+                          % os.path.basename(self.detection.path)):
             return
         path, profile = self.detection.path, self.profile
 
@@ -712,7 +776,7 @@ class App(tk.Tk):
             else:
                 self._say("Restored %d file(s) to the bytes they shipped "
                           "with." % result["files"], "good")
-            self.detection = identify(path)
+            self.detection = look(path)[0]
             self._set_buttons(True)
 
         self._run(lambda: engine.revert(path, profile,

@@ -108,6 +108,45 @@ def _candidate_roots(folder, depth=0):
             yield from _candidate_roots(sub, depth + 1)
 
 
+def _own_game(folder):
+    """This folder itself as a game, without looking inside it."""
+    for xbe_path, image in _folder_xbes(folder):
+        profile = BY_TITLE_ID.get(image.title_id_hex.upper())
+        if profile is not None:
+            return _finish(folder, folder, "folder", xbe_path, image, profile)
+    return None
+
+
+def look(path):
+    """(detection, shelf) -- one game, or the games sitting under a folder.
+
+    `identify` answers "what game is this", and for a folder it will walk down
+    to find one. That is right for Black Arrow's installer disc, whose payload
+    is three levels in, and wrong for a shelf: point it at a folder holding
+    eight games and it returns whichever it reaches first, which looks like the
+    tool picking at random.
+
+    So the order here is: the folder itself first, then what is under it. More
+    than one game under it is a shelf, and a shelf is not a game -- the caller
+    gets the list to offer instead of a guess.
+    """
+    path = os.path.abspath(str(path))
+    if os.path.isdir(path):
+        here = _own_game(path)
+        if here is not None:
+            return here, scan(os.path.dirname(path))
+        found = scan(path)
+        if len(found) > 1:
+            return Detection(path, False, chosen=path, kind="folder",
+                             message="%d games here — pick one from the "
+                                     "list." % len(found)), found
+        if len(found) == 1:
+            return found[0], found
+    det = identify(path)
+    shelf = scan(os.path.dirname(det.chosen or path)) if det.ok else []
+    return det, shelf
+
+
 def identify(path) -> Detection:
     path = os.path.abspath(str(path))
 
