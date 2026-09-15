@@ -29,6 +29,15 @@ HIDDEN = [
     "tcps2.lin", "tcps2.rselzo", "tcps2.transforms", "tcps2.dataedit",
     "tcps2.overlay", "tcps2.rsb", "gui.skins",
     "tcps2.psx", "tcps2.upscale",
+    "tcps2.rseloadout", "tcps2.rseguns", "tcps2.rsemissions",
+    "tcps2.rsewheel", "tcps2.rserpg", "tcps2.rsesidearm", "tcps2.rsescope", "tcps2.rsedraw",
+    "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon",
+    # zopfli packs the LIN chunks zlib cannot fit back into their
+    # slots. Without it those chunks simply refuse every edit.
+    "zopfli", "zopfli.zlib",
+    "tcps2.localise", "tcps2.upackage", "tcps2.r6zones",
+    "tcps2.games.xboxbuild", "tcps2.games.rseweapons",
+
     # Discord presence speaks the IPC protocol itself, so this pulls in no
     # third-party package -- but the modules still have to be named here.
     "gui.presence", "gui.discorddialog", "webbrowser",

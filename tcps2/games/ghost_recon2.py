@@ -52,6 +52,10 @@ from __future__ import annotations
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting)
 from . import r6tuning
+from .. import rseloadout
+
+#: the COMMON containers that carry the 73 enemy templates
+COMMON_FILES = r"/COMMON(OFF)?\.LIN$"
 
 BOOT = "SLUS_211.05"
 
@@ -242,7 +246,8 @@ def _settings():
                         "shorter when you are still and longer when you run."),
 
     ] + r6tuning.cards(["search_time", "speed", "spotting"], "gr2_",
-                       "Enemies") + [
+                       "Enemies") + rseloadout.cards(
+        "gr2_slus21105", "gr2_", "Enemies") + [
 
         # ---- your loadout ------------------------------------------------
         Setting("gr2_player_grenades", "Grenades you carry", INT, 1, "Loadout",
@@ -407,6 +412,7 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("grenade_carry", r"/COMMON(OFF)?\.LIN$", "",
                             {"percent": carry},
                             "%d%% of two-entry templates carry a grenade" % carry))
+    out += rseloadout.edits(v, "gr2_", COMMON_FILES)
     return out
 
 

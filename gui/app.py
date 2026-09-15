@@ -31,7 +31,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "3.0"
+VERSION = "4.1"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -266,6 +266,34 @@ class App(tk.Tk):
                   self.cheat_btn, self.revert_btn, self.discord_btn):
             b.configure(width=b.width_needed())
 
+        self._fit_nav()
+
+    def _fit_nav(self):
+        """Size the menu rows to the column they sit in.
+
+        The rows are a fixed height until that many of them no longer fit, at
+        which point the last page is silently clipped off the bottom -- which is
+        what happened to Rainbow Six 3 the moment it grew a ninth page, and what
+        happens to any profile on a short enough window. When they do not fit
+        they share the space evenly instead, so the column stays deliberate
+        rather than cut in half.
+        """
+        items = list(self.nav_items.values())
+        if not items:
+            return
+        self.update_idletasks()
+        avail = self.nav.winfo_height()
+        if avail < theme.px(40):
+            return
+        n = len(items)
+        gap, tall = theme.px(6), theme.px(40)
+        if n * tall + (n - 1) * gap > avail:
+            gap = max(theme.px(2), gap // 2)
+            tall = max(theme.px(20), (avail - gap * (n - 1)) // n)
+        for i, item in enumerate(items):
+            item.configure(height=tall)
+            item.pack_configure(pady=(0, 0 if i == n - 1 else gap))
+
     def _path_indent(self):
         """How far the disc path's text sits in from the panel's left edge."""
         try:
@@ -496,6 +524,7 @@ class App(tk.Tk):
             item.pack(fill="x", pady=(0, theme.px(6)))
             self.nav_items[name] = item
 
+        self._fit_nav()
         self._show_group(names[0] if names else None)
         self._set_buttons(True)
 
@@ -782,7 +811,7 @@ class App(tk.Tk):
     def _save_pnach(self):
         if not self._guard():
             return
-        vals = self._values()
+        vals = self.profile.effective(self._values())
         words = self.profile.build_pnach(vals) if self.profile.build_pnach else []
         if not words:
             messagebox.showinfo(APP_NAME,

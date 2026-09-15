@@ -14,10 +14,32 @@ Where the numbers came from
 * **Advanced Warfighter**: `System/R6GameSettings.ini`, a plain file on the
   Xbox disc. 243 keys in common, 38 different.
 
-The PS2 side of the Rainbow Six 3 comparison had to come out of the backup
-store rather than off a disc. A first pass read the disc directly and reported
-33 differences; twelve were the player's own edits. A disc that has been
-played with does not say what the game shipped with.
+The PS2 side has to come off a PRISTINE disc image, and nothing else will do.
+A first pass read a played disc directly and reported 33 differences, twelve of
+them the player's own edits. The second pass took the PS2 side from the backup
+store instead -- and that was still wrong, because the backup store holds what
+was on the disc before THIS tool touched it, not what the game shipped with. A
+disc hand-edited in some earlier session looks pristine to the backup store.
+
+Three keys got in that way and are now removed, each measured against
+`Tom Clancy's Rainbow Six 3 (USA).iso.orig` and the Xbox `xboxdynamic.umd`:
+
+    key                            recorded  real PS2  real Xbox
+    m_fMinDistToThrowGrenade       200       500       500
+    m_bUnlimitedRainbowMagazines   false     true      true
+    m_iNbOfBulletWhenEmpty         0         5         5
+
+All three were the player's own edits, and none of them is a difference between
+the builds at all -- both discs ship unlimited Rainbow magazines and five rounds
+left in a dry weapon. A full key-by-key diff of the pristine PS2 INI against the
+Xbox `.umd` gives 239 keys in common and **18** that differ; the seven this
+module writes are the seven of those eighteen that change how the game plays.
+The other eleven are tracer colours, HUD text colour, voice-chat recording, the
+ELO constant and the reticle's circle precision.
+
+If the AI running out of ammunition is what you are after, it is not an Xbox
+difference -- it is the "AI teammates run out of ammunition" card on the
+Teammates page, which turns off the shipped `m_bUnlimitedRainbowMagazines`.
 
 **Ghost Recon 2 is not here, and cannot be.** Its Xbox version is a different
 game on a different engine -- the disc has no `System` folder, no `.u`
@@ -45,9 +67,11 @@ GRAW = "graw_slus21422"
 
 #: the enemy half, per disc
 ENEMY = {
+    # One key, not two: `m_fMinDistToThrowGrenade` ships at 500 on BOTH discs.
+    # It was listed here because the PS2 side had been read off a disc where
+    # the player had already set it to 200.
     R6_3: {
         "m_fTerroristSkillMultiplierRecruit": "0.40",
-        "m_fMinDistToThrowGrenade": "500",
     },
     GRAW: {
         "m_fTerroristSkillMultiplierRecruit": "0.40",
@@ -74,12 +98,12 @@ AIM = {
     },
 }
 
-#: the third group, which differs in kind between the two discs
+#: the third group, which differs in kind between the two discs. Rainbow Six 3
+#: has no such group: its entry used to hold the two ammunition keys, and both
+#: discs ship those identically (see the module docstring). An empty group means
+#: no second card, which `cards()` handles.
 EXTRA = {
-    R6_3: {
-        "m_bUnlimitedRainbowMagazines": "true",
-        "m_iNbOfBulletWhenEmpty": "5",
-    },
+    R6_3: {},
     GRAW: {
         "m_iPlayerMaximumWounds": "120",
         "m_iRainbowMaximumWounds": "360",
@@ -90,11 +114,6 @@ EXTRA = {
 
 #: how to label that third group on each disc
 EXTRA_LABEL = {
-    R6_3: ("...including the Xbox ammunition rules",
-           "The other two differences go the other way: the Xbox build gives "
-           "Rainbow unlimited magazines and leaves 5 rounds in a weapon that "
-           "has run dry, where the PS2 build gives neither. Separate from the "
-           "difficulty set because it makes the game easier, not harder."),
     GRAW: ("...including the Xbox wound counts",
            "The Xbox build is far less lethal on every side at once: the "
            "player takes 120 wounds instead of 60, a Rainbow team-mate 360 "
@@ -106,17 +125,17 @@ EXTRA_LABEL = {
 
 #: what each PS2 build ships, so a test can prove these really are differences
 PS2_SHIPPED = {
+    # Read off `Tom Clancy's Rainbow Six 3 (USA).iso.orig`, all three VOKES
+    # copies of R6GAMESETTINGS.INI being byte-identical. Not off a played disc
+    # and not out of the backup store -- see the module docstring.
     R6_3: {
         "m_fTerroristSkillMultiplierRecruit": "0.20",
-        "m_fMinDistToThrowGrenade": "200",
         "m_fWeaponJumpFactor": "60.0",
         "m_fDeadZone": "0.1",
         "m_fAimDamping": "0.8",
         "m_fSmoothingTime": "0.20",
         "m_fRotationControlPoint": "90",
         "m_fRotationZoomingMultiplier": "0.7",
-        "m_bUnlimitedRainbowMagazines": "false",
-        "m_iNbOfBulletWhenEmpty": "0",
     },
     GRAW: {
         "m_fTerroristSkillMultiplierRecruit": "0.20",
@@ -149,7 +168,12 @@ def ini_updates(pid, choice, extra=False):
 
 
 def cards(pid, prefix, group):
-    """The two cards, worded for whichever disc this is."""
+    """The cards, worded for whichever disc this is.
+
+    Two cards where the disc has a third group of differences, one where it
+    does not -- Rainbow Six 3's third group turned out to be three of the
+    player's own edits rather than anything the Xbox build does differently.
+    """
     from ..model import BOOL, CHOICE, Choice, Setting
 
     aim = AIM[pid]
@@ -158,8 +182,7 @@ def cards(pid, prefix, group):
     moved = ", ".join(
         "%s %s to %s" % (k.replace("m_f", "").replace("m_i", ""), ps2[k], v)
         for k, v in sorted(enemy.items()))
-    extra_label, extra_help = EXTRA_LABEL[pid]
-    return [
+    out = [
         Setting(prefix + "xbox_tuning", "Play it the way the Xbox build does",
                 CHOICE, "stock", group, confidence="measured", touches="data",
                 choices=[Choice("stock", "Leave the PS2 tuning alone"),
@@ -179,7 +202,11 @@ def cards(pid, prefix, group):
                 caution="The individual dials on this page and on Controls are "
                         "applied AFTER this, so anything you set yourself wins "
                         "over the Xbox value for that one key."),
-        Setting(prefix + "xbox_extra", extra_label, BOOL, False, group,
-                confidence="measured", touches="data", help=extra_help,
-                requires={prefix + "xbox_tuning": ["enemies", "aim", "both"]}),
     ]
+    if EXTRA.get(pid):
+        extra_label, extra_help = EXTRA_LABEL[pid]
+        out.append(
+            Setting(prefix + "xbox_extra", extra_label, BOOL, False, group,
+                    confidence="measured", touches="data", help=extra_help,
+                    requires={prefix + "xbox_tuning": ["enemies", "aim", "both"]}))
+    return out

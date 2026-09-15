@@ -93,6 +93,27 @@ def decompress(data: bytes) -> bytes:
     return bytes(out)
 
 
+def _zopfli(plain: bytes, iterations: int = 15):
+    """A zlib stream packed by zopfli, or None if zopfli is not installed.
+
+    Zopfli emits ordinary deflate that any inflater reads -- it just searches
+    much harder for the shortest encoding. That matters here because the game's
+    own packer beat `zlib` on some chunks: `COMMON.LIN`'s chunk at plain
+    0x15c000 occupies 5640 bytes on the disc and `zlib -9` cannot get its
+    UNTOUCHED contents below 5658. Without this, that chunk could never be
+    edited at all, whatever the edit was. Zopfli packs the same bytes into
+    5488, which is 152 bytes of room.
+    """
+    try:
+        import zopfli.zlib as _zz
+    except ImportError:
+        return None
+    try:
+        return _zz.compress(plain, numiterations=iterations)
+    except Exception:                                 # noqa: BLE001
+        return None
+
+
 def _deflate_within(plain: bytes, budget: int):
     """The smallest deflate of `plain` that fits `budget`, or None."""
     best = None
@@ -102,6 +123,17 @@ def _deflate_within(plain: bytes, budget: int):
             best = packed
         if len(best) <= budget:
             return best
+    # Only now pay for zopfli, which is far slower than zlib and only worth it
+    # on the chunks zlib cannot fit. Its output is verified by inflating it
+    # back before it is trusted, because a chunk that does not decompress to
+    # exactly the right bytes would corrupt the game silently.
+    packed = _zopfli(plain)
+    if packed is not None and len(packed) <= budget:
+        try:
+            if zlib.decompress(packed) == plain:
+                return packed
+        except zlib.error:
+            pass
     return best if len(best) <= budget else None
 
 
@@ -133,10 +165,19 @@ def substitute(data: bytes, edit) -> tuple:
             continue
         packed = _deflate_within(new_slice, comp)
         if packed is None:
+            # Name the likely cause. Some chunks were packed tighter than
+            # `zlib` can manage, so without zopfli they refuse EVERY edit --
+            # including one-byte ones -- and blaming the edit sends the reader
+            # looking in the wrong place entirely.
+            extra = ""
+            if _zopfli(b"probe") is None:
+                extra = ("; zopfli is not installed, and some chunks on these "
+                         "discs are packed tighter than zlib can match, so "
+                         "they cannot be rewritten without it")
             raise LinError(
                 "chunk at 0x%X re-deflates larger than its %d-byte slot; the "
-                "container length cannot move, so this edit cannot be applied"
-                % (off, comp))
+                "container length cannot move, so this edit cannot be applied%s"
+                % (off, comp, extra))
         packed = packed + b"\x00" * (comp - len(packed))
         out += struct.pack("<II", raw, comp) + packed
         touched += 1

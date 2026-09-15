@@ -95,6 +95,68 @@ def _op_grenade_carry(plain, params):
     return transforms.set_grenade_carry(plain, params.get("percent", 20))
 
 
+def _op_split_wheel(plain, params):
+    from . import rsewheel
+    # Also put back the byte the withdrawn first attempt changed. It is dead
+    # code either way, but a disc still carrying it would make a later
+    # stock-vs-disc diff report an edit this tool no longer makes.
+    plain, undone = rsewheel.undo_first_attempt(plain)
+    plain, n = rsewheel.restore(plain, bool(params.get("enable", True)))
+    return plain, n + undone
+
+
+def _op_rpg_speed(plain, params):
+    from . import rserpg
+    return rserpg.apply(plain, int(params.get("speed", 1)))
+
+
+def _op_split_draw(plain, params):
+    from . import rsedraw
+    return rsedraw.restore(plain, bool(params.get("enable", True)))
+
+
+def _op_split_cycle(plain, params):
+    from . import rsewheel
+    return rsewheel.cycle_restore(plain, bool(params.get("enable", True)))
+
+
+def _op_canon_team(plain, params):
+    from . import rsecanon
+    return rsecanon.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_ss_man_down(plain, params):
+    from . import rsemandown
+    return rsemandown.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_ai_sidearm(plain, params):
+    from . import rsesidearm
+    return rsesidearm.apply(plain, int(params.get("chance", 0)),
+                            bool(params.get("in_contact", True)),
+                            int(params.get("say_chance", 0)))
+
+
+def _op_enemy_loadout(plain, params, container=None):
+    from . import rseloadout
+    mark = params.get("marksmanship")
+    mark = None if mark in (None, "", "stock") else int(mark)
+    mode = params.get("weapons", "stock")
+    if container is None:
+        # No container to measure against, so take the edit at full strength
+        # and let the caller's own length check speak. Tests use this path.
+        new, stats = rseloadout.retune(plain, weapons=mode, marksmanship=mark)
+    else:
+        new, stats = rseloadout.fit_to_lin(container, plain, weapons=mode,
+                                           marksmanship=mark)
+    return new, stats["weapons"] + stats["skills"]
+
+
+#: Ops that want the file's original container bytes as a third argument,
+#: because what they may write depends on what will still deflate into it.
+_WANTS_CONTAINER = {"enemy_loadout"}
+
+
 def _op_zone_counts(plain, params):
     from . import r6zones
     return r6zones.scale(plain, float(params.get("factor", 1.0)))[0]
@@ -114,6 +176,14 @@ OPS = {
     "ini_values": _op_ini_values,
     "ws_slot": _op_ws_slot,
     "grenade_carry": _op_grenade_carry,
+    "enemy_loadout": _op_enemy_loadout,
+    "split_wheel": _op_split_wheel,
+    "ai_sidearm": _op_ai_sidearm,
+    "ss_man_down": _op_ss_man_down,
+    "canon_team": _op_canon_team,
+    "split_cycle": _op_split_cycle,
+    "split_draw": _op_split_draw,
+    "rpg_speed": _op_rpg_speed,
     "scale_ballistics": _op_scale_ballistics,
     "scale_xml": _op_scale_xml,
     "xml_values": _op_xml_values,
@@ -338,8 +408,23 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                 else:
                     original = arc.read_entry(ent)
                     store.remember(arc_name, ent.path, original, ent.offset)
-                    _kind, plain = _unpack(original, ent.path)
-                new, n = op(plain, edit.params)
+                    # Edits are applied to the bytes the game SHIPPED, not to
+                    # whatever is on the disc now. The settings page describes
+                    # a destination, not a diff: applying twice must give the
+                    # same disc, and moving a setting back to its default must
+                    # actually undo it. Reading the live file instead makes
+                    # edits compound -- a weapon already swapped once gets
+                    # swapped again -- and leaves no way back short of a full
+                    # restore.
+                    stored = store.original(arc_name, ent.path)
+                    base = stored[0] if stored else original
+                    _kind, plain = _unpack(base, ent.path)
+                if edit.op in _WANTS_CONTAINER:
+                    stored = store.original(arc_name, ent.path)
+                    container = stored[0] if stored else arc.read_entry(ent)
+                    new, n = op(plain, edit.params, container)
+                else:
+                    new, n = op(plain, edit.params)
                 # Only a compressed container has to keep its length. A LIN's
                 # packages carry relaid offsets and an rselzo chunk chain has
                 # fixed boundaries, so either would be corrupted by a size

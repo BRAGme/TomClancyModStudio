@@ -28,6 +28,8 @@ from __future__ import annotations
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
+from .. import (rsecanon, rsedraw, rseloadout, rsemandown, rserpg,
+                rsesidearm, rsescope, rsewheel)
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -64,6 +66,7 @@ STOCK = {
     0x00379B30: 0x24060020,   # addiu a2, zero, 32   R6DecalGroup m_MaxSize
     0x0040ACA0: 0x0C051B7C,   # jal rand             SpawnATerrorist point pick
     0x00142048: 0x4483A800,   # mtc1 v1, $f21       player 2's input dt := 0.05f
+    0x0019AE40: 0x14A000C6,   # bnez a1, 0x19b15c   the scope-overlay gate
 }
 
 # Scaffolding from the research build that produced this profile: a tracing stub
@@ -220,6 +223,7 @@ MISSIONS = (
 )
 
 MISSION_GROUP = "Missions"
+TEAM_GROUP = "Teammates"
 
 
 def mission_art_for(key):
@@ -423,7 +427,51 @@ def _settings():
         ["fire_delay", "sight", "search_time", "speed", "spotting"],
         "", "Enemy Behaviour",
     ) + xboxbuild.cards(xboxbuild.R6_3, "", "Enemy Behaviour") \
+      + rseloadout.cards("r6_3_slus20883", "", "Enemy Behaviour") \
+      + [rserpg.card("", "Enemy Behaviour")] \
       + r6tuning.cards(["player_grenades", "player_mags"], "", "Loadout") + [
+
+        # ---- teammates ---------------------------------------------------
+        Setting("ai_finite_ammo", "AI teammates run out of ammunition", BOOL,
+                False, TEAM_GROUP, confidence="verified", touches="data",
+                help="The disc ships `m_bUnlimitedRainbowMagazines=true`, so "
+                     "Price, Weber and Loiselle never spend a magazine no "
+                     "matter how long a fight runs. This turns it off, and "
+                     "they carry what the mission planner says they carry.\n\n"
+                     "It is also the switch that puts their ammunition "
+                     "callout back. \"No ammo, sir\" and \"Weapon's dry\" are "
+                     "recorded in all three operatives' voice banks and wired "
+                     "to a live event -- they simply never fire, because a "
+                     "man with unlimited magazines is never dry. Turn this on "
+                     "and you start hearing them.",
+                caution="Their weapons deplete for the whole mission and "
+                        "there is no way to pick one up off the ground, so a "
+                        "long fight ends with the team on sidearms. That is "
+                        "the point of the option, but it is a real change to "
+                        "how a level plays. Trieste is the exception worth "
+                        "knowing about: of the 567 teammate loadouts on the "
+                        "disc, every one fills the secondary slot, but 21 of "
+                        "Trieste's put a breaching charge or a flashbang "
+                        "there instead of a pistol -- so on that level they "
+                        "have nothing to fall back on."),
+        Setting("ai_dry_rounds", "Rounds left in a weapon that has run dry",
+                INT, 5, TEAM_GROUP, minimum=0, maximum=30, unit="rounds",
+                confidence="applied", touches="data",
+                requires={"ai_finite_ammo": True},
+                help="`m_iNbOfBulletWhenEmpty`, which the disc ships at 5 and "
+                     "describes in its own comment as \"bullets to put in "
+                     "primary weapon when all clips are empty\". It is the "
+                     "reserve a teammate falls back on once the magazines are "
+                     "gone, and with unlimited magazines on it is unreachable "
+                     "-- so the shipped 5 has never done anything.\n\n"
+                     "Set it to 0 and running out means running out.",
+                caution="A non-zero reserve appears to be re-granted rather "
+                        "than issued once, which would mean they are never "
+                        "permanently dry and the callout stays rare. That "
+                        "reading comes from the key's comment and its name, "
+                        "not from watching the code, so 0 is the setting to "
+                        "use if you want the line reliably."),
+    ] + rsesidearm.cards("", TEAM_GROUP) + [
 
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
@@ -462,6 +510,12 @@ def _settings():
         Setting("fx_blood", "Blood effects", BOOL, True, "Split Screen",
                 confidence="applied",
                 help="Restores the blood-effect position update."),
+        rsewheel.card("", "Split Screen"),
+        rsewheel.cycle_card("", "Split Screen"),
+        rsewheel.label_card("", "Split Screen"),
+        rsescope.card("", "Split Screen"),
+        rsedraw.card("", "Split Screen"),
+        rsescope.viewport_card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
                 help="Weather is gated off in split screen by a single branch."),
@@ -524,6 +578,8 @@ def _settings():
                      "shipped code does not say so. The Enemy Behaviour page "
                      "raises their skill and their never-miss range for both "
                      "modes at once, which is the lever that does exist."),
+        rsemandown.card("", "Split Screen"),
+        rsecanon.card("", "Split Screen"),
         Setting("teammates", "AI teammates in split screen", BOOL, False,
                 "Split Screen", enabled=False, confidence="broken",
                 disabled_reason=(
@@ -588,6 +644,9 @@ def build_edits(v: dict) -> list:
 
     if v.get("viewmodel"):
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
+    if v.get("split_scope"):
+        w(rsescope.SCOPE_BRANCH, rsescope.SCOPE_BRANCH_OPEN,
+          "split screen: let the scope overlay draw")
     if v.get("fx_impact"):
         w(0x003F1934, NOP, "split screen: static-world impact decal")
         w(0x003F1BB4, NOP, "split screen: actor-attached impact decal")
@@ -681,6 +740,16 @@ def build_data(v: dict) -> list:
         ini["m_fTerroristSkillMultiplierElite"] = eli
     if int(v.get("perfect_dist", 500)) != 500:
         ini["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v["perfect_dist"])
+    # The two keys sit together in the file under "the following is for
+    # rainbow AI only", and they only make sense together: the reserve is what
+    # a teammate falls back on once his magazines are gone, which cannot
+    # happen while the magazines are unlimited. So the reserve is written only
+    # when the switch is on, and never on its own.
+    if v.get("ai_finite_ammo"):
+        ini["m_bUnlimitedRainbowMagazines"] = "false"
+        rounds = int(v.get("ai_dry_rounds", 5))
+        if rounds != 5:
+            ini["m_iNbOfBulletWhenEmpty"] = rounds
     # the dials this disc shares with Ghost Recon 2 and Advanced Warfighter.
     # The keys that overlap with the lines above resolve to the same value, so
     # merging is idempotent rather than a second opinion.
@@ -704,16 +773,79 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("grenade_carry", r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"percent": carry},
                             "%d%% of two-entry templates carry a grenade" % carry))
+    out += rseloadout.edits(v, "", r"/COMMON(OFF|_SS)?\.LIN$")
+    speed = int(v.get("rpg_speed", 1))
+    if speed != 1:
+        out.append(FileEdit("rpg_speed", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"speed": speed},
+                            "RPG troops ready a rocket %dx faster" % speed))
+    # Gated on the ammunition switch, not merely paired with it on the page:
+    # while magazines are unlimited the clip count is pinned at 1 and the
+    # branch this reaches is unreachable, so writing the byte alone would be a
+    # change to the disc that could not do anything.
+    # The sidearm roll needs finite ammunition to be reachable at all; the
+    # reload call-out does not -- it sits in the branch that runs either way.
+    sidearm = int(v.get("ai_sidearm", 0)) if v.get("ai_finite_ammo") else 0
+    say = int(v.get("ai_say_dry", 0))
+    if sidearm or say:
+        contact = bool(v.get("ai_sidearm_contact", True))
+        notes = []
+        if sidearm:
+            notes.append("%d%% chance of drawing the pistol instead of "
+                         "reloading%s"
+                         % (sidearm, " while in contact" if contact else ""))
+        if say:
+            notes.append("%d%% chance of calling out a reload" % say)
+        out.append(FileEdit("ai_sidearm", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"chance": sidearm, "in_contact": contact,
+                             "say_chance": say},
+                            "; ".join(notes)))
+    if v.get("canon_team"):
+        # COMMON_SS.LIN only: that IS the split-screen package, which is what
+        # keeps single player and Terrorist Hunt untouched by construction.
+        out.append(FileEdit("canon_team", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True},
+                            "split screen: player 2 is the mission's operative"))
+    if v.get("ss_man_down"):
+        out.append(FileEdit("ss_man_down", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: restore the death call-out"))
+    if v.get("split_wheel"):
+        out.append(FileEdit("split_wheel", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: open the equipment wheel on L1"))
+    if v.get("split_draw_once"):
+        out.append(FileEdit("split_draw", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: draw the weapon once, not twice"))
+    if v.get("split_cycle"):
+        out.append(FileEdit("split_cycle", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: a tap of L1 toggles two weapons"))
     return out
 
 
 def build_pnach(v: dict) -> list:
-    if not (v.get("wave_enable") and v.get("wave_mapwide")):
-        return []
-    out = [WordEdit(CAVE_HIJACK[0], CAVE_HIJACK[1], STOCK[CAVE_HIJACK[0]],
-                    "map-wide spawn points: hijack the point picker")]
-    out += [WordEdit(va, word, 0, "map-wide spawn points: cave")
-            for va, word in CAVE_WORDS]
+    out = []
+    if v.get("wave_enable") and v.get("wave_mapwide"):
+        out.append(WordEdit(CAVE_HIJACK[0], CAVE_HIJACK[1],
+                            STOCK[CAVE_HIJACK[0]],
+                            "map-wide spawn points: hijack the point picker"))
+        out += [WordEdit(va, word, 0, "map-wide spawn points: cave")
+                for va, word in CAVE_WORDS]
+    if v.get("split_scope_fit") and v.get("split_scope"):
+        # Gated on the disc edit as well as its own tick. `requires` only
+        # greys the widget out; the stored value survives, and a pnach is
+        # re-applied every frame -- so without this an untick left eight
+        # hooks writing themselves into the scope draw forever.
+        # Its own cave, clear of both the spawn-point one and the wheel
+        # labels', so any combination of the three can be on at once.
+        out += [WordEdit(va, word, stock, note)
+                for va, word, stock, note in rsescope.viewport_words()]
+    if v.get("split_wheel_labels"):
+        # Its own cave, well clear of the spawn-point one, so both can be on.
+        out += [WordEdit(va, word, stock, note)
+                for va, word, stock, note in rsewheel.label_words()]
     return out
 
 

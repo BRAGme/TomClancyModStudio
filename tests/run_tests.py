@@ -105,6 +105,15 @@ def main():
         run_lockdown_weapons(args)
         run_float_locator()
         run_xbox_tuning(args)
+        run_mission_gallery(args)
+        run_rpg_speed(args)
+        run_split_scope(args)
+        run_split_draw(args)
+        run_split_wheel(args)
+        run_zopfli_fallback()
+        run_enemy_loadouts(args)
+        run_loadout_units()
+        run_uscode_units()
         run_combination_warnings()
     finally:
         if not args.keep:
@@ -329,9 +338,30 @@ def run_lockdown_missions(pak, profile, det):
     off = [m[0] for m in MISSIONS if spawns.get(m[0]) != m[5]]
     check("the spawn-template counts match too", not off, str(off))
 
-    # and the picture each card shows really is on the disc
-    missing = [m[0] for m in MISSIONS if art.mission_art(det, m[0]) is None]
-    check("every mission has its snapshot", not missing, str(missing))
+    # and every picture each card shows really is on the disc. This asks the
+    # profile for the names rather than assuming them, because the card now
+    # shows the snapshot AND two concept frames, which live in a different
+    # folder of the archive.
+    from tcps2.games.lockdown import mission_art_for, mission_key
+    missing, shown = [], 0
+    for m in MISSIONS:
+        for name in mission_art_for(mission_key(m[0])):
+            if art.mission_art(det, name) is None:
+                missing.append(name)
+            else:
+                shown += 1
+    check("every picture a mission card shows is on the disc", not missing,
+          str(missing))
+    check("and each card has the snapshot plus two concept frames",
+          shown == len(MISSIONS) * 3, "%d pictures for %d missions"
+          % (shown, len(MISSIONS)))
+
+    # the concept frames are letterboxed in a transparent square; flattening
+    # without cropping would put black bars on every one of them
+    wide = art.mission_art(det, "CONCEPT_ART/M01_CONCEPT_01")
+    check("and the transparent margin is cropped off, not blacked in",
+          wide is not None and wide.size != (512, 512),
+          "got %s" % (str(wide.size) if wide else "nothing"))
 
 
 def run_level_packages(args):
@@ -428,7 +458,13 @@ def run_missions(iso, args):
           all(s.touches == "data" for s in per_mission))
 
     vals = dict(PROFILE.defaults())
-    check("leaving them alone writes nothing", PROFILE.build_data(vals) == [])
+    # "enemy_loadout" is always emitted so that choosing stock rewrites the
+    # file from the shipped bytes, so it is not evidence that a dial moved.
+    def moved(values):
+        return [e for e in PROFILE.build_data(values)
+                if e.op != "enemy_loadout"]
+
+    check("leaving them alone writes nothing", moved(vals) == [])
 
     # The order is the one the player gave, not one derived from the disc --
     # the campaign INI is a Raven Shield leftover and the ELO ratings tie. So
@@ -463,11 +499,11 @@ def run_missions(iso, args):
     check("their dials are off, since they author no counts",
           all(not PROFILE.setting(mission_key(m[0])).enabled for m in tr))
     check("and they emit nothing even when set",
-          PROFILE.build_data({mission_key(m[0]): 400 for m in tr}) == [])
+          moved({mission_key(m[0]): 400 for m in tr}) == [])
 
     vals[mission_key("SHIPYARD")] = 200
     vals[mission_key("ISLAND")] = 50
-    edits = PROFILE.build_data(vals)
+    edits = moved(vals)
     check("moving two dials emits two edits", len(edits) == 2, str(len(edits)))
 
     # The levels ship twice, OFF and _SS. Matching only one leaves half the
@@ -1159,8 +1195,12 @@ def run_gr2_missions(args):
           len(cards) == len(MISSIONS) == 14, str(len(cards)))
     check("every card is switched off with a reason",
           all(not s.enabled and s.disabled_reason for s in cards))
+    # "enemy_loadout" is always emitted so that the stock choice rewrites the
+    # file from the shipped bytes; it is not one of these cards writing.
     check("and none of them writes anything",
-          PROFILE.build_data({mission_key(m[0]): 300 for m in MISSIONS}) == [])
+          [e for e in PROFILE.build_data(
+              {mission_key(m[0]): 300 for m in MISSIONS})
+           if e.op != "enemy_loadout"] == [])
 
     det = identify(args.gr2)
     with Iso(args.gr2) as iso:
@@ -1616,9 +1656,14 @@ def run_float_locator():
 def run_xbox_tuning(args):
     """The Xbox-match option on both discs that have an Xbox sibling.
 
-    The PS2 side comes out of the backup store where one exists: a disc that
-    has been played with no longer says what the game shipped with, and half
-    of a first attempt at this diff turned out to be the player's own edits.
+    The PS2 side is read off the ISO this test is GIVEN, and that ISO has to be
+    a pristine image. Two earlier attempts got this wrong in the same way and
+    the second one was subtler: reading a played disc absorbed twelve of the
+    player's edits, so the next version read the backup store instead -- but the
+    backup store holds what was on the disc before THIS TOOL touched it, which
+    says nothing about a disc that was hand-edited in some earlier session.
+    Three of Rainbow Six 3's recorded "shipped" values came in that way. So: no
+    proxies, pass `--iso` a pristine image.
     """
     import re
     from tcps2 import dataedit, engine, rselzo
@@ -1634,12 +1679,6 @@ def run_xbox_tuning(args):
         return out
 
     def shipped(iso_path, profile):
-        store = dataedit.Store(engine.backup_dir_for(iso_path))
-        for rec in store.entries():
-            if rec["path"].upper().endswith("R6GAMESETTINGS.INI"):
-                got = store.original(rec["archive"], rec["path"])
-                if got:
-                    return values(rselzo.unpack(got[0]))
         with Iso(iso_path) as iso:
             for arc in open_archives(iso, profile.archive_pattern):
                 if "/R6GAMESETTINGS.INI" in arc.files:
@@ -1667,14 +1706,21 @@ def run_xbox_tuning(args):
         want = len(xboxbuild.ENEMY[pid]) + len(xboxbuild.AIM[pid])
         check("both halves write every key and no more",
               len(keys) == want, "%d vs %d" % (len(keys), want))
-        check("and the third group is not in it",
-              not (set(keys) & set(xboxbuild.EXTRA[pid])))
-        vals[pre + "xbox_extra"] = True
-        keys2 = [e for e in profile.build_data(vals)
-                 if e.op == "ini_values"][0].params["values"]
-        check("asking for it adds exactly that group",
-              len(keys2) == want + len(xboxbuild.EXTRA[pid]),
-              "%d vs %d" % (len(keys2), want + len(xboxbuild.EXTRA[pid])))
+        extra = xboxbuild.EXTRA[pid]
+        if extra:
+            check("and the third group is not in it",
+                  not (set(keys) & set(extra)))
+            vals[pre + "xbox_extra"] = True
+            keys2 = [e for e in profile.build_data(vals)
+                     if e.op == "ini_values"][0].params["values"]
+            check("asking for it adds exactly that group",
+                  len(keys2) == want + len(extra),
+                  "%d vs %d" % (len(keys2), want + len(extra)))
+        else:
+            # Rainbow Six 3 has no third group, so it must not offer the card
+            # -- an empty group would be a switch that writes nothing.
+            check("a disc with no third group offers no second card",
+                  profile.setting(pre + "xbox_extra") is None)
 
         # a dial the player sets must beat the Xbox value for that key
         vals[pre + "skill"] = "down"
@@ -1702,11 +1748,1177 @@ def run_xbox_tuning(args):
         off = [(k, v, xb.get(k)) for k, v in every.items() if xb.get(k) != v]
         check("every Xbox value is read back off the Xbox build itself",
               not off, str(off))
+        # The check that would have caught the three bad keys: compare the two
+        # DISCS against each other rather than either against a recorded number.
+        # A key this module writes must actually differ between them.
+        same = [k for k in every if ps2.get(k) == xb.get(k)]
+        check("no key it writes is identical on both discs", not same, str(same))
 
     # Ghost Recon 2 has an Xbox version, but not one that can be compared
     check("Ghost Recon 2 is deliberately absent",
           "gr2_slus21105" not in xboxbuild.ENEMY)
 
+
+
+def run_enemy_loadouts(args):
+    """The weighted terrorist tables on the two discs that ship them.
+
+    Everything here reads the backup store rather than the disc, because a
+    disc that has been played with no longer says what the game shipped with.
+    """
+    import re
+    from tcps2 import dataedit, lin, rseloadout
+    from tcps2.games import BY_ID
+    from tcps2.vokes import open_archives
+    from tcps2.iso import Iso
+
+    SNIPER = re.compile(rb"\d{3}, R63rdWeapons\.Sniper\w+")
+
+    def common(iso_path, pattern):
+        """(container, plain) for the first COMMON this disc carries."""
+        with Iso(iso_path) as iso:
+            profile = None
+            for pid in ("r6_3_slus20883", "gr2_slus21105"):
+                if BY_ID[pid].id:
+                    profile = BY_ID[pid]
+            for arc in open_archives(iso, r"/VOKES\d\.IMG$"):
+                for name in sorted(arc.files):
+                    if re.search(pattern, name):
+                        raw = _stock_bytes(iso_path, arc, name)
+                        return raw, lin.decompress(raw)
+        return None, None
+
+    DISCS = [("Rainbow Six 3", args.rs3data, r"/COMMON\.LIN$",
+              "r6_3_slus20883", "", 118),
+             ("Ghost Recon 2", args.gr2, r"/COMMON\.LIN$",
+              "gr2_slus21105", "gr2_", 73)]
+
+    for title, iso_path, pattern, pid, prefix, expect in DISCS:
+        if not iso_path:
+            continue
+        print("\n[%s -- what the enemies are carrying]" % title)
+        raw, plain = common(iso_path, pattern)
+        if plain is None:
+            check("the disc has a COMMON container", False)
+            continue
+
+        spans = rseloadout.templates(plain)
+        check("the disc ships %d enemy templates" % expect,
+              len(spans) == expect, "found %d" % len(spans))
+        check("every one of them is a terrorist",
+              plain.count(b"Type=Terrorist\r\n") >= len(spans))
+
+        tables = rseloadout.TABLE.findall(plain)
+        multi = [t for t in tables
+                 if t[0].startswith(b"NbOfWeapon") and int(t[1]) > 1]
+        check("some tables already roll over more than one weapon",
+              len(multi) > 0, "%d of them" % len(multi))
+
+        # the weights of a stock table really do total 100, which is the
+        # premise the whole re-weighting rests on
+        totals = set()
+        for head, _n, body in tables:
+            if not head.startswith(b"NbOfWeapon"):
+                continue
+            rows = rseloadout.ENTRY.findall(body)
+            if len(rows) > 1:
+                totals.add(sum(int(w) for w, _c in rows))
+        check("and their weights sum to 100", totals in ({100}, set()),
+              "totals seen: %s" % sorted(totals))
+
+        base = len(SNIPER.findall(plain))
+        for mode in ("varied", "snipers", "chaos"):
+            new, stats = rseloadout.retune(plain, weapons=mode)
+            check("%s keeps the file exactly the same length" % mode,
+                  len(new) == len(plain),
+                  "%d -> %d" % (len(plain), len(new)))
+            check("%s leaves the template count alone" % mode,
+                  len(rseloadout.templates(new)) == len(spans))
+            check("%s never removes a sniper the disc already had" % mode,
+                  len(SNIPER.findall(new)) >= base,
+                  "%d -> %d" % (base, len(SNIPER.findall(new))))
+
+        # THE regression test. An earlier build took its palette from the
+        # weapon roster instead of from the enemy tables, put `AssaultG36K`
+        # and `SubTMP` into templates that never carried them, and hung the
+        # game on an infinite loading screen -- those classes exist but have
+        # no third-person assets cooked for a terrorist. A swap may only ever
+        # reach a weapon the disc already issues to some other enemy.
+        stock_classes = set(c.decode() for _w, c in
+                            rseloadout.ENTRY.findall(plain))
+        for mode in ("varied", "snipers", "chaos"):
+            for seed in (1701, 7, 99, 12345):
+                cand, _st = rseloadout.retune(plain, weapons=mode, seed=seed)
+                intro = set(c.decode() for _w, c in
+                            rseloadout.ENTRY.findall(cand)) - stock_classes
+                if intro:
+                    check("%s never invents a weapon the disc does not issue "
+                          "to enemies" % mode, False,
+                          "seed %d introduced %s" % (seed, sorted(intro)))
+                    break
+            else:
+                check("%s never invents a weapon the disc does not issue "
+                      "to enemies" % mode, True)
+
+        # and the palette itself is built from the data, not a fixed list
+        pal = rseloadout.palette(plain)
+        flat = {c for group in pal.values() for c in group}
+        check("the swap palette is drawn from the disc's own enemy tables",
+              flat <= stock_classes and flat,
+              "%d palette entries, %d stock" % (len(flat), len(stock_classes)))
+        check("and it holds only firearms, never gadgets",
+              all(c.startswith("R63rdWeapons.") for c in flat))
+
+        # the whole point of the sniper mode
+        snipers, _st = rseloadout.retune(plain, weapons="snipers")
+        check("asking for marksmen actually adds some",
+              len(SNIPER.findall(snipers)) > base,
+              "%d -> %d" % (base, len(SNIPER.findall(snipers))))
+
+        # a weapon may only ever become another weapon of the same length
+        varied, _st = rseloadout.retune(plain, weapons="varied")
+        widths_ok = True
+        for old, new_ in zip(rseloadout.ENTRY.findall(plain),
+                             rseloadout.ENTRY.findall(varied)):
+            if len(old[1]) != len(new_[1]):
+                widths_ok = False
+                break
+        check("and every swap is the same number of bytes", widths_ok)
+
+        # a rifle must never become a gas mask
+        gadgets = plain.count(b"R6Weapons.")
+        check("gadget lines are left out of the weapon swap",
+              varied.count(b"R6Weapons.") == gadgets,
+              "%d -> %d" % (gadgets, varied.count(b"R6Weapons.")))
+
+        # marksmanship, and the rookie that must survive it
+        aimed, _st = rseloadout.retune(plain, weapons="stock", marksmanship=90)
+        check("marksmanship keeps the length too", len(aimed) == len(plain))
+        narrow = len(re.findall(rb"Assault=\d\r\n", plain))
+        check("the one-character rookie is left alone rather than clamped",
+              len(re.findall(rb"Assault=\d\r\n", aimed)) == narrow,
+              "%d narrow fields before, %d after"
+              % (narrow, len(re.findall(rb"Assault=\d\r\n", aimed))))
+
+        # the part that equal length alone does NOT guarantee
+        for mode in ("varied", "snipers", "chaos"):
+            fitted, stats = rseloadout.fit_to_lin(raw, plain, weapons=mode,
+                                                  marksmanship=85)
+            try:
+                lin.substitute(raw, lambda _old, f=fitted: f)
+                fits = True
+            except lin.LinError:
+                fits = False
+            check("%s is fitted back into the container it came from" % mode,
+                  fits)
+            check("%s still changes something after fitting" % mode,
+                  stats["weapons"] + stats["skills"] > 0,
+                  "%d changes, %d templates given up"
+                  % (stats["weapons"] + stats["skills"],
+                     stats.get("skipped", 0)))
+
+        # Applying twice must give the same disc, and choosing "stock" must
+        # actively put the shipped weapons back. An earlier build emitted
+        # nothing for "stock", so a variety already written to a disc could
+        # not be taken off from the page at all -- and because edits were read
+        # off the LIVE file rather than the shipped one, applying twice
+        # swapped an already-swapped weapon a second time.
+        once, _s1 = rseloadout.retune(plain, weapons="varied")
+        twice, _s2 = rseloadout.retune(plain, weapons="varied")
+        check("applying the same mode twice gives the same bytes",
+              once == twice)
+        check("and re-running it on its own output would NOT (which is why "
+              "edits must start from the shipped bytes)",
+              rseloadout.retune(once, weapons="varied")[0] != once)
+        back, _s3 = rseloadout.retune(plain, weapons="stock")
+        check("choosing stock from the shipped bytes changes nothing",
+              back == plain)
+        made = rseloadout.edits({}, prefix, "P")
+        check("and the page still emits an edit for stock, so the disc is "
+              "rewritten from the original", len(made) == 1
+              and made[0].params.get("weapons") == "stock")
+
+        # and the same thing through the op the engine actually calls
+        op = dataedit.OPS["enemy_loadout"]
+        out, n = op(plain, {"weapons": "snipers", "marksmanship": 85}, raw)
+        check("the engine's own op returns a count, not just bytes", n > 0)
+        check("and its result is the same length", len(out) == len(plain))
+
+        # the cards and the edits they imply
+        cards = rseloadout.cards(pid, prefix, "Enemies")
+        check("the disc gets both cards", len(cards) == 2)
+        check("leaving them alone still rewrites from the shipped bytes",
+              len(rseloadout.edits({}, prefix, "P")) == 1)
+        made = rseloadout.edits({prefix + "enemy_loadout": "snipers",
+                                 prefix + "enemy_aim": 80}, prefix, "P")
+        check("choosing a mode writes exactly one edit", len(made) == 1)
+        check("carrying both settings into it",
+              made[0].params == {"weapons": "snipers", "marksmanship": 80},
+              repr(made[0].params))
+
+        profile = BY_ID[pid]
+        keys = {s.key for s in profile.settings}
+        check("both cards reach the profile",
+              {prefix + "enemy_loadout", prefix + "enemy_aim"} <= keys)
+        built = profile.build_data({prefix + "enemy_loadout": "varied"})
+        check("and the profile emits the edit",
+              any(e.op == "enemy_loadout" for e in built))
+        stock_edits = [e for e in profile.build_data({})
+                       if e.op == "enemy_loadout"]
+        check("a stock page still emits one, carrying the stock mode",
+              len(stock_edits) == 1
+              and stock_edits[0].params.get("weapons") == "stock")
+
+
+def run_loadout_units():
+    """The parts of the loadout rewriter that need no disc at all."""
+    from tcps2 import rseloadout
+
+    print("\n[enemy loadouts -- the rules, without a disc]")
+
+    check("a sniper is recognised whatever its spelling",
+          rseloadout.role_of("R63rdWeapons.sniperm82a1") == "Sniper"
+          and rseloadout.role_of(b"R63rdWeapons.SniperM82A1") == "Sniper")
+    check("and so is a lower-case gadget",
+          rseloadout.role_of("R6Weapons.r6fraggrenadegadget") is None)
+
+    import random
+    rng = random.Random(1)
+
+    # A palette built the way `palette()` builds one, from text that looks like
+    # the disc's own tables. The point of the rewrite is that the swap can only
+    # ever reach a weapon already present here.
+    CRLF = bytes([13, 10])
+    sample = b"".join(
+        b"100, " + c + CRLF for c in (
+            b"R63rdWeapons.SubP90", b"R63rdWeapons.SubSR2",
+            b"R63rdWeapons.SubUMP", b"R63rdWeapons.AssaultM4",
+            b"R63rdWeapons.PistolUSP", b"R63rdWeapons.ShotgunM1",
+            b"R63rdWeapons.SubMac119", b"R63rdWeapons.AssaultAUG",
+            b"R63rdWeapons.PistolMk23", b"R63rdWeapons.SniperPSG1",
+            b"R63rdWeapons.AssaultAK47", b"R63rdWeapons.AssaultG3A3",
+            b"R63rdWeapons.SniperM82A1", b"R6Weapons.R6FragGrenadeGadget",
+            b"None.None"))
+    pal = rseloadout.palette(sample)
+    everything = {c for g in pal.values() for c in g}
+
+    check("the palette keeps gadgets and None out",
+          all(c.startswith("R63rdWeapons.") for c in everything)
+          and len(everything) == 13, "%d entries" % len(everything))
+
+    # Both modes, because they take different branches: keeping the class
+    # narrows the pool to same-role weapons, while a free choice draws from the
+    # whole length group -- and a free choice is where a cross-length mistake
+    # would show first. With keep_role on, only the names that have a same-role
+    # neighbour at their length can move at all, so testing that mode alone
+    # would leave the wider pool unexercised.
+    bad = []
+    moved = 0
+    for _ in range(50):
+        for group in pal.values():
+            for name in group:
+                for keep in (True, False):
+                    got = rseloadout._swap_firearm(name.encode(), rng, pal,
+                                                   keep_role=keep).decode()
+                    if len(got) != len(name):
+                        bad.append(("length", name, got))
+                    if got not in everything:
+                        bad.append(("outside palette", name, got))
+                    if got != name:
+                        moved += 1
+    check("every swap preserves byte length", not [b for b in bad if b[0] == "length"],
+          "%s" % bad[:2])
+    check("and can only reach a weapon already in the palette",
+          not [b for b in bad if b[0] == "outside palette"], "%s" % bad[:2])
+    # Guard against the whole block passing because nothing ever swapped: a
+    # palette of singletons would satisfy both checks above without exercising
+    # anything. This one fails if the swap becomes a no-op.
+    check("and the swaps actually happen, so the checks above mean something",
+          moved > 200, "%d of %d attempts changed the name"
+          % (moved, 50 * len(everything) * 2))
+
+    # a sniper must never be swapped away, in any mode
+    kept = True
+    for sniper in (c for c in everything if rseloadout.role_of(c) == "Sniper"):
+        for keep in (True, False):
+            if rseloadout._swap_firearm(sniper.encode(), rng, pal,
+                                        keep_role=keep).decode() != sniper:
+                kept = False
+    check("a sniper is never swapped away, in either mode", kept)
+
+    # roles never cross when the class is meant to be kept
+    crossed = []
+    for group in pal.values():
+        for name in group:
+            role = rseloadout.role_of(name)
+            for _ in range(20):
+                got = rseloadout._swap_firearm(name.encode(), rng, pal,
+                                               keep_role=True).decode()
+                if rseloadout.role_of(got) != role:
+                    crossed.append((name, got))
+    check("keeping the class really keeps it", not crossed, "%s" % crossed[:3])
+
+    # a length with only one weapon has nothing to swap to, and must say so
+    lonely = rseloadout.palette(b"100, R63rdWeapons.AssaultGalilARM" + CRLF)
+    got = rseloadout._swap_firearm(b"R63rdWeapons.AssaultGalilARM", rng, lonely)
+    check("a weapon alone at its length is left exactly as it was",
+          got == b"R63rdWeapons.AssaultGalilARM")
+
+    # the width rule
+    block = b"Assault=7\r\nSSniper=50\r\nObservation=100\r\n"
+    out = rseloadout._set_field(block, "Assault", 90)
+    check("a one-character field refuses a two-digit number",
+          out == block, out.decode("latin-1"))
+    out = rseloadout._set_field(block, "SSniper", 90)
+    check("a two-character field takes one", b"SSniper=90\r\n" in out)
+    out = rseloadout._set_field(block, "Observation", 90)
+    check("a three-character field is padded, not shortened",
+          b"Observation=090\r\n" in out, out.decode("latin-1"))
+
+    # re-weighting keeps the total the game expects
+    table = (b"025, R63rdWeapons.AssaultL85A1\r\n"
+             b"025, R63rdWeapons.PistolUSP\r\n"
+             b"050, R63rdWeapons.SubMP5A4\r\n")
+    for seed in range(30):
+        got = rseloadout._reweight(table, random.Random(seed))
+        rows = rseloadout.ENTRY.findall(got)
+        if len(got) != len(table) or sum(int(w) for w, _c in rows) != 100:
+            check("a re-rolled table still totals 100 at the same length",
+                  False, got.decode())
+            break
+        if any(int(w) <= 0 for w, _c in rows):
+            check("and never leaves an entry that can never be rolled",
+                  False, got.decode())
+            break
+    else:
+        check("a re-rolled table still totals 100 at the same length", True)
+        check("and never leaves an entry that can never be rolled", True)
+
+    # an unknown mode is refused rather than silently ignored
+    try:
+        rseloadout.retune(b"", weapons="nonsense")
+        check("an unknown mode is refused", False)
+    except rseloadout.LoadoutError:
+        check("an unknown mode is refused", True)
+
+    # a file with no templates is a no-op, not a crash
+    out, stats = rseloadout.retune(b"nothing to see here", weapons="chaos")
+    check("a file with no templates comes back untouched",
+          out == b"nothing to see here" and stats["templates"] == 0)
+
+
+def run_mission_gallery(args):
+    """Discs that show more than one picture on a mission card.
+
+    The Xbox tool puts three pictures on each card; these are the PS2 discs
+    that carry enough artwork to do the same. Ghost Recon's extras gallery is
+    keyed by mission number, and Sum of All Fears ships a whole briefing kit.
+    Jungle Storm and Ghost Recon 2 genuinely have nothing beyond the one
+    image, which is asserted here so a later change cannot quietly claim
+    otherwise.
+    """
+    from tcps2 import art
+    from tcps2.games import BY_ID, ghost_recon, soaf, jungle_storm, ghost_recon2
+
+    class Det:
+        def __init__(self, path, profile):
+            self.path, self.profile = path, profile
+
+    print("\n[mission cards -- more than one picture]")
+
+    if args.gr:
+        det = Det(args.gr, BY_ID["ghost_recon_slus20613"])
+        counts, missing = {}, []
+        for m in ghost_recon.MISSIONS:
+            names = ghost_recon.mission_art_for(ghost_recon.mission_key(m[0]))
+            counts[m[1]] = len(names)
+            for n in names:
+                if art.mission_art(det, n) is None:
+                    missing.append(n)
+        check("Ghost Recon: every picture named is really on the disc",
+              not missing, str(missing[:4]))
+        georgia = [c for k, c in counts.items() if k.startswith("M")]
+        desert = [c for k, c in counts.items() if k.startswith("D")]
+        tac = [c for k, c in counts.items() if k.startswith("TAC")]
+        check("Georgia missions get the map and a concept sketch",
+              georgia and set(georgia) == {2}, str(sorted(set(georgia))))
+        check("Desert Siege also gets a screenshot, so three",
+              desert and set(desert) == {3}, str(sorted(set(desert))))
+        check("and the training levels keep their single map",
+              tac and set(tac) == {1}, str(sorted(set(tac))))
+
+    if args.soaf:
+        det = Det(args.soaf, BY_ID["soaf_sles51180"])
+        missing, campaign = [], []
+        for m in soaf.MISSIONS:
+            names = soaf.mission_art_for(soaf.mission_key(m[0]))
+            for n in names:
+                if art.mission_art(det, n) is None:
+                    missing.append(n)
+            if not m[1].startswith("T"):
+                campaign.append(len(names))
+        check("Sum of All Fears: every name decodes, apostrophes and all",
+              not missing, str(missing[:4]))
+        check("every campaign mission gets three pictures",
+              campaign and set(campaign) == {3}, str(sorted(set(campaign))))
+        check("the 923x138 filmstrip is left out",
+              not any("SHOTS" in n for v in soaf.EXTRA_ART.values() for n in v))
+
+    if args.js:
+        det = Det(args.js, BY_ID["jungle_storm_slus20820"])
+        n = {len(jungle_storm.mission_art_for(jungle_storm.mission_key(m[0])))
+             for m in jungle_storm.MISSIONS}
+        check("Jungle Storm still shows one picture -- it ships no others",
+              n == {1}, str(sorted(n)))
+
+    if args.gr2:
+        n = {len(ghost_recon2.mission_art_for(ghost_recon2.mission_key(m[0])))
+             for m in ghost_recon2.MISSIONS}
+        check("Ghost Recon 2 likewise has only the one", n == {1},
+              str(sorted(n)))
+
+
+def run_split_wheel(args):
+    """The equipment-wheel branch in split screen.
+
+    The switch was found by reading a savestate rather than the disc, so what
+    can be asserted here is the shape of the edit: that it is one byte, at one
+    place, in every container that carries it, and that it survives the
+    container's compression. Whether it makes the wheel appear is a
+    play-test, and the option says so.
+    """
+    import re
+    from tcps2 import (dataedit, lin, rsecanon, rsemandown, rsesidearm,
+                        rsewheel, uscode)
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    if not args.rs3data:
+        return
+    print("\n[Rainbow Six 3 -- the equipment wheel in split screen]")
+
+    seen, checked = set(), 0
+    with Iso(args.rs3data) as iso:
+        for arc in open_archives(iso, r"/VOKES\d\.IMG$"):
+            for path in sorted(arc.files):
+                if not re.search(r"/COMMON(OFF|_SS)?\.LIN$", path) or path in seen:
+                    continue
+                seen.add(path)
+                raw = _stock_bytes(args.rs3data, arc, path)
+                kind, plain = dataedit._unpack(raw, path)
+
+                at = rsewheel.find(plain)
+                check("%s: the tick fallback is where it was measured" % path[1:],
+                      at == rsewheel.KNOWN_OFFSET,
+                      "found %#x, expected %#x" % (at, rsewheel.KNOWN_OFFSET))
+                check("%s: and it still tests NetMode == 3 as shipped" % path[1:],
+                      plain[at] == rsewheel.NETMODE_SHIPPED,
+                      "got %d" % plain[at])
+                check("%s: the anchor occurs exactly once" % path[1:],
+                      plain.count(rsewheel._HEAD) == 1,
+                      "%d times" % plain.count(rsewheel._HEAD))
+                other = bytes.fromhex("39 3a 24 03 16 18 09 00 77 01".replace(" ", ""))
+                check("%s: the other NetMode==3 site is left alone" % path[1:],
+                      plain.count(other) == 2, "%d sites" % plain.count(other))
+
+                on, n = rsewheel.restore(plain, True)
+                check("%s: turning it on changes exactly one byte" % path[1:],
+                      n == 1 and len(on) == len(plain)
+                      and sum(a != b for a, b in zip(plain, on)) == 1)
+                check("%s: and that byte becomes standalone (0)" % path[1:],
+                      on[at] == rsewheel.NETMODE_STANDALONE)
+                back, _ = rsewheel.restore(on, False)
+                check("%s: turning it off puts the disc back exactly" % path[1:],
+                      back == plain)
+                check("%s: the state reads back" % path[1:],
+                      rsewheel.reads(on) and not rsewheel.reads(plain))
+                check("%s: asking twice is a no-op" % path[1:],
+                      rsewheel.restore(on, True)[1] == 0)
+
+                packed = dataedit._repack(kind, raw, on)
+                check("%s: the container keeps its length" % path[1:],
+                      len(packed) == len(raw),
+                      "%d -> %d" % (len(raw), len(packed)))
+                check("%s: and still decompresses to the edited bytes" % path[1:],
+                      lin.decompress(packed) == on)
+                checked += 1
+
+                # and the cycle count, which lives in the same file
+                cat = rsewheel.cycle_find(plain)
+                check("%s: the cycle count is where it was measured" % path[1:],
+                      cat == 0x1088D2, "found %#x" % cat)
+                check("%s: and split screen still gets 4 as shipped" % path[1:],
+                      plain[cat] == rsewheel.CYCLE_SPLIT, "got %d" % plain[cat])
+                cyc, cn = rsewheel.cycle_restore(plain, True)
+                check("%s: the cycle edit moves exactly one byte" % path[1:],
+                      cn == 1 and len(cyc) == len(plain)
+                      and sum(a != b for a, b in zip(plain, cyc)) == 1)
+                check("%s: to the 2 the rest of the game uses" % path[1:],
+                      cyc[cat] == rsewheel.CYCLE_SINGLE)
+                check("%s: and it reverses exactly" % path[1:],
+                      rsewheel.cycle_restore(cyc, False)[0] == plain)
+                # the two edits must not tread on each other
+                both, _ = rsewheel.cycle_restore(
+                    rsewheel.restore(plain, True)[0], True)
+                check("%s: wheel and cycle edits coexist" % path[1:],
+                      rsewheel.reads(both) and rsewheel.cycle_reads(both)
+                      and sum(a != b for a, b in zip(plain, both)) == 2)
+
+                # the sidearm roll, inserted into the same containers
+                sat = rsesidearm.find_block(plain)
+                check("%s: the reload function is located" % path[1:],
+                      sat == 0x12FAC6, "found %#x" % sat)
+                check("%s: and it reads as stock" % path[1:],
+                      rsesidearm.reads(plain) == (0, False))
+                sid, sn = rsesidearm.apply(plain, 40)
+                check("%s: the roll goes in without changing the length"
+                      % path[1:], sn == 1 and len(sid) == len(plain))
+                check("%s: and reads back as the chance asked for" % path[1:],
+                      rsesidearm.reads(sid) == (40, True),
+                      "got %r" % (rsesidearm.reads(sid),))
+                # the contact test is optional and both shapes must read back
+                loose, _ = rsesidearm.apply(plain, 40, in_contact=False)
+                check("%s: and without the contact test too" % path[1:],
+                      rsesidearm.reads(loose) == (40, False),
+                      "got %r" % (rsesidearm.reads(loose),))
+                check("%s: the contact test costs real bytes" % path[1:],
+                      uscode.Script.at(sid, sat).mem_len
+                      > uscode.Script.at(loose, sat).mem_len)
+                check("%s: and it borrows the function's own Enemy reference"
+                      % path[1:],
+                      rsesidearm._enemy_ref(uscode.Script.at(plain, sat))
+                      == rsesidearm._enemy_ref(uscode.Script.at(sid, sat)))
+                check("%s: a zero chance writes nothing at all" % path[1:],
+                      rsesidearm.apply(plain, 0) == (plain, 0))
+                # the reload call-out, which is independent of the roll
+                say, syn = rsesidearm.apply(plain, 0, True, 25)
+                check("%s: the call-out goes in on its own" % path[1:],
+                      syn == 1 and len(say) == len(plain)
+                      and rsesidearm.reads(say) == (0, False))
+                sblk = uscode.Script.at(say, sat)
+                check("%s: and it really added statements" % path[1:],
+                      sblk.mem_len != uscode.Script.at(plain, sat).mem_len)
+                calls = [t for t in sblk.statements()
+                         if t.op == rsesidearm.EX_VIRTUAL_FUNCTION
+                         and len(t.parts[1][1]) == 1
+                         and t.parts[1][1][0].op == rsesidearm.EX_BYTE_CONST
+                         and t.parts[1][1][0].parts[0][1][0]
+                         == rsesidearm.AMMO_VOICE]
+                was = [t for t in uscode.Script.at(plain, sat).statements()
+                       if t.op == rsesidearm.EX_VIRTUAL_FUNCTION
+                       and len(t.parts[1][1]) == 1
+                       and t.parts[1][1][0].op == rsesidearm.EX_BYTE_CONST
+                       and t.parts[1][1][0].parts[0][1][0]
+                       == rsesidearm.AMMO_VOICE]
+                check("%s: one more PlaySoundCurrentAction(12) than shipped"
+                      % path[1:], len(calls) == len(was) + 1,
+                      "%d vs %d" % (len(calls), len(was)))
+                both3, b3n = rsesidearm.apply(plain, 40, True, 25)
+                check("%s: roll and call-out together still fit" % path[1:],
+                      b3n == 1 and len(both3) == len(plain)
+                      and rsesidearm.reads(both3) == (40, True))
+                for bad in (-1, 0.5 and 91, 200):
+                    try:
+                        rsesidearm.apply(plain, bad)
+                        check("%s: an out-of-range chance is refused" % path[1:],
+                              False, "accepted %r" % bad)
+                        break
+                    except rsesidearm.SidearmError:
+                        pass
+                else:
+                    check("%s: an out-of-range chance is refused" % path[1:], True)
+                # only that one function may move
+                span = uscode.Script.at(plain, sat).disk_len + 4
+                outside = [i for i in range(len(plain))
+                           if plain[i] != sid[i] and not (sat <= i < sat + span)]
+                check("%s: nothing outside the function is touched" % path[1:],
+                      not outside, "%d bytes elsewhere" % len(outside))
+                trio, _ = rsesidearm.apply(both, 40)
+                check("%s: all three COMMON edits coexist" % path[1:],
+                      rsewheel.reads(trio) and rsewheel.cycle_reads(trio)
+                      and rsesidearm.reads(trio) == (40, True))
+                spacked = dataedit._repack(kind, raw, sid)
+                check("%s: and the container still keeps its length" % path[1:],
+                      len(spacked) == len(raw),
+                      "%d -> %d" % (len(raw), len(spacked)))
+
+                # the split-screen death call-out
+                mat = rsemandown.find_block(plain)
+                check("%s: the player death function is located" % path[1:],
+                      mat == 0x10B465, "found %#x" % mat)
+                check("%s: and reads as stock" % path[1:],
+                      not rsemandown.reads(plain))
+                md, mn = rsemandown.apply(plain)
+                check("%s: the call-out edit keeps the length" % path[1:],
+                      mn == 1 and len(md) == len(plain))
+                check("%s: and reads back as wired" % path[1:],
+                      rsemandown.reads(md))
+                check("%s: applying it twice is a no-op" % path[1:],
+                      rsemandown.apply(md) == (md, 0))
+                mspan = uscode.Script.at(plain, mat).disk_len + 4
+                moutside = [i for i in range(len(plain))
+                            if plain[i] != md[i] and not (mat <= i < mat + mspan)]
+                check("%s: and nothing outside that function moves" % path[1:],
+                      not moutside, "%d bytes elsewhere" % len(moutside))
+                check("%s: the rewritten block still parses" % path[1:],
+                      uscode.Script.at(md, mat).mem_len
+                      < uscode.Script.at(plain, mat).mem_len)
+                mpacked = dataedit._repack(kind, raw, md)
+                check("%s: the container survives the call-out edit" % path[1:],
+                      len(mpacked) == len(raw))
+
+                # the canon split-screen team -- COMMON_SS.LIN only
+                if path == "/COMMON_SS.LIN":
+                    check("%s: stock picks Price for member 1" % path[1:],
+                          not rsecanon.reads(plain))
+                    cn, cc = rsecanon.apply(plain)
+                    check("%s: the canon team fits its function" % path[1:],
+                          cc == 1 and len(cn) == len(plain))
+                    check("%s: and reads back as wired" % path[1:],
+                          rsecanon.reads(cn))
+                    check("%s: applying it twice is a no-op" % path[1:],
+                          rsecanon.apply(cn) == (cn, 0))
+                    cat, _cs = rsecanon._block(plain, rsecanon.TEAM_MEMBER_SIG, "x")
+                    cspan = uscode.Script.at(plain, cat).disk_len + 4
+                    cout = [i for i in range(len(plain))
+                            if plain[i] != cn[i] and not (cat <= i < cat + cspan)]
+                    check("%s: nothing outside CreateTeamMember moves" % path[1:],
+                          not cout, "%d bytes elsewhere" % len(cout))
+                    # the two new jumps must land on the Loiselle and Weber arms
+                    cs = uscode.Script.at(cn, cat)
+                    arms = {id(t) for t in rsecanon._case_bodies(cs).values()}
+                    landed = [t for t in cs.toks if t.name == "Jump"
+                              and t.parts[0][1] is not uscode.END
+                              and id(t.parts[0][1]) in arms]
+                    check("%s: both canon jumps enter a switch arm" % path[1:],
+                          len(landed) == 2, "%d jumps" % len(landed))
+                    cpacked = dataedit._repack(kind, raw, cn)
+                    check("%s: the container survives the canon edit" % path[1:],
+                          len(cpacked) == len(raw))
+                else:
+                    # it must never be offered anywhere but the split-screen copy
+                    check("%s: is not the split-screen package" % path[1:],
+                          not __import__("re").search(r"/COMMON_SS\.LIN$", path))
+
+                # THE test for the bytecode tool: every script block in the
+                # package must survive parse -> assemble unchanged. A tool that
+                # can rewrite one function safely but corrupts another is worse
+                # than no tool, and this is the only way to know.
+                if path == "/COMMON.LIN":
+                    total = ident = refused = 0
+                    for off in uscode.find_blocks(plain):
+                        total += 1
+                        try:
+                            blk = uscode.Script.at(plain, off)
+                            disk, mem = blk.assemble(blk.disk_len)
+                        except uscode.ScriptError:
+                            refused += 1
+                            continue
+                        if (disk == plain[off + 4:off + 4 + blk.disk_len]
+                                and mem == blk.mem_len):
+                            ident += 1
+                    check("every script block round-trips byte for byte",
+                          ident + refused == total and ident > 6000,
+                          "%d identical, %d refused, %d total"
+                          % (ident, refused, total))
+                    check("and the ones it refuses are refused, never mangled",
+                          refused < total // 50, "%d of %d" % (refused, total))
+
+    # the label-scaling cheat: it rewrites live code, so the words it claims
+    # to replace must really be there, and its cave must be empty
+    from tcps2 import overlay as _ov
+    from tcps2.games.r6_3 import SP as _SP, CAVE_WORDS as _SPAWN
+    with Iso(args.rs3data) as _iso:
+        _o = _ov.open_overlay(_iso, _SP)
+        bad = [(va, _o.read_word(va), want)
+               for va, want in rsewheel.LABEL_HOOKS if _o.read_word(va) != want]
+        check("every wheel-label hook replaces the instruction it expects",
+              not bad, str(bad))
+        busy = [va for i in range(12)
+                for va in (rsewheel.LABEL_CAVE + i * 4,)
+                if _o.read_word(va) != 0]
+        check("and its cave is empty on a stock disc", not busy, str(busy))
+    words = rsewheel.label_words()
+    check("the cheat is 4 hooks plus a 3-word cave each",
+          len(words) == 16, str(len(words)))
+    check("each cave ends by redoing the instruction its hook took",
+          [w for _va, w, _s, _n in words[2::3][:4]]
+          == [orig for _site, orig in rsewheel.LABEL_HOOKS])
+    check("every hook is a jal into its own cave",
+          all((w >> 26) == 3 and ((w & 0x03FFFFFF) << 2)
+              == rsewheel.LABEL_CAVE + i * 12
+              for i, (_va, w, _s, _n) in enumerate(words[12:])))
+    spawn = {va for va, _w in _SPAWN}
+    check("and it never lands on the map-wide spawn cave",
+          not [va for va, _w, _s, _n in words if va in spawn])
+    _p = BY_ID["r6_3_slus20883"]
+    check("the option is cheat-file, not disc",
+          _p.setting("split_wheel_labels").touches == "cheat")
+    check("and it needs the wheel itself",
+          _p.setting("split_wheel_labels").requires == {"split_wheel": [True]})
+    check("leaving it off writes no cheat lines", not _p.build_pnach({}))
+    check("turning it on writes exactly those 16",
+          len(_p.build_pnach({"split_wheel_labels": True})) == 16)
+    check("and it coexists with the map-wide spawn cheat",
+          len(_p.build_pnach({"split_wheel_labels": True,
+                              "wave_enable": True, "wave_mapwide": True})) == 84)
+
+    check("all three COMMON containers carry the branch", checked == 3,
+          "%d checked" % checked)
+
+    profile = BY_ID["r6_3_slus20883"]
+    keys = {s.key for s in profile.settings}
+    check("the option reaches the profile", "split_wheel" in keys)
+    check("and so does the L1-tap option", "split_cycle" in keys)
+    check("which needs the wheel, since without it there is no way to a gadget",
+          profile.setting("split_cycle").requires == {"split_wheel": [True]})
+    s = profile.setting("split_wheel")
+    check("and is offered, marked untested until it is played",
+          s.confidence == "untested" and s.enabled,
+          "%s enabled=%s" % (s.confidence, s.enabled))
+    check("leaving it off writes nothing",
+          not any(e.op == "split_wheel" for e in profile.build_data({})))
+    check("the edit still applies cleanly if it is ever re-enabled",
+          len([e for e in profile.build_data({"split_wheel": True})
+               if e.op == "split_wheel"]) == 1)
+
+
+def run_zopfli_fallback():
+    """The chunk that zlib cannot pack, which is why zopfli is here at all."""
+    import zlib
+    from tcps2 import lin
+
+    print("\n[LIN -- the chunks zlib cannot fit]")
+
+    # A payload zlib packs poorly is hard to contrive; what matters is the
+    # contract, so drive the helper directly.
+    body = bytes(range(256)) * 64
+    budget = len(zlib.compress(body, 9))
+    got = lin._deflate_within(body, budget)
+    check("a chunk that fits is packed with plain zlib",
+          got is not None and len(got) <= budget)
+    check("and inflates back to what went in",
+          got is not None and zlib.decompress(got) == body)
+
+    check("an impossible budget is refused rather than truncated",
+          lin._deflate_within(body, 8) is None)
+
+    packed = lin._zopfli(body)
+    if packed is None:
+        check("zopfli is not installed, so the fallback is inert", True)
+    else:
+        check("zopfli beats zlib -9 on the same bytes",
+              len(packed) <= len(zlib.compress(body, 9)),
+              "%d vs %d" % (len(packed), len(zlib.compress(body, 9))))
+        check("and its output is ordinary zlib any inflater reads",
+              zlib.decompress(packed) == body)
+        tight = len(packed)
+        got = lin._deflate_within(body, tight)
+        check("a budget only zopfli can meet is met",
+              got is not None and len(got) <= tight
+              and zlib.decompress(got) == body)
+
+
+def run_uscode_units():
+    """The bytecode reader and writer, on synthetic code with no disc at all."""
+    import struct as _struct
+    from tcps2 import uscode
+    from tcps2.uscode import Script, Tok, ScriptError, parse_expr
+
+    print("\n[UnrealScript bytecode -- the rules, without a disc]")
+
+    # FCompactIndex, which is what makes the file shorter than the loaded image
+    widths = set()
+    ok = True
+    for v in list(range(-300, 300)) + [0x3F, 0x40, 0x1FFF, 0x2000, -0x1FFFF,
+                                       0x7FFFFF, -1, 1 << 24]:
+        raw = uscode.compact_encode(v)
+        widths.add(len(raw))
+        back, n = uscode.compact_decode(raw, 0)
+        if back != v or n != len(raw):
+            ok = False
+    check("a compact index round-trips, sign and all", ok)
+    check("and it really is variable width", len(widths) >= 3, str(sorted(widths)))
+    check("small values take one byte",
+          len(uscode.compact_encode(8)) == 1
+          and len(uscode.compact_encode(-22)) == 1)
+
+    # a block with a forward jump, built by hand:
+    #   0x00 JumpIfNot(->0x07, True)     disk 4   memory 4
+    #   0x04 Return(Nothing)             disk 2   memory 2
+    #   0x06 Nothing                     disk 1   memory 1
+    #   0x07 Return(Nothing)
+    body = bytes([0x07, 0x07, 0x00, 0x27,   # JumpIfNot @7, True
+                  0x04, 0x0B,               # Return Nothing
+                  0x0B,                     # Nothing
+                  0x04, 0x0B])              # Return Nothing
+    blob = bytearray(_struct.pack("<I", len(body)) + body)
+    s = Script.at(bytes(blob), 0)
+    check("a hand-built block parses to its declared length",
+          s.mem_len == len(body) and s.disk_len == len(body))
+    disk, mem = s.assemble(s.disk_len)
+    check("and round-trips unchanged", disk == body and mem == len(body))
+
+    # inserting a byte must move the jump, by the MEMORY delta
+    ins = parse_expr(bytes([0x0B]))
+    s.toks.insert(1, ins)
+    disk2, mem2 = s.assemble()
+    check("inserting a statement lengthens the block",
+          mem2 == len(body) + 1 and len(disk2) == len(body) + 1)
+    check("and re-bases the jump over it",
+          _struct.unpack_from("<H", disk2, 1)[0] == 8,
+          "target is %d" % _struct.unpack_from("<H", disk2, 1)[0])
+
+    # padding back to the original disk length is what keeps a LIN package fixed
+    s2 = Script.at(bytes(blob), 0)
+    s2.toks.append(parse_expr(bytes([0x0B])))
+    slot = s2.disk_len + 4
+    padded, pmem = s2.assemble(slot)
+    check("padding fills the slot exactly",
+          len(padded) == slot and pmem == slot,
+          "disk %d, mem %d, slot %d" % (len(padded), pmem, slot))
+    check("and the padding is EX_Nothing, which is unreachable after a return",
+          set(padded[-3:]) == {uscode.EX_NOTHING})
+
+    # a jump that lands mid-token is not a jump, and must be refused
+    broken = bytearray(blob)
+    broken[1 + 1] = 0x05        # retarget to 0x05, inside Return(Nothing)
+    try:
+        Script.at(bytes(broken), 0)
+        check("a jump into the middle of a token is refused", False)
+    except ScriptError:
+        check("a jump into the middle of a token is refused", True)
+
+    # removing a statement something jumps to would silently redirect it
+    s3 = Script.at(bytes(blob), 0)
+    target = s3.statement_at(7)
+    try:
+        s3.remove([target])
+        check("removing a jump target is refused", False)
+    except ScriptError:
+        check("removing a jump target is refused", True)
+    check("removing a statement nothing jumps to is allowed",
+          s3.remove([s3.statement_at(6)]) is None)
+
+    # an authored fragment may not carry jumps, having no block to resolve them
+    try:
+        parse_expr(bytes([0x06, 0x00, 0x00]))
+        check("a fragment carrying a jump is refused", False)
+    except ScriptError:
+        check("a fragment carrying a jump is refused", True)
+    try:
+        parse_expr(bytes([0x0B, 0x0B]))
+        check("a fragment with trailing bytes is refused", False)
+    except ScriptError:
+        check("a fragment with trailing bytes is refused", True)
+
+    # the skip words: a Context stores its guarded expression's length, a Skip
+    # stores one more. Both are measured from the disc, not assumed.
+    check("the skip adjustments are the measured ones",
+          uscode.SKIP_ADJUST == {0x12: -1, 0x19: -1, 0x18: +1})
+
+
+def run_rpg_speed(args):
+    """How fast RPG troops ready a rocket.
+
+    The wait before a rocket shot is an animation played at half speed, not a
+    timer and not an ammunition count -- `StandReloadRPG` and `StandFireRPG`
+    are each issued through `PlayAnim(name, 0.5)`. The names came from decoding
+    the `EX_NameConst` compact index against the name table of the package at
+    0x86a7f, which is the only reason a bare index is readable at all.
+    """
+    import re
+    from tcps2 import dataedit, lin, rserpg
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    if not args.rs3data:
+        return
+    print("\n[Rainbow Six 3 -- RPG troops readying a rocket]")
+    seen, checked = set(), 0
+    with Iso(args.rs3data) as iso:
+        for arc in open_archives(iso, r"/VOKES\d\.IMG$"):
+            for path in sorted(arc.files):
+                if not re.search(r"/COMMON(OFF|_SS)?\.LIN$", path) or path in seen:
+                    continue
+                seen.add(path)
+                raw = _stock_bytes(args.rs3data, arc, path)
+                kind, plain = dataedit._unpack(raw, path)
+
+                for which, known in (("reload", 0x124B11), ("fire", 0x124AE9)):
+                    at = rserpg.find(plain, which)
+                    check("%s: the %s rate is where it was measured"
+                          % (path[1:], which), at == known,
+                          "found %#x, expected %#x" % (at, known))
+                    check("%s: and the game ships it at half speed"
+                          % (path[1:], ), rserpg.rate(plain, which) == 0.5,
+                          "got %r" % rserpg.rate(plain, which))
+
+                new, n = rserpg.apply(plain, 4)
+                check("%s: 4x writes both animations" % path[1:], n == 2,
+                      "%d written" % n)
+                check("%s: and the length never moves" % path[1:],
+                      len(new) == len(plain))
+                check("%s: 0.5 becomes 2.0" % path[1:],
+                      rserpg.rate(new, "reload") == 2.0
+                      and rserpg.rate(new, "fire") == 2.0)
+                # 0.5 -> 2.0 only moves the exponent, so counting changed
+                # bytes is the wrong check. What matters is that every byte
+                # that moved lies inside one of the two four-byte rate slots.
+                slots = set()
+                for w in ("reload", "fire"):
+                    slots.update(range(rserpg.find(plain, w),
+                                       rserpg.find(plain, w) + 4))
+                moved = {i for i, (a, b) in enumerate(zip(plain, new)) if a != b}
+                check("%s: nothing outside the two rate slots is touched"
+                      % path[1:], moved and moved <= slots,
+                      "%d bytes moved, %d of them outside"
+                      % (len(moved), len(moved - slots)))
+                check("%s: 1x puts it back exactly" % path[1:],
+                      rserpg.apply(new, 1)[0] == plain)
+
+                packed = dataedit._repack(kind, raw, new)
+                check("%s: the container keeps its length" % path[1:],
+                      len(packed) == len(raw))
+                check("%s: and still decompresses to the edited bytes"
+                      % path[1:], lin.decompress(packed) == new)
+                checked += 1
+    check("all three COMMON containers carry the rates", checked == 3,
+          "%d checked" % checked)
+
+    # a rate nobody should be able to ask for
+    try:
+        rserpg.set_rate(b"", "reload", 99.0)
+        check("an absurd rate is refused", False)
+    except rserpg.RpgError:
+        check("an absurd rate is refused", True)
+
+    profile = BY_ID["r6_3_slus20883"]
+    check("the dial reaches the profile",
+          profile.setting("rpg_speed") is not None)
+    check("leaving it at 1x writes nothing",
+          not [e for e in profile.build_data({}) if e.op == "rpg_speed"])
+    made = [e for e in profile.build_data({"rpg_speed": 4})
+            if e.op == "rpg_speed"]
+    check("and moving it writes exactly one edit", len(made) == 1
+          and made[0].params == {"speed": 4})
+
+
+def run_split_scope(args):
+    """The one branch that throws the scope overlay away in split screen.
+
+    Everything upstream is healthy in split screen -- the textures reach the
+    render devices and the scope-active flag is set -- so the assertions here
+    are about the branch itself and about the fact that the option is honest
+    that it is an experiment.
+    """
+    from tcps2 import overlay, rsescope
+    from tcps2.games import BY_ID
+    from tcps2.games.r6_3 import SP, STOCK
+    from tcps2.iso import Iso
+
+    if not args.rs3data:
+        return
+    print("\n[Rainbow Six 3 -- the scope overlay in split screen]")
+    with Iso(args.rs3data) as iso:
+        ov = overlay.open_overlay(iso, SP)
+        live = ov.read_word(rsescope.SCOPE_BRANCH)
+    check("the branch is one of the two words it can be",
+          live in (rsescope.SCOPE_BRANCH_STOCK, rsescope.SCOPE_BRANCH_OPEN),
+          "%#010x" % live)
+    check("the shipped word is recorded, so a patched disc can be healed",
+          STOCK.get(rsescope.SCOPE_BRANCH) == rsescope.SCOPE_BRANCH_STOCK,
+          "%r" % STOCK.get(rsescope.SCOPE_BRANCH))
+    check("and it decodes as the branch we think it is",
+          (rsescope.SCOPE_BRANCH_STOCK >> 26) == 5          # bne
+          and ((rsescope.SCOPE_BRANCH_STOCK >> 16) & 31) == 0)   # against $zero
+
+    # the cave that fits the overlay to the viewport
+    from tcps2.games.r6_3 import CAVE_WORDS as _SPAWN
+    from tcps2 import rsewheel as _rw
+    vw = rsescope.viewport_words()
+    hooks = [(va, w) for va, w, _s, _n in vw if (w >> 26) == 3]
+    caves = {va: w for va, w, _s, _n in vw if va >= 0x00500000}
+    check("the cheat is 8 hooks, 12 retired words and three caves",
+          len(vw) == 41 and len(hooks) == 8 and len(caves) == 17, str(len(vw)))
+
+    with Iso(args.rs3data) as iso:
+        ov2 = overlay.open_overlay(iso, SP)
+        bad = [(va, "%#010x" % ov2.read_word(va), "%#010x" % st)
+               for va, _w, st, _n in vw
+               if va < 0x00500000 and ov2.read_word(va) != st]
+        check("every word the cheat overwrites is the word it claims",
+              not bad, str(bad))
+        busy = [va for va in caves if ov2.read_word(va) != 0]
+        check("and all three caves are empty on a stock disc",
+              not busy, str(busy))
+
+        # The bug this option shipped with: `jal` has a delay slot, so the
+        # instruction AFTER a hook runs BEFORE the cave. A branch there is
+        # undefined on the R5900, and it hung the game on the loading screen.
+        BRANCHES = (1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23)
+        emitted = {va: w for va, w, _s, _n in vw}
+        slots = []
+        for va, _w in hooks:
+            nxt = emitted.get(va + 4, ov2.read_word(va + 4))
+            if (nxt >> 26) in BRANCHES:
+                slots.append("%#010x -> %#010x" % (va, nxt))
+        check("no hook puts a branch in a jal delay slot", not slots,
+              str(slots))
+
+        # ... and the delay slot must not read the register the cave loads,
+        # which would give it the stale framebuffer value.
+        stale = []
+        for va, w in hooks:
+            target = (w & 0x03FFFFFF) << 2
+            loads = 8 if target == rsescope._HEIGHT_CAVE else 2   # $t0 / $v0
+            nxt = emitted.get(va + 4, ov2.read_word(va + 4))
+            if nxt == 0:
+                continue
+            rs, rt = (nxt >> 21) & 31, (nxt >> 16) & 31
+            if loads in (rs, rt):
+                stale.append("%#010x -> %#010x" % (va, nxt))
+        check("nor one that reads the register the cave is about to load",
+              not stale, str(stale))
+
+    check("four hooks take the width and four the height",
+          len(rsescope.WIDTH_HOOKS) == 4 and len(rsescope.HEIGHT_HOOKS) == 4)
+    check("every hook is a jal into one of the three caves",
+          all(((w & 0x03FFFFFF) << 2)
+              in set(rsescope._WIDTH_CAVE.values()) | {rsescope._HEIGHT_CAVE}
+              for _va, w in hooks))
+    mine = {va for va, _w, _s, _n in vw}
+    check("it lands on neither of the other two caves",
+          not (mine & {va for va, _w, _s, _n in _rw.label_words()})
+          and not (mine & {va for va, _w in _SPAWN}))
+    check("the hooked reads are the ones the module recorded",
+          {va for va, _rd in rsescope.WIDTH_HOOKS}
+          | set(rsescope.HEIGHT_HOOKS) == set(rsescope.FRAMEBUFFER_READS))
+
+    profile = BY_ID["r6_3_slus20883"]
+    check("the option reaches the profile",
+          profile.setting("split_scope") is not None)
+    check("the fitting option needs the overlay switched on first",
+          profile.setting("split_scope_fit").requires
+          == {"split_scope": [True]})
+    check("and it is a cheat, not a disc edit",
+          profile.setting("split_scope_fit").touches == "cheat")
+    check("turning both on writes exactly those 41 lines",
+          len(profile.build_pnach({"split_scope_fit": True,
+                                   "split_scope": True})) == 41)
+
+    # A pnach is re-applied every frame, so an option left ticked behind an
+    # unticked prerequisite could not be undone by unticking it. `requires`
+    # greys the widget out; it has to gate the generator as well.
+    check("with the overlay off, the fitting cheat writes nothing",
+          not profile.build_pnach({"split_scope_fit": True,
+                                   "split_scope": False}))
+    eff = profile.effective({"split_scope_fit": True, "split_scope": False,
+                             "split_wheel_labels": True, "split_wheel": False})
+    check("and effective() neutralises both cheats whose prerequisite is off",
+          eff["split_scope_fit"] is False
+          and eff["split_wheel_labels"] is False)
+    check("a chain of requirements resolves all the way down",
+          profile.effective({"ai_finite_ammo": False,
+                             "ai_sidearm": 50})["ai_sidearm"] == 0)
+    check("all three caves coexist",
+          len(profile.build_pnach({"split_scope_fit": True,
+                                   "split_scope": True,
+                                   "split_wheel_labels": True,
+                                   "split_wheel": True,
+                                   "wave_enable": True,
+                                   "wave_mapwide": True})) == 125)
+    check("and says plainly that it is untested",
+          profile.setting("split_scope").confidence == "untested")
+    check("leaving it off writes no word",
+          not [e for e in profile.build_edits({})
+               if e.va == rsescope.SCOPE_BRANCH])
+    made = [e for e in profile.build_edits({"split_scope": True})
+            if e.va == rsescope.SCOPE_BRANCH]
+    check("turning it on clears exactly that branch",
+          len(made) == 1 and made[0].value == rsescope.SCOPE_BRANCH_OPEN
+          and made[0].stock == rsescope.SCOPE_BRANCH_STOCK)
+
+    # the caveat is the point: the draw sizes itself off the framebuffer
+    check("the framebuffer and viewport fields are both recorded, since the "
+          "real fix needs them",
+          rsescope.G_FRAMEBUFFER == (0x7C4, 0x7C8)
+          and rsescope.G_VIEWPORT_RECT == 0x40A00
+          and len(rsescope.FRAMEBUFFER_READS) == 8)
+
+
+def run_split_draw(args):
+    """The guard that stops the draw animation playing twice in split screen.
+
+    The edit repoints one bool read from `m_bIsSplitScreen` to `m_bGameOver`.
+    Both are bools on GameInfo in the same dword, which is the whole safety
+    argument -- the VM resolves the same class on the same object -- so that
+    is what these assertions are really about.
+    """
+    import re
+    from tcps2 import dataedit, lin, rsedraw
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    if not args.rs3data:
+        return
+    print(chr(10) + "[Rainbow Six 3 -- the doubled draw animation]")
+    seen, checked = set(), 0
+    with Iso(args.rs3data) as iso:
+        for arc in open_archives(iso, r"/VOKES\d\.IMG$"):
+            for path in sorted(arc.files):
+                if not re.search(r"/COMMON(OFF|_SS)?\.LIN$", path) or path in seen:
+                    continue
+                seen.add(path)
+                raw = _stock_bytes(args.rs3data, arc, path)
+                kind, plain = dataedit._unpack(raw, path)
+
+                at = rsedraw.find(plain)
+                check("%s: the guard term is where it was measured" % path[1:],
+                      at == rsedraw.KNOWN_OFFSET,
+                      "found %#x, expected %#x" % (at, rsedraw.KNOWN_OFFSET))
+                check("%s: and it still reads m_bIsSplitScreen" % path[1:],
+                      plain[at:at + 2] == rsedraw.SPLITSCREEN,
+                      plain[at:at + 2].hex())
+                check("%s: the anchor occurs exactly once" % path[1:],
+                      plain.count(rsedraw.ANCHOR) == 1,
+                      "%d times" % plain.count(rsedraw.ANCHOR))
+
+                on, n = rsedraw.restore(plain, True)
+                check("%s: the edit moves exactly two bytes" % path[1:],
+                      n == 1 and len(on) == len(plain)
+                      and sum(a != b for a, b in zip(plain, on)) == 2)
+                check("%s: to m_bGameOver" % path[1:],
+                      on[at:at + 2] == rsedraw.GAMEOVER)
+                check("%s: and it reverses exactly" % path[1:],
+                      rsedraw.restore(on, False)[0] == plain)
+                check("%s: the state reads back" % path[1:],
+                      rsedraw.reads(on) and not rsedraw.reads(plain))
+
+                packed = dataedit._repack(kind, raw, on)
+                check("%s: the container keeps its length" % path[1:],
+                      len(packed) == len(raw))
+                check("%s: and still decompresses to the edited bytes"
+                      % path[1:], lin.decompress(packed) == on)
+                checked += 1
+    check("all three COMMON containers carry the guard", checked == 3,
+          "%d checked" % checked)
+
+    # both operands must be two bytes, or the length would move
+    check("the operand swap is length-for-length",
+          len(rsedraw.SPLITSCREEN) == len(rsedraw.GAMEOVER) == 2)
+
+    profile = BY_ID["r6_3_slus20883"]
+    check("the option reaches the profile",
+          profile.setting("split_draw_once") is not None)
+    check("leaving it off writes nothing",
+          not [e for e in profile.build_data({}) if e.op == "split_draw"])
+    check("turning it on writes exactly one edit",
+          len([e for e in profile.build_data({"split_draw_once": True})
+               if e.op == "split_draw"]) == 1)
 
 
 def run_combination_warnings():

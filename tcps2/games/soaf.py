@@ -125,11 +125,45 @@ def mission_key(stem):
     return "mission_" + stem.lower().replace(" ", "_")
 
 
+#: The rest of each mission's briefing kit: an intel photograph and a
+#: newspaper clipping, both 256x256 like the map itself.
+#:
+#: These have to be spelled out rather than derived, because the disc does NOT
+#: name them consistently with the briefing. `M02`'s map is `M02_MILITIA` while
+#: its intel is `M02_MILITIA_COMPOUND`; `M04` splits `WEAPONFAC` from
+#: `WEAPONS_RESEARCH`; `M08` and `M11` keep an apostrophe the map drops; and
+#: `M01` is spelled both `TV STATION` and `TVSTATION` on the same disc. Every
+#: name below was read off the archive and decoded.
+#:
+#: `M01` is the one mission with no newspaper clipping, so its first objective
+#: photograph takes the third slot instead.
+EXTRA_ART = {
+    "M01": ["M01_TVSTATION_INTEL_01", "M01_TV STATION_OBJ_0"],
+    "M02": ["M02_MILITIA_COMPOUND_INTEL_01", "M02_MILITIA_COMPOUND_NEWS_01"],
+    "M03": ["M03_WAREHOUSE_INTEL_01", "M03_WAREHOUSE_NEWS_01"],
+    "M04": ["M04_WEAPONS_RESEARCH_INTEL_01", "M04_WEAPONS_RESEARCH_NEWS_01"],
+    "M05": ["M05_PRISON_INTEL_01", "M05_PRISON_NEWS_01"],
+    "M06": ["M06_MERCENARY_COMPOUND_INTEL_01", "M06_MERCENARY_COMPOUND_NEWS_01"],
+    "M07": ["M07_DIAMOND_MINE_INTEL_01", "M07_DIAMOND_MINE_NEWS_01"],
+    "M08": ["M08_OLSON'S_ESTATE_INTEL_01", "M08_OLSON'S_ESTATE_NEWS_01"],
+    "M09": ["M09_BANK_INTEL_01", "M09_BANK_NEWS_01"],
+    "M10": ["M10_CORPORATE_HQ_INTEL_01", "M10_CORPORATE_HQ_NEWS_01"],
+    "M11": ["M11_DRESSLER'S_ESTATE_INTEL_01", "M11_DRESSLER'S_ESTATE_NEWS_01"],
+}
+
+#: `TRAINING_SHOTS` is deliberately not used. It decodes, but it is a five-frame
+#: filmstrip 923x138, and beside a square map it would render as a smear.
+
+
 def mission_art_for(key):
-    """The briefing map this mission's card should show."""
+    """The mission's briefing kit: the map, then the intel and the clipping.
+
+    The five training levels share one map and have no kit of their own, so
+    they still get a single picture.
+    """
     for mission in MISSIONS:
         if key == mission_key(mission[0]):
-            return [mission[8]]
+            return [mission[8]] + EXTRA_ART.get(mission[1], [])
     return []
 
 

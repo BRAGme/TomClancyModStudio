@@ -301,15 +301,28 @@ def mission_key(mid):
     return "mission_" + mid.lower()
 
 
-def mission_art_for(key):
-    """The art base names for a mission card's snapshot.
+#: How many concept frames to put on a mission card beside its snapshot.
+#: The disc ships twelve per mission -- `M01_CONCEPT_01` to `_12`, all 16
+#: missions, all decoding -- but they are the unlockable gallery for that
+#: mission rather than pictures OF it, so the later slots wander off into
+#: character sheets and gear diagrams. Two is what fits the card and what
+#: stays closest to the level.
+CONCEPT_FRAMES = 2
 
-    Lockdown keeps one picture per mission rather than one per section, so
-    this is always a single name.
+
+def mission_art_for(key):
+    """The mission's snapshot, then a couple of its concept frames.
+
+    Each name carries its folder because the two live apart on the disc: the
+    snapshot under `SHELL/ART`, the concept frames under `SHELL/CONCEPT_ART`.
     """
     for mission in MISSIONS:
-        if key == mission_key(mission[0]):
-            return [mission[0]]
+        if key != mission_key(mission[0]):
+            continue
+        stem = mission[0]
+        return ["ART/%s_SNAPSHOT" % stem] + [
+            "CONCEPT_ART/%s_CONCEPT_%02d" % (stem, i + 1)
+            for i in range(CONCEPT_FRAMES)]
     return []
 
 

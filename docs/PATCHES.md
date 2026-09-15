@@ -360,6 +360,78 @@ means replacing `r6fraggrenadegadget` with `R6MolotovGadget` -- a shorter name,
 so it would need padding after the comma, and a previous whitespace-padded
 attempt on these packages hung the loader. Untested, not shipped.
 
+### "Man down" in split screen: no Rainbow voice can play at all
+
+Worth recording because the obvious fix is real, reachable, and useless on its
+own. `R6PlayerController.PlaySoundDamage`, death case:
+
+```
+JumpIfNot(@0xa1, !Level.Game.m_bIsSplitScreen)         <-- the gate
+JumpIfNot(@0xa1, m_TeamManager.m_iMemberCount > 0 && m_Team[1] != None)
+m_Team[1].Controller.PlaySoundCurrentAction(23)        <-- "Lead down"
+```
+
+Voice action 23 is `m_sndLeadDown`; 24, 25 and 26 are Loiselle, Price and
+Weber, and `R6RainbowAI.PlaySoundDamage` picks between them on
+`m_iOperativeID` when an AI teammate goes down.
+
+Three things stand in the way, and only the first is a gate:
+
+1. That `!m_bIsSplitScreen` test. Removable.
+2. The speaker is `m_Team[1].Controller`, hardcoded. The array really does hold
+   both players in split screen -- measured, slots are
+   `[R6RainbowPriceWinter0, R6RainbowPriceWinter1, None, None]` -- so slot 1 is
+   the other player, and `R6PlayerController` does not override
+   `PlaySoundCurrentAction`. The inherited `Controller.PlaySoundCurrentAction`
+   is two bytes: `Return(Nothing)`.
+3. It could not speak even then. **`PlayRainbowVoices` has exactly one caller in
+   the entire loaded script** -- `R6RainbowAI.PlaySoundCurrentAction` -- and it
+   reads `R6RainbowAI.m_VoicesMgr`, which only an `R6RainbowAI` ever creates
+   (`New(..., R6PriceVoices / R6LoiselleVoices / R6WeberVoices)` then `Init`).
+
+And split screen has no `R6RainbowAI` at all. Measured across savestates:
+
+| | R6RainbowAI | voices-manager instances | player controllers |
+|---|---|---|---|
+| single player | 3 | 3 (Price, Weber, Loiselle) | 1 |
+| split screen | 0 | **0** | 2 |
+
+`m_iMemberCount` reads 1 in both, so that guard is not what differs.
+
+So the call-out is not suppressed in split screen -- **no Rainbow voice line of
+any kind can play there**, because the only thing in the game that owns a voice
+is the AI teammate.
+
+**Shipped, experimental.** `tcps2/rsemandown.py` drops the gate and replaces the
+dead call with one that builds its own voice:
+
+```
+if (True)
+    if (m_iMemberCount > 0 && m_Team[1] != None)
+        new R6PriceVoices.PlayRainbowVoices(m_Team[1], 23)
+```
+
+Both halves are lifted from shipped code rather than invented -- the
+`New(Nothing, Nothing, Nothing, ObjectConst(R6Engine.R6PriceVoices))` is copied
+out of `R6RainbowAI.Possess`, and the `PlayRainbowVoices` name index (1207) off
+its one existing caller. `Init()` is deliberately skipped: all it does is
+`AddSoundBankName("X_Voices_Price")`, and all three operative voice packages are
+already live `Package` objects in a split-screen savestate.
+
+It fits the function's 283 disk bytes **exactly**, with nothing spare, which is
+what the two limitations come from. It always plays line 23, so player 2 going
+down is announced as the lead rather than as Price; and the speaker is team slot
+1, which the game hardcodes, so in split screen that is player 2's own pawn --
+when player 2 is the one who died the line comes from a dead man and may not
+play at all. Both are fixed by giving player 2 a real operative identity.
+
+Locating it needed care and the note is worth keeping: this function has no
+string constants, so it cannot be found by its own text, and the obvious anchor
+-- the block's `ScriptSize` word -- is changed BY the edit. Diffing the block
+before against after leaves only two byte runs untouched; the anchor is the long
+one, and it starts two bytes into the bytecode because byte 1 is the low half of
+the opening jump's target, which moves.
+
 ### Split-screen enemy accuracy: there is nothing to switch
 
 Every channel by which native code can learn it is in split screen was
@@ -375,7 +447,387 @@ The one place split screen picks a different number is a leaf returning 3
 instead of 6 -- traced to its format string, that is the **audio streaming voice
 budget**.
 
+## Teammate ammunition, and the callout it unlocks
 
+Two keys in `R6GAMESETTINGS.INI`, sitting together under the file's own comment
+`; the following is for rainbow AI only`:
+
+```ini
+m_bUnlimitedRainbowMagazines=true
+; Bullets to put in primary weapon when all clips are empty
+m_iNbOfBulletWhenEmpty=5
+```
+
+The first is why Price, Weber and Loiselle never run dry, and therefore why
+their ammunition line never plays. Both are shipped values, read off
+`Tom Clancy's Rainbow Six 3 (USA).iso.orig`, where all three VOKES copies of
+the file are byte-identical.
+
+### The voice banks say what does and does not exist
+
+`X_Voices_Price.LS1` and its Weber and Loiselle twins hold 125 clips each, the
+same script in three voices. Clip 20 is "No ammo, sir" and clip 21 is "Weapon's
+dry". **There is no reload line, and this is not a gap in the transcript -- it
+is a gap in the game.** Two independent inventories agree:
+
+* The DARE event names are recoverable from the decompressed `COMMON.LIN`. Price
+  has **101** `Play_Price_*` events, and exactly one of them is about
+  ammunition: `Play_Price_Ammo_Out`. There is no `Play_Price_Reload`, no
+  magazine event, no weapon-switch event. Weber and Loiselle have the same 101
+  -- note Loiselle's prefix is `Play_Lois_`, not `Play_Loiselle_`. The name
+  list appears TWICE in `COMMON.LIN`; the first block holds only 97 of them, so
+  read the second or you will undercount by four.
+  The only reload and switch events anywhere in the game's 209 sound banks are
+  weapon foley: `Play_Shotgun_Reload`, `Play_GrenadeLauncherReload`,
+  `Play_GrenadeLauncherSwitch`.
+* The script side matches. Every voice and sound slot on the pawn and AI classes
+  is an `m_snd<Something>` property, and the complete list -- **185** distinct
+  names, from `m_sndAccessingComputer` to `m_sndWoundedSevere` -- contains
+  exactly one ammunition entry, `m_sndAmmoOut`. No `m_sndReload` of any
+  spelling exists, and the only other name matching ammunition, clips,
+  magazines, reloading, bullets or weapon-switching is `m_sndBulletFizzSound`,
+  which is a round going past your head.
+
+So "restore the reloading dialogue" has no subject. What CAN be restored is the
+line that was recorded, wired and then made unreachable by a single `true`.
+
+### The bank format, corrected
+
+The research parser these banks were first read with
+(`R6_3_PS2_CutContent/tools/bankmap.py`, outside this repo) gets the right
+answers but its documented field offsets are `+4` out: it bases each resource
+record at `name - 0x44` when the record starts at `name - 0x40`, and the two
+errors cancel. Anyone reusing those offsets on a different bank will be wrong.
+The real layout, re-derived and checked against
+the header arithmetic (`28 + 101*72 + 155*108 + 672 = 24712` = the exact file
+size):
+
+```
+resource record, 108 bytes
+  +0x00 u16 id / u16 bank tag   +0x04 kind   +0x08 length or child count
+  +0x0c tail offset (kind 10)   +0x10 stream offset   +0x18 child count
+  +0x2c sample rate             +0x30 sample count    +0x40 char[40] stream name
+```
+
+`kind` is **1** for a stream (125 of them), **10** for a weighted random
+container (24) and **15** for a null (6). A container's children live in the
+672-byte tail as 12-byte `(resource id, weight, 0)` records whose weights sum to
+`0x10000`.
+
+The event record's four words at `+0x1c..+0x28` are **not** variant slots, which
+is what an earlier note recorded. Across all 209 banks, 3,853 of 5,775 event
+records carry non-`-2` values there, and the values are 16.16 fixed point --
+3.0, 3.5, 0.5, 1.0, 10.0, 10.5, 20.0, 25.0, 30.0, 50.0 -- with `-2`, `-1` and
+`0` as sentinels. They are distance or range parameters, not alternate takes.
+
+### 29 recorded lines are wired to nothing
+
+Of the 125 clips in each operative bank, **96 are reachable from an event and 29
+are not** -- 33.6 seconds of finished, recorded dialogue that can never play.
+The cause is 12 random containers (`133, 138, 145, 154, 157, 162, 165, 168, 171,
+172, 173, 177`) that nothing references: the audio was recorded and authored
+into containers, and the event table was never re-pointed at them. The three
+banks are logically identical, so it is the same 29 lines in all three voices.
+
+They are a coherent late block rather than scattered offcuts -- the whole
+fire-reaction set, the whole "Ding" encouragement set, the smoke callouts and
+the in-position calls:
+
+> Taking fire · Take cover · Use the smoke as cover · The smoke will give us
+> cover · That's nasty stuff · Burn them out · Light them up · Nice shot · Take
+> them out, Ding · Ding, you're taking hits · Make them pay, Ding · **I'm
+> burning** · **I'm on fire** · **Fire's out, I'm good to go** · **I'm alright,
+> the fire's out** · Already in position · In position · Holding position and
+> waiting for orders · Still waiting for orders · Still can't, sir · Lost our
+> breaching charges, sir -- can't complete order · Files downloaded · Escorting
+> hostage · ...precious cargo · Security deactivated · Taking lock · Roger,
+> secure terrorist on Zulu · Roger, electro up · Roger, open frag and clear
+
+**This retracts an earlier note** which reasoned that because molotovs are live
+in the game, the on-fire reactions (clips 115-118) were probably reachable. They
+are not: all four are orphaned. A teammate set alight by a molotov says nothing.
+
+The same break shows from the other side. **17 of the 101 events resolve to no
+audio at all** -- 15 name a resource id that has no record (`0, 27-31, 39-43,
+50, 69, 118, 119`) and 2 point at a kind-15 null (events 37 and 94). Six further
+ids are missing but are still cited as container children (`26, 38, 44, 45,
+120, 121`), so several live containers are random picks with a silent leg: the
+"Flashbang out" container 35 is a 2-way with one dead branch, and so are 56, 63
+and 145. So the bank is unfinished in both directions -- events that play
+nothing, and finished recordings nothing plays. Re-pointing the dead events at
+the orphaned containers would restore most of it, and is blocked on the same
+unknown: which event is which.
+
+### The ammunition cue is half-wired, and it is not obvious how to fix it
+
+The two ammo takes never play as a pair. Resolved exhaustively over all 101
+events and all 24 containers:
+
+```
+clip 20 "No ammo, sir."     = resource 34 <- event 21, directly
+clip 21 "Weapon's dry."     = resource 33 <- container 51 <- event 31
+clip 19 "Roger, I'm on it." = resource 32 <- container 51 <- event 31
+container 51: 2 children, resource 32 at weight 0x8001, resource 33 at 0x7fff
+```
+
+So **"Weapon's dry" only ever plays on a coin-flip against "Roger, I'm on it"**,
+a line that belongs to acknowledging an order. Identical in all three banks, at
+the same file offset (`0x5ea8`).
+
+Aligning the event-name list against the clip order by content makes the
+recording script's intent fairly clear -- names 5..14 map onto clips 11..25 with
+no gaps, putting `Order_FromLead` on clip 19 and `Ammo_Out` on clips 20 **and**
+21 -- which reads as an off-by-one when container 51 was authored: it took
+resources `{32, 33}` where the script implies `{34, 33}`.
+
+**No switch is shipped for this**, because the two readings of the same data
+call for opposite edits and nothing static separates them:
+
+* **Event 31 is `Ammo_Out`.** Then the ammo cue is a coin-flip that says "Roger,
+  I'm on it" half the time, and the fix is to repoint container 51's first child
+  from resource 32 to resource 34.
+* **Event 21 is `Ammo_Out`** (which is what the content alignment above
+  implies). Then `Order_FromLead` is the container, a teammate says "Weapon's
+  dry" while acknowledging an order, and the fix is the other way round.
+
+Resource 32 is referenced by container 51 and by nothing else, so the first fix
+orphans "Roger, I'm on it" -- trading one silent line for another. And the
+name-to-event-ID binding is genuinely unknown: the positional fits fail (the lag
+between name index and event row runs 1 -> 19 -> 14, so it is not a constant
+offset), and a 105-member `RV_*` enum fitted against the clip text over all 28
+offsets peaks at 27% with plain contradictions.
+
+**The test that settles it costs one playthrough.** Repoint container 51's two
+children at two clips that could never be confused -- say resource 65
+("Murphy. Murphy.") and resource 85 ("Fire in the hole.") -- and note when they
+come out of a teammate's mouth: on an order, or on an empty weapon. Four bytes
+at file offset `0x5ea8` in each bank, same offset in all three. Once that is
+known the real edit is the same four bytes.
+
+### What the tool does with that
+
+The **Teammates** page carries two cards, both plain INI edits:
+
+| card | key | shipped | what turning it on does |
+|---|---|---|---|
+| AI teammates run out of ammunition | `m_bUnlimitedRainbowMagazines` | `true` | writes `false`, so the team spends magazines and can reach "Weapon's dry" |
+| Rounds left in a weapon that has run dry | `m_iNbOfBulletWhenEmpty` | `5` | writes the chosen reserve; `0` means dry is dry |
+
+The reserve is only written when the switch is on, because a reserve reached
+only when the magazines are gone is meaningless while they are unlimited.
+
+One caveat specific to a disc that was hand-edited before this tool ever saw
+it. Every data edit is applied to `store.original(...)` -- the backup store --
+rather than to the live file, so that applying twice gives the same disc and
+clearing a card really undoes it. But the backup store records what was on the
+disc the first time this tool touched it. On a disc where someone had already
+set `m_bUnlimitedRainbowMagazines=false` by hand, *clearing* this card restores
+`false`, not the shipped `true`. To get the shipped values back on such a disc,
+apply to a pristine image, or set the card on and the reserve to 5 and read the
+difference as deliberate rather than stock.
+
+**Every teammate always has something in the secondary slot**, so a dry primary
+is not the end of the fight: across the 48 map INIs that declare teammate
+loadouts there are 567 entries and not one leaves `szSecondaryWeapon` empty.
+534 of them are an actual pistol (92FS, Mk23 or USP). The exception is
+**Trieste** -- 21 of its entries put a breaching charge, flashbang or smoke
+grenade in the secondary-weapon slot instead of a sidearm, so on that level the
+team has nothing to fall back on. (`/MAPS/DEMO.INI` does the same for all 12 of
+its entries, but no campaign mission loads it.)
+
+### Drawing the sidearm: the decision is script, and it is dead on retail
+
+`R6RainbowAI.RainbowReloadWeapon` is where a teammate chooses between reloading
+and switching. **It is UnrealScript, so there is no word in `SP.SOZ` to patch.**
+That was settled from the live `UFunction` layout, not from naming: `+0x78`
+holds the C++ entry point, and 3,699 of the 4,357 loaded UFunctions carry
+`0x0014f200` there, which is `UObject::ProcessInternal` -- the script VM.
+`SwitchWeapon`, `RainbowReloadWeapon`, `NeedToReload`, `R6Weapons.HasAmmo` and
+`CanReload` are all in that set, and `R6Rainbow` has no natives at all. The
+whole native surface of `R6RainbowAI` is ten functions, none of them about
+weapons.
+
+```
+if (Pawn.EngineWeapon.m_iCurrentNbOfClips > 0)        <-- THE GATE
+    ... ReloadWeapon();
+else if (m_iCurrentWeapon == 0 && m_WeaponsCarried[1].HasAmmo())
+    SwitchWeapon(1);                                  <-- rifle -> pistol
+else if (m_iCurrentWeapon == 1 && m_WeaponsCarried[0].HasAmmo())
+    SwitchWeapon(0);
+else if (!m_bWeaponsDry) { m_bWeaponsDry = true; PlaySoundCurrentAction(12); }
+```
+
+**On a stock disc that switch branch cannot be reached at all.**
+`R6Weapons.PostBeginPlay` gives every AI Rainbow weapon
+`m_bUnlimitedClip = true; m_iCurrentNbOfClips = 1` whenever
+`m_bUnlimitedRainbowMagazines` is set, and
+`R6Weapons::execNativeServerFireBullet` (VA `0x003f0a40`) then takes its
+`unlimited && clips == 1` path forever and never reaches `clips--`. So the clip
+count is pinned at 1 for the whole mission and the gate is always true. Turning
+the ammunition switch off is a prerequisite for any of this, which is why the
+sidearm card requires it.
+
+The magazine is already the trigger by the time this function runs --
+`NeedToReload()` returns true on `m_iNbBulletsInWeapon == 0`, and `AttackTimer`
+only calls it then -- so the one thing between "magazine empty" and "draw the
+pistol" is that clip comparison.
+
+Two one-byte edits were considered before the tool below existed, and both are
+recorded because they are cheap and might be wanted again. `EX_IntZero` ->
+`EX_IntOne` at plain offset `0x12fb04` turns `clips > 0` into `clips > 1`, so a
+teammate on his last magazine draws the pistol instead of loading it -- but once
+BOTH weapons are on their last magazine each still reports ammunition and
+neither will reload, so they can swap back and forth without firing. Swapping
+the operator instead at `0x12faf4`, `0x97` (`Greater_IntInt`) -> `0x96`
+(`Less_IntInt`), makes the test never true -- and this is the only reload path
+Rainbow AI has, so they would never reload again. The shipped option does
+neither; it puts a roll on the gate.
+
+### The chance, and the bytecode tool it needed
+
+A *chance* of switching is not a byte edit. It needs `if (Rand(100) < N)`
+inserted at the gate, and inserting bytecode into a cooked package means solving
+the thing that makes these files awkward: **a script block's jump operands are
+offsets into the LOADED image, and the file is shorter than the loaded image.**
+
+```
+<u32 ScriptSize> <bytecode ...>
+```
+
+`ScriptSize` is the **memory** length. The loader runs
+`while (iCode < ScriptSize) SerializeExpr(...)` and converts as it reads: an
+object, property, function or name reference is a 1-to-5 byte `FCompactIndex` in
+the file and a flat 4 bytes once loaded. Across this package, 503,021 disk bytes
+become 688,623 in memory -- a factor of 1.369. So an inserted byte moves every
+downstream jump by the *memory* delta while the file grows by the *disk* delta,
+and the two are never the same number.
+
+`tcps2/uscode.py` is that tool. Three things it has to get right, each of which
+would corrupt a function if guessed:
+
+* `EX_Jump`, `EX_JumpIfNot`, the "next case" word of `EX_Case`, `EX_Iterator`
+  and the DWORDs of an `EX_LabelTable` are **absolute memory offsets** and are
+  re-based.
+* `EX_Context`, `EX_ClassContext` and `EX_Skip` carry a **size**, not a target,
+  and are re-measured. The two contexts store the guarded expression's length;
+  `EX_Skip` stores one MORE than its expression. That is measured, not assumed
+  -- 13,900 contexts and 2,428 skips across the package agree -- and about
+  seventy of the disc's own skips store something else again, short-circuit
+  chains where the compiler jumped somewhere shorter, so the tool **adjusts each
+  word by however much its expression actually moved** rather than recomputing
+  it. An untouched skip therefore comes back byte-identical whatever it held.
+* `EX_Assert`'s word is a source line number and is left alone.
+
+**How it was checked.** A PCSX2 savestate holds the loaded image of every script
+struct (`UFunction +0x40` is the Script pointer, `+0x44` its length), so the disk
+parse can be checked against what the console actually has. Rebuilding the
+in-memory image from the file and comparing byte for byte -- ignoring only the
+4-byte reference slots, which hold heap pointers -- **3,710 live script structs
+reconstruct exactly, with zero non-reference bytes differing.** The residue is
+656 one and two-byte stubs too short to locate unambiguously, plus classes that
+live in another package. The test suite re-proves the weaker half without a
+savestate: of 6,801 script blocks found in `COMMON.LIN`, **6,738 round-trip
+parse -> assemble to identical bytes and 63 are refused. None is mangled.**
+
+**The edit.** The gate becomes
+
+```
+clips > 0 && (Enemy == None || Rand(100) < 100 - chance)
+```
+
+so that percentage of dry magazines falls through to the sidearm branch, and
+only while the teammate is actually in contact -- one with nobody shooting at
+him always reloads, which is what he should do. The contact test is the game's
+own: this function already checks `Enemy != None` to decide whether to break off
+an attack before reloading, and the reference is **lifted from that statement**
+rather than hardcoded or resolved through the import table, so it stays correct
+on a disc whose tables number things differently. (Confirmed against live RAM:
+the operand resolves to `Controller.Enemy`.) The contact half is a switch of its
+own, so it can be turned off.
+
+The shapes of both operators are taken from shipped code rather than assumed --
+every one of the package's 877 `OrOr_BoolBool` has an `EX_Skip` as its second
+argument, and `(InstanceVariable, NoObject)` is the commonest of the 208
+`EqualEqual_ObjectObject`. The disk length
+is held fixed by reclaiming the dead `if (bShowLog) Log(" needs to reload
+weapon")` pair -- `bShowLog` reads False on all three live teammate AIs -- and
+padding the remainder with `EX_Nothing` after the final return, which is valid
+bytecode the loader will decode and execution never reaches. The block's memory
+length drops 579 -> 573 without the contact test and 579 -> 576 with it, and the
+`ScriptSize` word in front of it is rewritten to match. The result is read back through the same parser before it is written.
+
+### Calling out a reload, since there is no reload line
+
+There is no reloading dialogue on this disc (see above), so the nearest honest
+thing is to play the line that does exist. The dry branch ends with
+`PlaySoundCurrentAction(12)`, and 12 is the only argument anywhere in the loaded
+script that reaches `m_sndAmmoOut`. A second, rolled copy of that call is
+inserted at the end of the RELOAD branch:
+
+```
+... ServerSwitchReloadingWeapon(True); ReloadWeapon();
+if (Rand(100) < say) PlaySoundCurrentAction(12);
+```
+
+The branch's closing `Jump` is found structurally rather than by offset -- the
+reload gate's own target is the first `else if`, so the statement in front of it
+closes the branch -- and the new test jumps to that same statement when the roll
+fails. The function name is lifted from the shipped call, like `Enemy` is.
+Nothing else changes: `m_bWeaponsDry` is not set, so it is purely audible.
+
+This one needs no other setting. It sits in the branch that runs either way, so
+it works on a stock disc -- where teammates reload constantly, which is why the
+card says to start low. Its bytes come from a second dead log,
+`" needs to switch to secondary weapon"`, so the two options never compete for
+the same budget.
+
+One thing is genuinely unknown and is on the card: the ammunition event resolves
+to "No ammo, sir", but the only other event reaching an ammunition take is a
+50/50 against "Roger, I'm on it", and which of the two `m_sndAmmoOut` is could
+not be pinned down.
+
+The card is capped at 90%. A teammate who never reloads would sit between two
+weapons that both still report ammunition and neither of which ever gets loaded.
+
+Still true, and the reason the whole page hangs together: none of this is
+reachable until `m_bUnlimitedRainbowMagazines` is off, because the clip count is
+pinned at 1 while it is on.
+
+Two related facts, both from the same decode. `m_bWeaponsDry` is written in
+exactly one place in the entire loaded script, the final else-branch above; and
+`PlaySoundCurrentAction(12)` on the line after it is **the only call with
+argument 12 anywhere in the script dump**, reaching `m_sndAmmoOut` through
+`R6RainbowVoices.PlayRainbowVoices`. So the ammunition line marks *both weapons
+dry*, not the transition -- **nothing is spoken when a teammate draws his
+pistol**.
+
+### Correction: these are not Xbox differences
+
+An earlier version of this tool listed both keys as things the **Xbox** build
+does differently, on the "...including the Xbox ammunition rules" card. That was
+wrong in both directions, and the way it went wrong is worth recording because
+the module had already warned against it once.
+
+The Xbox comparison needs the PS2 side read off a **pristine** image. A first
+pass read a played disc and absorbed twelve of the player's edits. The fix was
+to read the backup store instead -- but the backup store holds what was on the
+disc before *this tool* touched it, which says nothing about a disc hand-edited
+in an earlier session. Three values got in that way:
+
+| key | recorded PS2 | real PS2 | real Xbox |
+|---|---|---|---|
+| `m_fMinDistToThrowGrenade` | 200 | **500** | 500 |
+| `m_bUnlimitedRainbowMagazines` | false | **true** | true |
+| `m_iNbOfBulletWhenEmpty` | 0 | **5** | 5 |
+
+None of the three is a difference between the builds at all. A full key-by-key
+diff of the pristine PS2 INI against the Xbox `System/xboxdynamic.umd` gives 239
+keys in common and **18** that differ; the seven the tool writes are the seven
+that change how the game plays, and the other eleven are tracer colours, HUD
+text colour, voice-chat recording, the ELO constant and reticle precision. All
+three bad keys are gone, Rainbow Six 3's third group is now empty so it offers
+no second card, and the test compares the **two discs against each other**
+rather than either against a recorded number.
 
 ---
 

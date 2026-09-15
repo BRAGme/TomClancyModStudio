@@ -313,11 +313,37 @@ def mission_key(stem):
     return "mission_" + stem.lower()
 
 
+#: The extras gallery is keyed by mission number, so it doubles as per-mission
+#: artwork. Measured on the disc: sketches exist for Georgia `G01`-`G15` and
+#: Desert Siege `D01`-`D08`, and Desert Siege alone also has an in-engine
+#: screenshot `D01`-`D08`. All 31 decode at 640x480. The five TAC training
+#: levels have neither, which is why they still get one picture.
+SKETCH_GEORGIA = 15
+SKETCH_DESERT = 8
+
+
 def mission_art_for(key):
-    """The briefing map this mission's card should show."""
+    """Every picture this mission's card can show, best first.
+
+    The tactical map comes first because it is the one that says where you are
+    going; the concept sketch and, on Desert Siege, the screenshot follow. A
+    name that is not on the disc costs nothing -- the caller drops anything
+    that fails to decode -- but these ranges were counted rather than guessed.
+    """
     for mission in MISSIONS:
-        if key == mission_key(mission[0]):
-            return [mission[8]]
+        if key != mission_key(mission[0]):
+            continue
+        out = [mission[8]]
+        code = mission[1]
+        number = code[1:] if code[:1] == "M" else code[1:]
+        if code[:1] == "M" and number.isdigit() \
+                and int(number) <= SKETCH_GEORGIA:
+            out.append("SF_SKETCH_GROUP_G%02d" % int(number))
+        elif code[:1] == "D" and number.isdigit() \
+                and int(number) <= SKETCH_DESERT:
+            out.append("SF_SKETCH_GROUP_D%02d" % int(number))
+            out.append("SF_BACKGROUND_GROUP_D%02d" % int(number))
+        return out
     return []
 
 

@@ -191,6 +191,34 @@ class GameProfile:
                 out[s.key] = s.coerce(values[s.key])
         return out
 
+    def effective(self, values: dict) -> dict:
+        """`normalise`, then neutralise every setting whose prerequisites the
+        chosen values do not meet.
+
+        `requires` only greys a widget out. The stored value survives, and both
+        the disc edits and the cheat file are built from stored values, so an
+        option whose prerequisite was switched off went on being emitted. That
+        is worse for a cheat than for a disc edit: a pnach is re-applied every
+        frame, so unticking the prerequisite could not undo it at all -- which
+        is exactly how eight scope hooks stayed live in memory after the option
+        that needed them had been turned off.
+
+        Resolved to a fixed point, because requirements chain (a setting can
+        require one that itself requires another).
+        """
+        out = self.normalise(values)
+        for _ in range(len(self.settings) + 1):
+            changed = False
+            for s in self.settings:
+                if not s.requires or out.get(s.key) == s.default:
+                    continue
+                if self.unmet(s.key, out):
+                    out[s.key] = s.default
+                    changed = True
+            if not changed:
+                break
+        return out
+
     def unmet(self, key, values) -> list:
         """Human-readable list of requirements this setting does not have."""
         s = self.setting(key)

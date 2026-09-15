@@ -231,7 +231,7 @@ def _save_backup(path, container):
 # ---------------------------------------------------------------------------
 
 def plan(iso_path, profile, values) -> Plan:
-    values = profile.normalise(values)
+    values = profile.effective(values)
     warnings = []
     edits = profile.build_edits(values) if profile.build_edits else []
     pn = profile.build_pnach(values) if profile.build_pnach else []
@@ -277,7 +277,7 @@ def plan(iso_path, profile, values) -> Plan:
 # ---------------------------------------------------------------------------
 
 def apply(iso_path, profile, values, progress=None) -> dict:
-    values = profile.normalise(values)
+    values = profile.effective(values)
     edits = profile.build_edits(values) if profile.build_edits else []
     data = profile.build_data(values) if profile.build_data else []
     folder = backup_dir_for(iso_path)

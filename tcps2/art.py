@@ -344,7 +344,11 @@ ARCHIVE_BANNERS = {
 #: briefing is a 3D map with video -- so its cards carry no picture.
 MISSION_ART = {
     "r6_3_slus20883": ("fbz", "/NTSC_DI/LE/LOADING/LVL/%s.FBZ"),
-    "lockdown_slus21144": ("psx", "/PS2DATA/SHELL/ART/%s_SNAPSHOT.PSX"),
+    # The base name carries the folder, because Lockdown keeps a mission's
+    # snapshot in SHELL/ART and its concept frames in SHELL/CONCEPT_ART, and
+    # `psx_image` looks the path up exactly. A pattern rooted at ART could
+    # never reach the concept art at all.
+    "lockdown_slus21144": ("psx", "/PS2DATA/SHELL/%s.PSX"),
     "gr2_slus21105": ("fbz", "/DI/EN/LOADING%s.EN"),
     # Ghost Recon and Jungle Storm ship the briefing's tactical map per
     # mission, as an .RSB in the same archive. The names were renamed for the
@@ -380,7 +384,7 @@ def mission_art(detection, name, cache_dir=None):
         with Iso(detection.path) as iso:
             if kind == "psx":
                 img = psx_image(iso, profile, path)
-                img = img.convert("RGB") if img is not None else None
+                img = _trim_alpha(img) if img is not None else None
             elif kind == "rsb":
                 img = rsb_image(iso, profile, path)
             else:
@@ -410,6 +414,26 @@ def rsb_image(iso, profile, name):
                 except Exception:                 # noqa: BLE001
                     return None
     return None
+
+
+def _trim_alpha(img):
+    """Drop a transparent margin before flattening to RGB.
+
+    Lockdown's concept frames are letterboxed inside a square with the unused
+    margin left fully transparent -- `M01_CONCEPT_01` is really 289x512 in a
+    512x512 file. Converting straight to RGB turns that margin into black
+    bars, so the card would show a thin picture stranded in a black square.
+    Cropping to the alpha bounding box first gives the real picture.
+
+    A frame with no transparency is unchanged, which is what the 128x128
+    snapshots are, so this is safe to run over every PSX the tool shows.
+    """
+    if img.mode != "RGBA":
+        return img.convert("RGB")
+    box = img.split()[-1].getbbox()
+    if box and box != (0, 0, img.width, img.height):
+        img = img.crop(box)
+    return img.convert("RGB")
 
 
 def psx_image(iso, profile, name):

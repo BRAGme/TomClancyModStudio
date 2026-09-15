@@ -141,61 +141,157 @@ So per-map spawner tuning is done as a mechanism. What it tunes is every
 authored count in one mission, wave zones and story spawners alike, which is a
 per-map knob of real use even without per-zone attribution.
 
-## The equipment wheel in split screen (open)
+## The equipment wheel in split screen (SOLVED, pending play-test)
 
 Rainbow Six 3 opens an equipment wheel when you hold L1. In split screen it
 does not: L1 cycles one item per press instead, which costs time in a
-firefight. What is known so far, so this is not restarted from nothing:
+firefight.
 
-**The switch is named.** `COMMON.LIN`'s script package at `0x86a7f` exports
-`m_bUseWheel` as a **BoolProperty** (export #388 of that package), with
-`m_OpeningWheelSound` and `m_ClosingWheelSound` as ObjectProperties beside it.
-That is a class member declaration, not an authored value.
+### CORRECTION: `m_bUseWheel` is a DOOR, not the equipment wheel
 
-**Ruled out:**
+Everything previously written here rested on `m_bUseWheel` being the switch.
+**It is not.** Resolved from a live savestate, `m_bUseWheel` is declared on
+`R6IORotatingDoor`, and its siblings on that class are:
 
-* It is not a config variable. `m_bUseWheel` does not appear in
-  `R6GAMESETTINGS.INI` on any of the three Unreal-engine discs, nor in the
-  Xbox build's `xboxdynamic.umd`. Nothing named `*Wheel*` or `*Split*` is a
-  settable key on any of them, so there is no plain-text edit to make.
-* It has no Function export named for it. Searching that package's 2,061
-  `Function` exports for `wheel` returns nothing; the nearest relatives are
-  `GadgetOne`, `GadgetTwo`, `ResetGadgetGroup`, `EquipWeapon`, `EquipHands`.
-* The three byte patterns matching `EX_InstanceVariable + compact(388)` at
-  `0x1dcab7`, `0x209c1d` and `0x209c5f` are **probably not** bytecode reads.
-  Their neighbourhoods look like table data (runs of aligned u32s), none of
-  the expected names sit within 900 bytes of them, and a three-byte pattern in
-  a 5 MB package is around the rate chance alone predicts. Do not build on
-  these without a real disassembler.
+    m_bIsDoorClosed      m_bIsDoorLocked     m_DoorActorA / m_DoorActorB
+    m_LockPickSound      m_bIsOpeningClockWise
+    m_OpeningWheelSound  m_ClosingWheelSound
 
-**The promising lead is native, not script.** Split-screen behaviour on this
-disc runs through a flags word. At `0x00302D90` the routine that already
-carries one of our patches does:
+It is the handwheel on a valve door, and the two "wheel sounds" are the sound
+of turning it. That is why it is in no INI, why no `Function` export is named
+for it, and why the three `EX_InstanceVariable + compact(388)` candidates
+decoded as garbage -- they were never anything else. A name collision sent the
+whole first investigation down the wrong hole.
 
-    00302d90  lw   $v0, -0x6ffc($gp)     ; a mode-flags global
-    00302d94  or   $v0, $v1, $v0         ; ORed into
-    00302d98  sw   $v0, 0x4e4($s1)       ; the object's flags word
-    00302d9c  lw   $v0, 0x4e4($s1)
-    00302da0  beqz $v0, 0x302dac
-    00302da4  nop
-    00302da8  sw   zero, -0x7f34($gp)    ; g_bDrawFirstPersonWeapon = 0
-                                         ; (this is the patch we already ship)
+### The real class is `R6InteractionRoseDesVents`
 
-So `s1+0x4e4` is a split-screen mode-flags word assembled from gp-relative
-globals, and the first-person-weapon suppression we already undo is one
-consumer of it. The wheel suppression is very likely another, either as a
-second bit in the same word or a sibling store in the same routine.
+*Rose des vents* is French for compass rose; the studio was Ubisoft Montreal.
+Its members, read out of memory:
 
-**Two ways to finish it, either of which is bounded:**
+    DrawRoseDesVents     DisplayMenu         HideInteraction
+    ActionKeyPressed     ActionKeyReleased   m_bActionKeyDown
+    ItemClicked          ItemRightClicked    NoItemSelected
+    SetMenuChoice        MenuItemEnabled     m_iCurrentMnuChoice
+    m_bShowMenu          m_Player            m_RoseOpenSnd  m_RoseSelectSnd
+    states: MenuDisplayed, s_ItemSelected
 
-1. A UnrealScript (UE2) bytecode disassembler for these packages. It would
-   settle whether `m_bUseWheel` is read in script at all, and it would serve
-   the weapon-pickup question too, which is stuck on the same missing tool.
-2. Two savestates from a player -- one single-player, one split screen, both
-   in a mission -- and `research/code/p2s.py diff` between them. The flag is a
-   byte that differs between the two and does not differ between two states of
-   the same mode. That is one afternoon's difference narrowed to a handful of
-   addresses in one command, and it does not need any new tooling.
+The four directions are native input commands, registered in the name->id
+table at `0x00201e50`:
+
+    RoseDesVents_Up 208   RoseDesVents_Down 209
+    RoseDesVents_Left 210 RoseDesVents_Right 211
+
+The class-name string `UR6InteractionRoseDesVents` sits at `0x005e51f0` but no
+code builds that address, so the interaction is created from script, not
+natively.
+
+### Why the savestates could not finish it
+
+`R6InteractionRoseDesVents` has **zero instances in both** a split-screen and a
+single-player savestate: it is created while L1 is held and destroyed after.
+Both states were captured with the wheel shut, so neither shows it. The control
+that proves the counting works is `R6InteractionCircumstantialAction`, which is
+one per player -- 2 instances in the split state, 1 in the single.
+
+### The anchors that ARE now nailed down
+
+* **`$gp = 0x0065b6f0`**, solved against three constraints and confirmed:
+  `$gp - 0x7ff0 = 0x653700`, exactly where the overlay image ends and small
+  data begins, which is the standard MIPS `_gp` placement.
+* **split-screen mode** is the word at `0x006546f4` (`-0x6ffc($gp)`): 0 in all
+  four single-player states, 1 in the split-screen one.
+* **first-person weapon** is `0x006537bc` (`-0x7f34($gp)`): 1 in every
+  single-player state, 0 in split -- the suppression the toolkit already
+  undoes, now confirmed from RAM rather than inferred.
+* The wheel is **not** a `$gp` global. Every boolean in the whole `$gp`
+  window was compared across the five states; six flip the right way, and all
+  six are accounted for -- one is the first-person weapon, three at
+  `0x001ad75c` are lazy-init guards (`if (!flag) { value = N; flag = 1; }`
+  with N = 110/140/230), and two more at `0x003e832c`/`0x003e85d4` have the
+  same shape. None is a feature switch.
+* There is **no sibling suppression** in the split-screen routine at
+  `0x00302d90`. It contains exactly one store of zero to a `$gp` global, the
+  one already patched. That hypothesis is dead.
+
+### Name resolution is solved, and it did not need the disassembler
+
+A PS2 `UObject` in memory is laid out, relative to the object's start:
+
+    +0x00  vtable        +0x18  Outer (the declaring class, for a property)
+    +0x1c  ObjectFlags   +0x24  Class
+    +0x28  Name -- a direct `char*`, NOT an FName index
+
+`UProperty` adds a byte `Offset` and, for bools, a `BitMask` (both powers of
+two were observed: `m_bUseWheel` bit 0x8, `m_bFiringRunning` bit 0x100).
+
+So any name, its kind, and the class that declares it can be read straight out
+of a savestate. That is the missing half of the UnrealScript disassembler and
+of the weapon-pickup work, and it costs one savestate rather than a solved
+export-data mapping.
+
+### SOLVED: it is `R6InteractionInventoryMnu`, not the rose
+
+Three savestates the player captured -- single player with the wheel OPEN,
+split screen switching, and split screen with L1 HELD -- settled it.
+
+`R6InteractionRoseDesVents` has **zero instances even with the wheel on
+screen**, so it is not the class that draws it. Sweeping for classes that DO
+have live instances at that moment found `R6InteractionInventoryMnu`:
+
+===========================  ==========  ==============
+state                        instances   m_bCycleWeapon
+===========================  ==========  ==============
+single player, wheel OPEN    1           **0**
+split screen, switching      2           0
+split screen, L1 HELD        2           **1** (player 1)
+===========================  ==========  ==============
+
+The object exists for both players in split screen. Holding L1 sets
+`m_bCycleWeapon` and starts `m_fCycleTimer` at 0.3s, taking the cycle path.
+The class declares exactly two properties of its own: `m_bCycleWeapon`
+(offset 0xa8, bit 0x1) and `m_fCycleTimer` (offset 0xac).
+
+`ActionKeyPressed` reads `m_Player.Level.Game.m_bIsSplitScreen` and branches on
+it. Its bytecode was found on the disc -- via the string constants `eAction`
+and `fDelta` that its neighbour `KeyEvent` embeds, which survive into the file
+unchanged -- at plain offset `0x15ec08`, exactly once in each of `COMMON.LIN`,
+`COMMONOFF.LIN` and `COMMON_SS.LIN`::
+
+    07 3d 00                   EX_JumpIfNot +0x3d
+    84 19 01 0d 06 00 04       m_Player
+    2d 01 c9 02 18 25 00 f2    bOnlySpectator
+    19 19 19 01 0d 05 00 04    m_Player
+    01 8f 05 00 04             .Level
+    01 a6 06 00 04             .Game
+    2d 01 ed 01                .m_bIsSplitScreen
+    27 16 16 04 0b
+
+`EX_JumpIfNot` (0x07) -> `EX_Jump` (0x06) takes that branch unconditionally.
+Shipped as `tcps2/rsewheel.py`. It is **a no-op in single player** -- the
+condition is already false there, so the jump already happens -- which bounds
+the risk: only split screen can behave differently. Not yet play-tested.
+
+### The chunk that no edit could touch, and the fix
+
+The one-byte wheel edit was refused at first, and for a reason that had nothing
+to do with the edit: `COMMON.LIN`'s chunk at plain `0x15c000` occupies 5640
+compressed bytes on the disc, and `zlib -9` cannot get its **untouched**
+contents below 5658. The game's own packer beat zlib by 18 bytes, so that chunk
+could never be edited at all, whatever the change.
+
+**zopfli** packs the same bytes into 5488 -- 152 bytes of room -- as ordinary
+deflate any inflater reads. `lin._deflate_within` now falls back to it when
+zlib cannot fit, verifying the result by inflating it before trusting it, and
+degrading cleanly when zopfli is not installed. It also bought back loadout
+changes that were being given up: Ghost Recon 2's sniper mode went from 95
+applied changes to 110, and Rainbow Six 3's "anything goes" from 224 to 238.
+
+### A side finding worth keeping
+
+`R6MissionDescription` declares `m_SplitPrimaryGadget1P`,
+`m_SplitPrimaryGadget2P`, `m_SplitSecondaryGadget1P` and
+`m_SplitSecondaryGadget2P` -- split-screen-specific gadget assignments, which
+is also the first reachable thread on team-mate loadouts.
 
 ## Weapon pickup: what Ghost Recon 2 has that Rainbow Six 3 does not
 
@@ -640,3 +736,82 @@ Which is also what the equipment wheel needs. `m_bUseWheel` is name #4557 in
 the script package; once blocks can be attributed to packages, searching for
 `InstanceVariable(#4557)` finds every read and write of it, and the
 split-screen gate with them.
+
+## Enemy loadouts are a weighted roll, in plain text
+
+Rainbow Six 3 and Ghost Recon 2 keep every enemy archetype as a CRLF text
+block in `COMMON.LIN`, and it already describes a roll rather than a fixed kit:
+`NbOfWeapon=3` followed by three `NNN, Class` lines whose weights total 100.
+
+Measured, from the backup store:
+
+| disc | templates | table sizes | snipers present |
+|---|---|---|---|
+| Rainbow Six 3 | 118 | 1:106 2:4 3:5 4:3 | PSG1 x2, M82A1 x2 |
+| Ghost Recon 2 | 73 | 1:67 2:2 3:3 4:1 | PSG1 x2, M82A1 x2 |
+| Advanced Warfighter | 0 | -- | none, the table does not exist |
+
+That 12 of Rainbow Six 3's tables ship with more than one entry is the proof
+the roll really runs; it is not a dormant field. RS3 carries the identical 118
+in `COMMON.LIN`, `COMMONOFF.LIN` and `COMMON_SS.LIN`.
+
+**Correction to an earlier survey.** A subagent reported that "no `Sniper*`
+class appears in GR2's terrorist tables at all". That is wrong. GR2 has four
+single-entry sniper templates, at plain `0x223f04`, `0x224fa9`, `0x225b0f` and
+`0x226051`, each `100, R63rdWeapons.SniperPSG1` or `...SniperM82A1`.
+
+### Two constraints, not one
+
+Equal decompressed length is necessary but **not sufficient**. Every chunk must
+also still deflate back into the byte count its original occupied, and variety
+is precisely the removal of the redundancy that made the stock text pack well.
+A full-strength rewrite is the same length and still fails.
+
+The slack is wildly uneven, which is what makes a per-chunk answer right. On
+Ghost Recon 2 the templates straddle three chunks:
+
+| chunk | plain | compressed | ratio |
+|---|---|---|---|
+| 135 | 0x21c000 +16384 | 5289 | 0.323 -- mostly other data, no room |
+| 136 | 0x220000 +16384 | 1006 | 0.061 -- almost all template text |
+| 137 | 0x224000 +16384 | 2351 | 0.143 |
+
+Turning one dial down over the whole file to satisfy chunk 135 throws away
+everything chunks 136 and 137 would have taken. `rseloadout.fit_to_lin` instead
+gives up only the templates overlapping a failing chunk. Measured gain on RS3
+`varied`: 22 changes under a global back-off, **64** per chunk. GR2 `snipers`
+went from failing outright to 95 changes.
+
+### What is reachable
+
+A class name may only become one of the same byte length. Grouped that way the
+roster's 43 classes put a sniper in three groups:
+
+    len 23  AssaultAUG  Pistol92FS  PistolMk23  -> SniperPSG1
+    len 24  AssaultAK47 AssaultG36K AssaultG3A3 -> SniperM82A1
+    len 27  AssaultFAMASG2                      -> SniperAWCovert
+
+`AssaultAK47` alone is 21 of RS3's weapon lines. Applied: RS3 4 -> 12 sniper
+lines, GR2 4 -> 10.
+
+### The Rainbow side is still shut
+
+All 118 blocks are `Type=Terrorist`; there is no team-mate equivalent. The
+player and team-mate kits are `m_PlayerEquipment`, `m_LoiselleEquipment`,
+`m_PriceEquipment`, `m_WeberEquipment` -- name-table entries at `0x1f00d`
+whose *values* live in export data, still unindexed. The multiplayer defaults
+ARE reachable, as `EX_StringConst` operands in script at `0x1ca0ce`
+(`R6MultiPlayerGameInfo::PostLogin`) and `0x1ce002` (`R6NoRules::Login`), each
+a four-slot kit; they are recorded in `rseloadout.MP_DEFAULTS` but not wired to
+an option.
+
+## Correction: the COMMON.LIN header directory is NOT the missing index
+
+The head of `COMMON.LIN` does carry a directory -- 784 entries of
+`<len><"System\NAME.u">< NUL><u32 offset><u32 size>` from offset ~0xac. It is
+**not** the package index. Its offsets run to 0x22dee600 (583 MB), far past the
+5 MB file, and its sizes describe the *uncooked* build layout -- the same
+layout the stale header `importOffset` points into. Matching its sizes against
+the gaps between the 132 package signatures in the file hits 3 of the first 20,
+which is coincidence at that sample size. It names files; it does not locate
+cooked data. The export-data mapping remains unsolved.
