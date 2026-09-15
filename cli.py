@@ -1,13 +1,13 @@
 """The same tool without the window.
 
-    ModStudio.exe --cli scan   [folder]
-    ModStudio.exe --cli show   <game folder>
-    ModStudio.exe --cli plan   <game folder> [--set key=value ...] [--preset N]
-    ModStudio.exe --cli apply  <game folder> [--set key=value ...] [--preset N]
-    ModStudio.exe --cli revert <game folder>
+    ModStudio.exe --cli scan   [shelf folder]
+    ModStudio.exe --cli show   <game>
+    ModStudio.exe --cli plan   <game> [--set key=value ...] [--preset N]
+    ModStudio.exe --cli apply  <game> [--set key=value ...] [--preset N]
+    ModStudio.exe --cli revert <game>
 
-`scan` with no folder looks in the folder above each recently used game, which
-is usually the shelf everything was extracted into.
+A <game> is either a disc image or a folder one was extracted into; `scan`
+lists both, images first. `scan` with no argument looks in the current folder.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def cmd_scan(args):
     folder = args.folder or os.getcwd()
     found = scan_folder(folder)
     if not found:
-        print("No supported game folders under %s" % folder)
+        print("No supported games under %s" % folder)
         return 1
     for det in found:
         print("%-18s  %s  %s" % (det.profile.short, det.title_id, det.path))
@@ -79,7 +79,8 @@ def cmd_scan(args):
 def cmd_show(args):
     det = _require(args.folder)
     print("%s" % det.title)
-    print("  folder      %s" % det.path)
+    print("  %-11s %s" % ("disc image" if det.kind == "iso" else "folder",
+                          det.path))
     print("  executable  %s" % os.path.basename(det.xbe_path))
     print("  title id    %s  (%s)" % (det.title_id, det.title_name))
     print("  backup      %s" % (engine.backup_dir_for(det.path)
@@ -154,7 +155,7 @@ def main(argv=None):
                                  description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("scan", help="list supported game folders")
+    s = sub.add_parser("scan", help="list the supported games on a shelf")
     s.add_argument("folder", nargs="?")
     s.set_defaults(fn=cmd_scan)
 
