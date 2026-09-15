@@ -40,8 +40,8 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tcxbox import (dataedit, engine, globfile, rsb, transforms,  # noqa: E402
-                    umd, xbe, xiso, xpr)
+from tcxbox import (dataedit, engine, globfile, model, rsb,  # noqa: E402
+                    transforms, umd, xbe, xiso, xpr)
 from tcxbox.detect import identify, scan                          # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
 
@@ -267,6 +267,107 @@ def test_length_preserved(games):
             checked += 1
     must(checked > 0, "nothing was checked")
     return "%d edits, every one the same length as the file it changed" % checked
+
+
+def test_no_option_is_a_noop(games):
+    """Every option, set away from its default, must change a byte.
+
+    This exists because one did not. The Rainbow Six 3 "Aiming response" card
+    offered the PS2 disc's turn curve, and the PS2 disc ships the same eleven
+    control points the Xbox disc does -- so the option wrote the numbers that
+    were already there, reported success, verified clean, and did nothing. Six
+    tests passed over it: the values were well-formed, length-preserving,
+    idempotent and revertible. None of them asked whether anything moved.
+
+    So: run every choice of every option through the real edit pipeline and
+    require the resulting bytes to differ from the shipped bytes somewhere.
+    """
+    checked = inert = 0
+    for det in games:
+        profile = det.profile
+        if not profile.build_data:
+            continue
+        with Root(det.path) as root:
+            for setting in profile.settings:
+                if not setting.enabled:
+                    continue
+                tried = [v for v in _other_values(setting)]
+                if not tried:
+                    continue
+                moved = 0
+                for value in tried:
+                    # An option with a gate is only itself once the gate is
+                    # open, and gates chain: "only when in contact" needs the
+                    # sidearm draw, which needs teammate magazines to be
+                    # finite. Judging any of them with a gate shut reports it
+                    # broken when it is not, so open the whole chain.
+                    values = profile.normalise(
+                        _with_gates_open(profile, {setting.key: value}))
+                    edits = profile.build_data(values)
+                    if edits and _edits_change_anything(root, edits):
+                        moved += 1
+                if not moved:
+                    raise AssertionError(
+                        "%s: %r rewrites nothing at any of its values (%s) -- "
+                        "everything it writes is already on the disc"
+                        % (profile.short, setting.key,
+                           ", ".join(repr(v) for v in tried)))
+                checked += 1
+                inert += len(tried) - moved
+    must(checked > 0, "nothing was checked")
+    return ("%d option(s) each move at least one byte; %d value(s) restate "
+            "what the disc already says" % (checked, inert))
+
+
+
+def _with_gates_open(profile, asked):
+    """`asked`, plus a value for every setting it transitively depends on."""
+    by_key = {st.key: st for st in profile.settings}
+    pending = list(asked)
+    while pending:
+        st = by_key.get(pending.pop())
+        if st is None:
+            continue
+        for gate, allowed in st.requires.items():
+            if gate in asked or not allowed:
+                continue
+            asked[gate] = allowed[0]
+            pending.append(gate)
+    return asked
+
+def _other_values(setting):
+    """Up to two values for a setting that are not its default."""
+    if setting.kind == model.BOOL:
+        return [not setting.default]
+    if setting.kind == model.CHOICE:
+        return [c.value for c in setting.choices
+                if c.value != setting.default]
+    if setting.kind == model.INT:
+        out = [v for v in (setting.maximum, setting.minimum)
+               if v != setting.default]
+        return out[:1]
+    return []
+
+
+def _edits_change_anything(root, edits):
+    """True if running these edits over the game's own files moves a byte.
+
+    The op functions are the same ones `apply_data` dispatches through, so a
+    pass here is a statement about the real pipeline and not about a model of
+    it. Files are read and thrown away; nothing is written.
+    """
+    for key, edit in dataedit.plan_data(root, edits):
+        op = dataedit.OPS.get(edit.op)
+        if op is None:
+            continue
+        try:
+            plain = root.read(key)
+            out, _n = op(plain, edit.params)
+        except Exception:                        # noqa: BLE001
+            continue
+        if out != plain:
+            return True
+    return False
 
 
 def test_clamps(_games):
@@ -623,6 +724,8 @@ def main(argv):
           lambda: test_script_edit(games))
     check("template skills clamp", lambda: test_clamps(games))
     check("ini value shapes survive scaling", lambda: test_ini_shapes(games))
+    check("no option quietly writes what is already there",
+          lambda: test_no_option_is_a_noop(games))
 
     print("census")
     check("weapons split by side where the data allows",

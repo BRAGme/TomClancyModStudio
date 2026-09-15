@@ -81,8 +81,17 @@ def _render_cards(prefix):
                      "the whole simulation, not an animation rate.",
                 caution="Well away from 100% will desynchronise anything "
                         "networked."),
+        # Shipped disabled rather than merely cautioned. ConsoleKey already
+        # holds 192, so switching this on rewrote the value that was there and
+        # reported success -- an option that cannot fail and cannot do
+        # anything. It stays as a card because what it documents is true and
+        # useful; it just no longer pretends to be a lever.
         Setting(prefix + "console", "Enable the developer console", CHOICE,
-                "stock", RULES, confidence="experimental",
+                "stock", RULES, enabled=False,
+                disabled_reason="Nothing to write: ConsoleKey is already 192. "
+                                "Whether this build has a keyboard path to "
+                                "the console is the open question, and this "
+                                "card cannot change it either way.",
                 choices=[Choice("stock", "As shipped", ""),
                          Choice("on", "Bind it to the tilde key", "")],
                 help="[Engine.Console] ConsoleKey ships at 192, which is the "
@@ -91,9 +100,7 @@ def _render_cards(prefix):
                      "reach it. The gameplay table's own comment says you open "
                      "the console and type REFRESHGAMESETTINGS, so the "
                      "developers plainly could.",
-                caution="Writes the key the file already holds; it is here "
-                        "because the option is worth documenting, not because "
-                        "it has been seen to work."),
+                ),
     ]
     for key, label, help_text in D3D_TOGGLES:
         out.append(Setting(
@@ -130,13 +137,15 @@ def _render_edits(prefix, v):
                      "client settings: " + ", ".join(sorted(values)))]
 
 
-def _settings(prefix):
-    return r6engine.cards(prefix, has_templates=True) + _render_cards(prefix)
+def _settings(prefix, aim):
+    return (r6engine.cards(prefix, has_templates=True, aim=aim)
+            + _render_cards(prefix))
 
 
-def _build(prefix):
+def _build(prefix, aim):
     def build(v):
-        return r6engine.edits(prefix, v, has_templates=True) + _render_edits(prefix, v)
+        return (r6engine.edits(prefix, v, has_templates=True, aim=aim)
+                + _render_edits(prefix, v))
     return build
 
 
@@ -178,8 +187,8 @@ RAINBOW_SIX_3 = GameProfile(
     markers=[Marker("System", "the cooked packages and the bundle"),
              Marker("System/xboxdynamic.umd", "the gameplay table and the "
                                               "terrorist templates")],
-    settings=_settings("r63_"),
-    build_data=_build("r63_"),
+    settings=_settings("r63_", r6engine.R63_AIM),
+    build_data=_build("r63_", r6engine.R63_AIM),
     notes=RETAIL_NOTES,
     ui_art={"backdrop": "Splash.tga", "emblem": "Splash.tga"},
 )
@@ -190,8 +199,8 @@ BLACK_ARROW = GameProfile(
     short="Black Arrow",
     title_id="55530037",
     markers=[Marker("System", "the cooked packages and the bundle")],
-    settings=_settings("ba_"),
-    build_data=_build("ba_"),
+    settings=_settings("ba_", r6engine.BA_AIM),
+    build_data=_build("ba_", r6engine.BA_AIM),
     notes=BLACK_ARROW_NOTES,
     # Black Arrow's wordmark is printed on a lit amber panel rather than on
     # black, so its ramp sits much higher than Rainbow Six 3's.

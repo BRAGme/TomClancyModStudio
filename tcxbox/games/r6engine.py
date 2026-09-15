@@ -68,77 +68,178 @@ CHEAT_KEYS = (("m_bCheatChavezNoDie", "Chavez"),
               ("m_bCheatLoiselleNoDie", "Loiselle"),
               ("m_bCheatWeberNoDie", "Weber"))
 
-#: The PS2 build's aim table, read out of its own disc rather than invented:
-#: `R6GAMESETTINGS.INI` inside `vokes0.img` at offset 0x20C90 (17,267 bytes),
-#: section `[Engine.R6GameplaySettings]`. The Xbox copy of the same file lives
-#: inside `System\xboxdynamic.umd` at 0x126140 (16,690 bytes) and is the only
-#: place either disc defines these keys -- they are UE2 `config` properties
-#: declared in `Engine.u`, not constants in `default.xbe`.
-#:
-#: 54 aim-related keys were diffed across the two discs: 27 are already
-#: identical (all six `*Sensitivity*` keys among them, so the in-game slider is
-#: NOT the difference), 11 are PS2-only and cannot be ported, and these 16 are
-#: the ones that both exist on Xbox and differ.
-#:
-#: The 11 control points are the stick-deflection-to-turn-rate curve. Xbox's is
-#: quadratic -- exactly 2.7*n^2 for n=1..8 -- so half deflection asks for
-#: 67.5 deg/s where PS2 asks for 30. That is the acceleration people feel. The
-#: dead zone compounds it: Xbox spends 40% of stick travel doing nothing, so
-#: every correction begins in the steep part of the curve.
-PS2_AIM = {
-    "m_afRotationControlPoints[0]": 1,
-    "m_afRotationControlPoints[1]": 6,
-    "m_afRotationControlPoints[2]": 12,
-    "m_afRotationControlPoints[3]": 18,
-    "m_afRotationControlPoints[4]": 24,
-    "m_afRotationControlPoints[5]": 30,
-    "m_afRotationControlPoints[6]": 50,
-    "m_afRotationControlPoints[7]": 80,
-    "m_afRotationControlPoints[8]": 120,
-    "m_afRotationControlPoints[9]": 140,
-    "m_afRotationControlPoints[10]": 270,
-    "m_fRotationControlPoint": 90,
-    "m_fRotationZoomingMultiplier": 0.7,
-    "m_fSmoothingTime": "0.20",
-    "m_fAimDamping": 0.8,
-    "m_fDeadZone": 0.1,
-}
+class Aim:
+    """One game's stick-to-turn-rate table, and what can be done about it.
 
-#: `m_fDeadZone` is split out of `PS2_AIM` by the "keep" choice. PS2 sticks were
-#: new when that 0.1 was chosen; a worn Xbox controller can drift inside it.
-AIM_DEADZONE = "m_fDeadZone"
+    Eleven control points map how far the stick is pushed, in tenths, to how
+    fast the view turns in degrees per second. `ENGINE.U` declares them as UE2
+    `config` properties and `R6GAMESETTINGS.INI` carries the values, so editing
+    the ini is the whole mechanism.
 
-#: What the card shows. Both columns are read off the discs -- the Xbox side out
-#: of `R6GAMESETTINGS.INI` inside `System\\xboxdynamic.umd`, the PS2 side out of
-#: the same file inside `vokes0.img` -- because the whole point of this option
-#: is a comparison, and a comparison stated as prose is a comparison nobody can
-#: check. The stick rows are labelled by how far the stick is pushed rather than
-#: by array index: `m_afRotationControlPoints[5]` means nothing, "half" means
-#: something.
-AIM_TABLE = (
-    ("stick",        "Xbox",  "PS2",  ""),
-    ("at rest",      "0.0",   "1",    "deg/s"),
-    ("1/10",         "2.7",   "6",    ""),
-    ("2/10",         "10.8",  "12",   ""),
-    ("3/10",         "24.3",  "18",   ""),
-    ("4/10",         "43.2",  "24",   ""),
-    ("half",         "67.5",  "30",   "<- the one you feel"),
-    ("6/10",         "97.2",  "50",   ""),
-    ("7/10",         "132.3", "80",   ""),
-    ("8/10",         "172.8", "120",  ""),
-    ("9/10",         "230.7", "140",  ""),
-    ("full",         "320.0", "270",  ""),
-    ("", "", "", ""),
-    ("dead zone",    "0.40",  "0.10", "share of travel that does nothing"),
-    ("zoomed turn",  "1.0",   "0.7",  "multiplier while scoped"),
-    ("smoothing",    "0.15",  "0.20", "seconds"),
-    ("aim damping",  "0.65",  "0.8",  ""),
-    ("max rate",     "160",   "90",   "deg/s the curve is scaled against"),
-    ("", "", "", ""),
-    ("sensitivity X", "0.70", "0.70", "identical -- not what differs"),
-    ("sensitivity Y", "0.60", "0.60", "identical -- not what differs"),
+    This is a per-game record rather than a module constant because the answer
+    is per-game, and assuming otherwise shipped a broken option once: the card
+    was written from GRAW's numbers and rendered for Rainbow Six 3 too, where
+    it offered to install values the disc already had.
+
+      * `stock`    -- what this game's Xbox disc ships.
+      * `alts`     -- {name: curve} this tool offers. Authored, not derived: a
+                      formula that suits one game's range flatters the other.
+      * `ps2`      -- {ini key: value} off the PS2 release, or None when the
+                      two discs agree or there is no PS2 release.
+      * `table`    -- rows for the card, both columns measured.
+      * `same`     -- rows for the "nothing to change" card, when `ps2` is None
+                      because the discs already agree.
+    """
+
+    def __init__(self, stock, alts, ps2=None, table=(), same=()):
+        self.stock = stock
+        self.alts = alts
+        self.ps2 = ps2
+        self.table = table
+        self.same = same
+
+
+def _curve_table(stock, alts):
+    """Header plus eleven rows, one per tenth of stick travel."""
+    order = ("smooth", "precision", "linear")
+    head = ("stick", "stock", "smooth", "precise", "linear", "")
+    rows = [head]
+    for n, label in enumerate(("at rest", "1/10", "2/10", "3/10", "4/10",
+                               "half", "6/10", "7/10", "8/10", "9/10",
+                               "full")):
+        rows.append((label, str(stock[n]))
+                    + tuple(str(alts[k][n]) for k in order)
+                    + ("deg/s" if n == 0 else
+                       ("<- the one you feel" if n == 5 else ""),))
+    return tuple(rows)
+
+
+# -- Rainbow Six 3 and Black Arrow ------------------------------------------
+#: Both ship the same eleven points, and so does the Rainbow Six 3 PS2 disc:
+#: its own `R6GAMESETTINGS.INI` inside `vokes0.img` (17,267 bytes) carries
+#: these numbers, `m_fDeadZone=0.1`, `m_fSmoothingTime=0.20`,
+#: `m_fAimDamping=0.8`, `m_fRotationZoomingMultiplier=0.7` and 0.70/0.60
+#: sensitivity -- all identical to the Xbox copy inside `xboxdynamic.umd`
+#: (16,690 bytes). Of the 250 keys the two share, 15 differ and none is an aim
+#: key. There is nothing to port.
+R63_STOCK = (1, 6, 12, 18, 24, 30, 50, 80, 120, 140, 270)
+
+#: Same top speed, no cliff. The shipped ratios run 6.0, 2.0, 1.5, 1.33, 1.25,
+#: 1.67, 1.6, 1.5, 1.17, 1.93 -- the curve eases off through the middle and
+#: then nearly doubles in the last tenth. This is a steady 1.53x per step.
+R63_SMOOTH = (1, 6, 9, 14, 21, 33, 50, 76, 116, 177, 270)
+
+#: Half the stick spent below 30 deg/s, top speed untouched. For overshooting.
+R63_PRECISION = (1, 4, 8, 13, 20, 30, 46, 74, 120, 185, 270)
+
+#: Turn rate exactly proportional to deflection -- the literal reading of
+#: "1:1". Not obviously what anyone wants: a tenth of a push turns at 28 deg/s
+#: instead of 6, so small corrections get harder. Offered because it is the
+#: thing the words describe.
+R63_LINEAR = (1, 28, 55, 82, 109, 135, 162, 189, 216, 243, 270)
+
+R63_ALTS = {"smooth": R63_SMOOTH, "precision": R63_PRECISION,
+            "linear": R63_LINEAR}
+
+R63_SAME = (
+    ("", "Xbox", "PS2", ""),
+    ("turn curve", "same", "same", "all eleven points"),
+    ("dead zone", "0.1", "0.1", ""),
+    ("smoothing", "0.20", "0.20", "seconds"),
+    ("aim damping", "0.8", "0.8", "when auto-aim has a target"),
+    ("zoomed turn", "0.7", "0.7", "multiplier while scoped"),
+    ("sensitivity", "0.70 / 0.60", "0.70 / 0.60", "X / Y"),
+    ("aim lock-on", "absent", "present", "PS2 only -- see below"),
 )
 
+R63_AIM = Aim(R63_STOCK, R63_ALTS, ps2=None,
+              table=_curve_table(R63_STOCK, R63_ALTS), same=R63_SAME)
+
+#: Black Arrow never had a PS2 release, so it gets the curve options and no
+#: comparison at all.
+BA_AIM = Aim(R63_STOCK, R63_ALTS, ps2=None,
+             table=_curve_table(R63_STOCK, R63_ALTS))
+
+# -- Ghost Recon: Advanced Warfighter ---------------------------------------
+#: GRAW is the game where the platforms really do diverge, and it is where the
+#: numbers below came from originally. Xbox, out of `/System/R6GAMESETTINGS.INI`
+#: on the disc: the eleven points are exactly 2.7 * n^2, so the curve
+#: accelerates the whole way and half a push already asks for 67.5 deg/s. PS2,
+#: out of the same file inside `vokes0.img` (18,486 bytes) on the GRAW PS2
+#: disc: 35 deg/s at half, and close to straight. 49 of the 254 keys the two
+#: discs share differ, and all 18 aim keys are among them.
+GRAW_STOCK = ("0.0", "2.7", "10.8", "24.3", "43.2", "67.5", "97.2", "132.3",
+              "172.8", "230.7", "320.0")
+
+#: Even ramp to the same top speed -- takes the explosion out of the last third
+#: without giving up the ability to spin round.
+GRAW_SMOOTH = (0, 3, 7, 13, 23, 40, 64, 100, 155, 225, 320)
+
+#: Deliberately slow through the first half. GRAW's stock curve is steep from
+#: the very first tenth, so this is the larger change of the two.
+GRAW_PRECISION = (0, 1, 3, 6, 11, 20, 36, 66, 120, 200, 320)
+
+GRAW_LINEAR = (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320)
+
+GRAW_ALTS = {"smooth": GRAW_SMOOTH, "precision": GRAW_PRECISION,
+             "linear": GRAW_LINEAR}
+
+#: Every aim key off the GRAW PS2 disc, including the two that are not part of
+#: the curve: smoothing is near zero there (0.01 against 0.15), and the zoom
+#: multiplier is BELOW one where Xbox's is 2.5 -- the Xbox build turns two and
+#: a half times FASTER while scoped, which is the single oddest number on
+#: either disc and most of why the scope is hard to hold.
+GRAW_PS2_AIM = {
+    "m_afRotationControlPoints[0]": 1,
+    "m_afRotationControlPoints[1]": 4,
+    "m_afRotationControlPoints[2]": 8,
+    "m_afRotationControlPoints[3]": 15,
+    "m_afRotationControlPoints[4]": 24,
+    "m_afRotationControlPoints[5]": 35,
+    "m_afRotationControlPoints[6]": 48,
+    "m_afRotationControlPoints[7]": 60,
+    "m_afRotationControlPoints[8]": 80,
+    "m_afRotationControlPoints[9]": 110,
+    "m_afRotationControlPoints[10]": 180,
+    "m_fRotationControlPoint": 90,
+    "m_fRotationZoomingMultiplier": 0.9,
+    "m_fSmoothingTime": "0.01",
+    "m_fAimDamping": 0.8,
+    "m_fDeadZone": 0.1,
+    "m_fXSensitivityMultiplier": "0.60",
+    "m_fYSensitivityMultiplier": "0.52",
+}
+
+#: Split out of `GRAW_PS2_AIM` by the "keep the dead zone" choice. A tenth was
+#: chosen when PS2 sticks were new; a worn Xbox stick can drift inside it, and
+#: 0.35 is a long way to come down in one step.
+AIM_DEADZONE = "m_fDeadZone"
+
+GRAW_PS2_TABLE = (
+    ("stick", "Xbox", "PS2", ""),
+    ("at rest", "0.0", "1", "deg/s"),
+    ("1/10", "2.7", "4", ""),
+    ("2/10", "10.8", "8", ""),
+    ("3/10", "24.3", "15", ""),
+    ("4/10", "43.2", "24", ""),
+    ("half", "67.5", "35", "<- the one you feel"),
+    ("6/10", "97.2", "48", ""),
+    ("7/10", "132.3", "60", ""),
+    ("8/10", "172.8", "80", ""),
+    ("9/10", "230.7", "110", ""),
+    ("full", "320.0", "180", ""),
+    ("", "", "", ""),
+    ("dead zone", "0.35", "0.10", "share of travel that does nothing"),
+    ("zoomed turn", "2.5", "0.9", "multiplier while scoped"),
+    ("smoothing", "0.15", "0.01", "seconds"),
+    ("aim damping", "0.65", "0.80", ""),
+    ("max rate", "160", "90", "deg/s the vertical is scaled against"),
+    ("sensitivity X", "0.70", "0.60", ""),
+    ("sensitivity Y", "0.10", "0.52", ""),
+)
+
+GRAW_AIM = Aim(GRAW_STOCK, GRAW_ALTS, ps2=GRAW_PS2_AIM,
+               table=_curve_table(GRAW_STOCK, GRAW_ALTS))
 
 
 def _scale_card(key, label, group, help_text, caution="", down=True):
@@ -228,7 +329,101 @@ def _sidearm_cards(prefix):
     ]
 
 
-def cards(prefix, has_templates):
+def _aim_cards(prefix, aim):
+    """The turning cards for one game: a curve, a dead zone, and either the
+    PS2 disc's table or a note saying there is nothing to bring across."""
+    out = [
+        Setting(prefix + "aim_curve", "Turning curve", CHOICE, "stock", FEEL,
+                choices=[
+                    Choice("stock", "As shipped", "The disc's own eleven."),
+                    Choice("smooth", "Smooth",
+                           "Same top speed, evenly ramped."),
+                    Choice("precision", "Precision",
+                           "Slow through the first half of the stick, same "
+                           "top speed. For overshooting."),
+                    Choice("linear", "Linear (1:1)",
+                           "Turn rate exactly proportional to how far the "
+                           "stick is pushed."),
+                ],
+                confidence="applied",
+                help="The eleven control points that map stick deflection to "
+                     "turn rate in degrees per second. They live in "
+                     "R6GAMESETTINGS.INI and are declared in Engine.u, so "
+                     "this is the real dial and not the in-game slider.\n\n"
+                     "Smooth evens out the ramp. Precision keeps the top "
+                     "speed but makes the first half of the stick slower, "
+                     "which is the half you use to settle on a target.",
+                table=aim.table),
+        Setting(prefix + "deadzone", "Stick dead zone", CHOICE, "stock", FEEL,
+                choices=[
+                    Choice("stock", "As shipped", ""),
+                    Choice("0.05", "Tighter", "0.05 -- reacts sooner."),
+                    Choice("0.10", "Tight", "0.10."),
+                    Choice("0.20", "Wider", "0.20."),
+                    Choice("0.35", "Widest", "0.35 -- for a drifting stick."),
+                ],
+                confidence="applied",
+                help="m_fDeadZone: the share of stick travel that does "
+                     "nothing at all. Tightening it makes the smallest "
+                     "corrections register, at the cost of letting a worn "
+                     "stick drift on its own.",
+                caution="If the view creeps while you are not touching the "
+                        "stick, this went the wrong way -- go wider."),
+    ]
+    if aim.ps2:
+        out.insert(1, Setting(
+            prefix + "aim_ps2", "PlayStation 2 aiming", CHOICE, "stock", FEEL,
+            choices=[
+                Choice("stock", "As shipped", "The Xbox numbers."),
+                Choice("ps2", "PlayStation 2",
+                       "The PS2 disc's own values, dead zone included."),
+                Choice("ps2_keep_deadzone", "PlayStation 2, stock dead zone",
+                       "The PS2 values, but this disc's dead zone left "
+                       "alone."),
+            ],
+            confidence="applied",
+            help="Replaces the whole aim table with the one the PS2 release "
+                 "ships. Every number below is read off the two discs, not "
+                 "estimated.\n\n"
+                 "The curve is the headline, but the two rows under it matter "
+                 "as much: smoothing is near zero on PS2, and the scoped "
+                 "multiplier is below one where this disc's is 2.5 -- the "
+                 "Xbox build turns two and a half times FASTER while you are "
+                 "looking down a scope.",
+            table=aim.table if not aim.ps2 else GRAW_PS2_TABLE,
+            caution="The PS2 dead zone is 0.10 against this disc's 0.35. On a "
+                    "worn controller that can let the stick drift on its own "
+                    "-- if it does, use the stock dead zone choice."))
+    if aim.same:
+        out.append(Setting(
+            prefix + "aim_vs_ps2", "Xbox aiming against PS2", CHOICE, "stock",
+            FEEL, choices=[Choice("stock", "Nothing to change here", "")],
+            enabled=False,
+            disabled_reason="Nothing to apply. The two discs already ship "
+                            "identical aim tables, and the keys that make the "
+                            "difference do not exist in this build.",
+            help="If you came here looking for the PS2 aiming: it is already "
+                 "here. Both discs ship the same eleven control points and "
+                 "the same dead zone, smoothing, damping, zoom multiplier and "
+                 "sensitivity. Of the 250 keys the two copies of "
+                 "R6GAMESETTINGS.INI share, 15 differ, and none of them is an "
+                 "aim key.\n\n"
+                 "What the PS2 disc has and this one does not is a magnetic "
+                 "lock-on: fMaxAutoAimDistance, SpeedBaseX and SpeedBaseY, "
+                 "fAngleInNormal and fAngleInZoom, and four fLockSpeedLimit "
+                 "keys, which drag the reticle toward a target inside a cone. "
+                 "Those names appear nowhere in this disc's Engine.u or "
+                 "default.xbe, so the Xbox build cannot be told to do it and "
+                 "writing the keys into the ini would be ignored. That, not "
+                 "sensitivity, is why the PS2 version is easier to put a "
+                 "crosshair on someone with.\n\n"
+                 "The nearest thing available here is the Precision curve, "
+                 "plus a tighter dead zone.",
+            table=aim.same))
+    return out
+
+
+def cards(prefix, has_templates, aim, has_script=True):
     out = [
         _scale_card(prefix + "terro_skill", "Terrorist skill", ENEMIES,
                     "One multiplier per difficulty -- 0.40 on Recruit, 0.70 on "
@@ -281,7 +476,7 @@ def cards(prefix, has_templates):
                         "teammate weapon's clip count at 1 for the whole "
                         "mission, so the branch that draws a sidearm can never "
                         "be reached."),
-    ] + _sidearm_cards(prefix) + [
+    ] + (_sidearm_cards(prefix) if has_script else []) + [
         Setting(prefix + "falling_damage", "Falling damage", CHOICE, "stock",
                 SQUAD, confidence="applied",
                 choices=[Choice("stock", "As shipped", ""),
@@ -300,34 +495,7 @@ def cards(prefix, has_templates):
                     "The X and Y multipliers the gamepad runs through, which "
                     "ship at 0.70 and 0.60. This is the same number the "
                     "in-game menu moves, set outside it."),
-        Setting(prefix + "aim_ps2", "Aiming response", CHOICE, "stock", FEEL,
-                choices=[
-                    Choice("stock", "As shipped",
-                           "The Xbox curve: 2.7*n^2, and 40% of the stick "
-                           "dead."),
-                    Choice("ps2", "PlayStation 2",
-                           "The PS2 disc's own numbers, all 16 of them, dead "
-                           "zone included."),
-                    Choice("ps2_keep_deadzone", "PlayStation 2, stock dead zone",
-                           "The PS2 curve, but the Xbox 0.40 dead zone left "
-                           "alone."),
-                ],
-                confidence="applied",
-                help="Replaces the turn-rate curve with the one the PS2 disc "
-                     "ships. The eleven control points map how far you have "
-                     "pushed the stick to how fast the view turns, in degrees "
-                     "per second; Xbox's are exactly 2.7 x n squared, so they "
-                     "climb away from you, while the PS2's are close to a "
-                     "straight line until the very top. Half a push asks for "
-                     "67.5 deg/s on Xbox and 30 on PS2. Every number below is "
-                     "read off the two discs, not estimated.\n\n"
-                     "Look sensitivity is NOT the difference and is not "
-                     "touched: both discs ship 0.70 and 0.60, so the dial "
-                     "above this one cannot get you there.",
-                table=AIM_TABLE,
-                caution="The PS2 dead zone is 0.10. On a worn controller that "
-                        "can let the stick drift on its own -- if it does, use "
-                        "the stock dead zone choice."),
+    ] + _aim_cards(prefix, aim) + [
         _scale_card(prefix + "reload", "Reload speed", FEEL,
                     "m_fReloadSpeed, which ships at 1.0. Bigger is faster."),
         _scale_card(prefix + "ragdoll", "Ragdoll force", FEEL,
@@ -377,7 +545,7 @@ def cards(prefix, has_templates):
     return out
 
 
-def edits(prefix, v, has_templates):
+def edits(prefix, v, has_templates, aim, has_script=True):
     out = []
     factors = {}
     setters = {}
@@ -437,6 +605,8 @@ def edits(prefix, v, has_templates):
     # the game that could not do anything.
     sidearm = int(v.get(prefix + "sidearm", 0)) if ammo_switch == "false" else 0
     say = int(v.get(prefix + "say_dry", 0))
+    if not has_script:
+        sidearm = say = 0
     if sidearm or say:
         contact = bool(v.get(prefix + "sidearm_contact", True))
         notes = []
@@ -451,12 +621,25 @@ def edits(prefix, v, has_templates):
                              "say_chance": say},
                             "; ".join(notes)))
 
-    aim = v.get(prefix + "aim_ps2", "stock")
-    if aim != "stock":
-        for key, value in PS2_AIM.items():
-            if key == AIM_DEADZONE and aim == "ps2_keep_deadzone":
+    # Order matters: the PS2 table rewrites the same eleven points the curve
+    # choice does, so whichever the user set LAST would otherwise depend on
+    # dictionary order rather than on intent. The PS2 option is the broader of
+    # the two, so it goes first and a curve choice refines it.
+    ps2 = v.get(prefix + "aim_ps2", "stock")
+    if aim.ps2 and ps2 != "stock":
+        for key, value in aim.ps2.items():
+            if key == AIM_DEADZONE and ps2 == "ps2_keep_deadzone":
                 continue
             setters[key] = value
+
+    curve = v.get(prefix + "aim_curve", "stock")
+    if curve in aim.alts:
+        for n, rate in enumerate(aim.alts[curve]):
+            setters["m_afRotationControlPoints[%d]" % n] = rate
+
+    dead = v.get(prefix + "deadzone", "stock")
+    if dead != "stock":
+        setters[AIM_DEADZONE] = dead
 
     for key, who in CHEAT_KEYS:
         choice = v.get(prefix + "cheat_" + who.lower(), "stock")
