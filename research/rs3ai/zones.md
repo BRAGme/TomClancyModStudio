@@ -522,3 +522,65 @@ is:
 Step 1 is a search with a strong constraint and a self-checking answer: get
 the base right and 7,364 objects land correctly at once, which is a much
 better position than fitting a bytecode layout blind.
+
+## Where the export data went -- solved, and a correction
+
+**Correction.** The previous entry said "the per-export offsets are NOT
+garbage" and framed that as contradicting this file's note about relaid
+offsets. That was half right and the framing was wrong. The offsets are
+perfectly self-consistent -- and they describe a file that is not this one.
+
+The package header reads out cleanly and settles it:
+
+    +04  version        0x0016007b   = 123 / 22, as this file already recorded
+    +0c  nameCount      6500
+    +10  nameOffset     0x44
+    +14  exportCount    7364
+    +18  exportOffset   0x25b5da
+    +1c  importCount    1582
+    +20  importOffset   0x257e56
+
+`importOffset` is **exactly** where the export data span ends -- the highest
+`offset + size` across all 7,364 exports is `0x257e56` to the byte. So the
+original package was laid out
+
+    [header][names 0x44 .. 0x210a8][DATA 0x210a8 .. 0x257e56][imports][exports]
+
+and every number in the table agrees with every other. It is a complete,
+correct description of the **uncooked** package.
+
+**What the cook did** was lift the data region out and close the gap. That is
+why walking the tables in the `.LIN` ends exactly on the next package
+signature: names, imports and exports are now adjacent, with the 2,321,838
+bytes that used to sit between them gone. And it is why no gap in the file is
+big enough to hold that region contiguously -- the data was not moved as a
+block, it was redistributed.
+
+It is still in the file. The gaps between packages hold 4,155,953 bytes, and
+sampling them finds exactly what object data looks like: property lists walk
+cleanly at 206 of 2,062 probe positions, and the readable strings are
+`BeginState`, `EndState`, `BeginHere`, `SpawnAI`, `SpawnAIandInitGoInGame`,
+`PlayDeathAnimEnd`, `DisableVoiceChat`.
+
+**So the index is what is missing, not the data.** Nothing in the package
+header or tables points at where an object ended up. That is the single reason
+this project has always had to find things by byte search rather than by
+seeking -- `actor_properties`, `find_int_props` and the zone-count locator are
+all consequences of this, and now there is a reason on record for why they had
+to be written that way.
+
+### The next step is concrete
+
+`BeginState`, `EndState` and `BeginHere` are **label table entries**, and a
+label table sits at the end of a state's bytecode with a known shape: pairs of
+(name index, u32 offset) terminated by the `None` name. Those are findable by
+content without knowing a single opcode, and each one found is a pointer to
+the *end* of a real bytecode block.
+
+That inverts the chicken-and-egg problem. Instead of needing the opcode table
+to find bytecode, find the label tables first, then walk backwards from each
+one to recover the block it terminates -- and derive the opcode table from
+blocks whose boundaries are already known.
+
+`research/code/lingaps.py` maps the gaps and verifies all 132 magic hits are
+real packages, which is the groundwork for that search.
