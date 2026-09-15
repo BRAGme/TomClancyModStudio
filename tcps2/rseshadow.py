@@ -131,7 +131,22 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_shadows", "Draw projected shadows in split screen",
-        BOOL, False, group, confidence="untested", touches="words",
+        BOOL, False, group, confidence="broken", touches="words",
+        enabled=False,
+        disabled_reason=(
+            "Play-tested 2026-09-15 and it does nothing. Watched in split "
+            "screen on Crespo Foundation, the Parking Garage (at the "
+            "projection screen, which is the clearest shadow in the game) and "
+            "Alcatraz -- three of the maps this card itself nominates -- with "
+            "no projected shadow on any of them. The disc was otherwise clean: "
+            "no script edits at all, and the word verified present at "
+            "0x00446ea8 reading 34420001 against a stock 30420001.\n\n"
+            "So the branch is not the only gate, which is exactly what the "
+            "caution allowed for: the pass was located from the renderer's own "
+            "profiler timers and the branch itself is certain, but what CLEARS "
+            "the flag in split screen was never pinned down. Forcing this one "
+            "test true is not enough. Finding the real writer of that flag is "
+            "the next step, not another guess at a branch."),
         help="Nine missions and all three training maps place shadow-casting "
              "light projectors, and none of them draws in split screen. The "
              "shadows are not missing from the maps: the split-screen build of "
@@ -141,7 +156,7 @@ def card(prefix, group):
              "of the shadow pass returns before drawing anything. This forces "
              "that test true. Best tested on Parade, Garage or Alcatraz -- see "
              "the notes for the full map list.",
-        caution="EXPERIMENT. The pass was located from the renderer's own "
+        caution="Was: EXPERIMENT. The pass was located from the renderer's own "
                 "profiler timers and the branch is certain, but what clears "
                 "the flag in split screen is not yet pinned down, so this may "
                 "do nothing. It is one word on the disc, not a cheat cave, so "

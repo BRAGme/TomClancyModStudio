@@ -3006,15 +3006,32 @@ def run_split_shadows(args):
     check("the option reaches the profile", st is not None)
     check("and it goes onto the disc, not into the cheat file",
           st.touches == "words")
-    check("and says plainly that it is untested", st.confidence == "untested")
+    # Play-tested on Crespo Foundation, the Garage projection screen and
+    # Alcatraz -- three maps this card nominates itself -- with no shadow on
+    # any of them. Forcing the branch true is not enough, so it is withdrawn
+    # rather than left on offer as an experiment that cannot work.
+    check("it is withdrawn as not working", st.confidence == "broken"
+          and not st.enabled)
+    check("and names the maps it was tried on",
+          "Alcatraz" in st.disabled_reason and "Garage" in st.disabled_reason)
+    check("and emits no word even when stored true",
+          not [e for e in profile.build_edits(
+                  profile.effective(dict(profile.defaults(), split_shadows=True)))
+               if e.va == 0x00446EA8])
     check("leaving it off writes no word",
           not [e for e in profile.build_edits(profile.effective({}))
                if e.va == rseshadow.SHADOW_GATE])
-    made = [e for e in profile.build_edits(
-                profile.effective({"split_shadows": True}))
-            if e.va == rseshadow.SHADOW_GATE]
-    check("turning it on writes exactly that one word",
-          len(made) == 1 and made[0].value == forced and made[0].stock == stock)
+    # The word the module builds is still worth pinning down even though the
+    # option is withdrawn -- it is the record of what was tried, and whoever
+    # picks this up next needs it to be right. What is no longer true is that
+    # the profile will emit it; that is checked above.
+    check("the module still builds exactly that one word",
+          rseshadow.SHADOW_GATE == 0x00446EA8 and forced == 0x34420001
+          and stock == 0x30420001)
+    check("turning it on writes nothing now that it is withdrawn",
+          not [e for e in profile.build_edits(
+                  profile.effective({"split_shadows": True}))
+               if e.va == rseshadow.SHADOW_GATE])
     base = profile.build_pnach(profile.effective({}))
     with_it = profile.build_pnach(profile.effective({"split_shadows": True}))
     check("and it adds nothing to the cheat file",
