@@ -65,6 +65,12 @@ class Setting:
     #: what this option rewrites. Always "data" here; kept so the GUI copied
     #: from the PS2 tool keeps working unchanged.
     touches: str = "data"
+    #: rows of numbers to show under the help, drawn in a fixed-width font so
+    #: the columns line up. For the options whose point IS a comparison -- this
+    #: value against that one -- prose cannot do the job: "the dead zone goes
+    #: from 0.40 to 0.10" reads fine once and is useless when there are sixteen
+    #: of them. First row is the header.
+    table: tuple = ()
 
     def coerce(self, value):
         if self.kind == BOOL:

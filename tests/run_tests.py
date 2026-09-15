@@ -346,6 +346,7 @@ def test_iso_matches_folder(shelf):
     checked = 0
     notes = []
     skipped = []
+    modded = []
     for det in games:
         if det.kind != "iso":
             continue
@@ -360,6 +361,14 @@ def test_iso_matches_folder(shelf):
                      and d.title_name == det.title_name), None)
         if twin is None:
             skipped.append(det.profile.short)
+            continue
+        # A game this tool has already edited is SUPPOSED to differ from the
+        # copy it has not. Comparing them would be asserting that nobody uses
+        # the tool, and it fails the moment somebody does -- which is how this
+        # check first went red: the Rainbow Six 3 image had a grenade-carry mod
+        # applied and the extracted folder did not.
+        if engine.has_backup(det.path) or engine.has_backup(twin.path):
+            modded.append(det.profile.short)
             continue
         with Root(det.path) as a, Root(twin.path) as b:
             left = _by_name(a)
@@ -381,11 +390,14 @@ def test_iso_matches_folder(shelf):
             checked += same
         pairs += 1
         notes.append(det.profile.short)
-    must(pairs, "no game on this shelf exists as both an image and a folder")
-    tail = ("; no same-build folder for " + ", ".join(sorted(set(skipped)))
-            if skipped else "")
+    tail = ""
+    if skipped:
+        tail += "; no same-build folder for " + ", ".join(sorted(set(skipped)))
+    if modded:
+        tail += "; already modded, so not compared: " + ", ".join(sorted(set(modded)))
+    must(pairs or modded, "nothing left to compare")
     return "%d game(s) present twice (%s), %d files byte-identical%s" % (
-        pairs, ", ".join(notes), checked, tail)
+        pairs, ", ".join(notes) or "none", checked, tail)
 
 
 def _by_name(root):

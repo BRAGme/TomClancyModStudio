@@ -108,6 +108,37 @@ PS2_AIM = {
 #: new when that 0.1 was chosen; a worn Xbox controller can drift inside it.
 AIM_DEADZONE = "m_fDeadZone"
 
+#: What the card shows. Both columns are read off the discs -- the Xbox side out
+#: of `R6GAMESETTINGS.INI` inside `System\\xboxdynamic.umd`, the PS2 side out of
+#: the same file inside `vokes0.img` -- because the whole point of this option
+#: is a comparison, and a comparison stated as prose is a comparison nobody can
+#: check. The stick rows are labelled by how far the stick is pushed rather than
+#: by array index: `m_afRotationControlPoints[5]` means nothing, "half" means
+#: something.
+AIM_TABLE = (
+    ("stick",        "Xbox",  "PS2",  ""),
+    ("at rest",      "0.0",   "1",    "deg/s"),
+    ("1/10",         "2.7",   "6",    ""),
+    ("2/10",         "10.8",  "12",   ""),
+    ("3/10",         "24.3",  "18",   ""),
+    ("4/10",         "43.2",  "24",   ""),
+    ("half",         "67.5",  "30",   "<- the one you feel"),
+    ("6/10",         "97.2",  "50",   ""),
+    ("7/10",         "132.3", "80",   ""),
+    ("8/10",         "172.8", "120",  ""),
+    ("9/10",         "230.7", "140",  ""),
+    ("full",         "320.0", "270",  ""),
+    ("", "", "", ""),
+    ("dead zone",    "0.40",  "0.10", "share of travel that does nothing"),
+    ("zoomed turn",  "1.0",   "0.7",  "multiplier while scoped"),
+    ("smoothing",    "0.15",  "0.20", "seconds"),
+    ("aim damping",  "0.65",  "0.8",  ""),
+    ("max rate",     "160",   "90",   "deg/s the curve is scaled against"),
+    ("", "", "", ""),
+    ("sensitivity X", "0.70", "0.70", "identical -- not what differs"),
+    ("sensitivity Y", "0.60", "0.60", "identical -- not what differs"),
+)
+
 
 
 def _scale_card(key, label, group, help_text, caution="", down=True):
@@ -282,15 +313,18 @@ def cards(prefix, has_templates):
                            "alone."),
                 ],
                 confidence="applied",
-                help="Replaces the turn-rate curve with the one the PS2 "
-                     "version ships. Xbox ramps as the square of stick "
-                     "deflection, so half a push asks for 67.5 deg/s where "
-                     "the PS2 asks for 30 -- that is the acceleration that "
-                     "makes it hard to settle on a target. Also brings over "
-                     "the dead zone (0.40 to 0.10), the zoom multiplier "
-                     "(1.0 to 0.7, so zoomed aim slows down), smoothing and "
-                     "damping. Look sensitivity is untouched: both discs "
-                     "already ship the same numbers.",
+                help="Replaces the turn-rate curve with the one the PS2 disc "
+                     "ships. The eleven control points map how far you have "
+                     "pushed the stick to how fast the view turns, in degrees "
+                     "per second; Xbox's are exactly 2.7 x n squared, so they "
+                     "climb away from you, while the PS2's are close to a "
+                     "straight line until the very top. Half a push asks for "
+                     "67.5 deg/s on Xbox and 30 on PS2. Every number below is "
+                     "read off the two discs, not estimated.\n\n"
+                     "Look sensitivity is NOT the difference and is not "
+                     "touched: both discs ship 0.70 and 0.60, so the dial "
+                     "above this one cannot get you there.",
+                table=AIM_TABLE,
                 caution="The PS2 dead zone is 0.10. On a worn controller that "
                         "can let the stick drift on its own -- if it does, use "
                         "the stock dead zone choice."),

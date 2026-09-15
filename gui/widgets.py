@@ -402,6 +402,26 @@ class SettingCard(Chrome):
             tk.Label(strip, image=photo, bg=p.panel, bd=0).pack(
                 side="left", padx=(0, theme.px(8)))
 
+    def _table(self, rows):
+        """Rows of numbers in a fixed-width font, columns padded to line up.
+
+        One Label per line rather than a grid of them: a grid re-flows when the
+        card is resized and the columns stop agreeing with each other, which is
+        the one thing a table of numbers must not do.
+        """
+        p = theme.P
+        widths = [max(len(str(r[i])) for r in rows)
+                  for i in range(len(rows[0]))]
+        wrap = tk.Frame(self.body, bg=p.panel)
+        wrap.pack(fill="x", pady=(theme.px(8), 0))
+        for n, row in enumerate(rows):
+            line = "  ".join(str(cell).ljust(widths[i])
+                             for i, cell in enumerate(row)).rstrip()
+            tk.Label(wrap, text=line, bg=p.panel,
+                     fg=p.text if n == 0 else p.dim, anchor="w",
+                     font=theme.F("mono", 9 if n == 0 else 8)
+                     ).pack(fill="x", padx=(theme.px(2), 0))
+
     def _text(self, text, colour, size=8, wrap=560, pady=(8, 0)):
         lbl = tk.Label(self.body, text=text, bg=theme.P.panel, fg=colour,
                        font=theme.F("body", size), wraplength=theme.px(wrap),
@@ -452,6 +472,8 @@ class SettingCard(Chrome):
 
         if s.help:
             self._text(s.help, p.dim)
+        if s.table:
+            self._table(s.table)
         if s.caution:
             self._text("⚠  " + s.caution, p.warn, pady=(7, 0))
         if not s.enabled and s.disabled_reason:
