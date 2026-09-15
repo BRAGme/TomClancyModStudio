@@ -93,7 +93,7 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_scope", "Draw the scope overlay in split screen",
-        BOOL, False, group, confidence="untested", touches="words",
+        BOOL, False, group, confidence="verified", touches="words",
         help="Aiming down sights in split screen gives you the bare reticule "
              "with none of the scope tube around it. The overlay is not "
              "missing -- the textures, the render devices and the "
@@ -101,15 +101,16 @@ def card(prefix, group):
              "branch at the very top of the draw sends split screen down a "
              "path whose lookup tables the game only ever fills with zeroes, "
              "so it returns without drawing. This clears that branch.",
-        caution="EXPERIMENT, not a finished fix. The draw takes its size from "
-                "the framebuffer, which stays 640x448 in split screen, and it "
-                "never reads the per-viewport rectangle -- so the scope will "
-                "very likely appear stretched across the whole screen rather "
-                "than fitted to your half, and probably twice. That is almost "
-                "certainly why the branch is there. Turn it on to confirm the "
-                "diagnosis; the proper fix needs a cave to feed the draw the "
-                "viewport size, and that is the next step if this shows "
-                "anything at all.")
+        caution="Watched working in split screen on Island Estate: the scope "
+                "draws, once in each half, for both players. The diagnosis "
+                "above is confirmed.\n\n"
+                "It is not yet a finished fix, and the reason is the one this "
+                "card always predicted. The draw takes its size from the "
+                "framebuffer, which stays 640x448 in split screen, and never "
+                "reads the per-viewport rectangle -- so the overlay sits off "
+                "to one side instead of around your crosshair. That is what "
+                "\"Fit the scope overlay to your half\" is for; turn it on "
+                "with this.")
 
 
 # ---------------------------------------------------------------------------

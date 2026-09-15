@@ -2936,8 +2936,14 @@ def run_split_scope(args):
                                    "split_wheel": True,
                                    "wave_enable": True,
                                    "wave_mapwide": True})) == 125)
-    check("and says plainly that it is untested",
-          profile.setting("split_scope").confidence == "untested")
+    # Watched drawing in split screen on Island Estate, both halves, so this
+    # is no longer a guess. The caution still has to say what is imperfect
+    # about it -- the overlay is not fitted to the viewport -- because that is
+    # the part a player will actually notice.
+    check("it is marked as watched working",
+          profile.setting("split_scope").confidence == "verified")
+    check("and still says what is not right about it",
+          "fit" in profile.setting("split_scope").caution.lower())
     check("leaving it off writes no word",
           not [e for e in profile.build_edits({})
                if e.va == rsescope.SCOPE_BRANCH])
