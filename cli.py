@@ -1,5 +1,6 @@
 """The same tool without the window.
 
+    XboxModStudio.exe --cli games  [game]          -- no disc needed
     XboxModStudio.exe --cli scan   [shelf folder]
     XboxModStudio.exe --cli show   <game>
     XboxModStudio.exe --cli plan   <game> [--set key=value ...] [--preset N]
@@ -76,6 +77,52 @@ def cmd_scan(args):
     return 0
 
 
+def _print_settings(profile):
+    """One profile's options. Shared by `show` (needs the game) and `games`
+    (does not), so the two can never drift apart."""
+    print("\nsettings:")
+    for group in profile.groups():
+        print("  [%s]" % group)
+        for s in profile.settings:
+            if s.group != group:
+                continue
+            extra = ""
+            if s.kind == INT:
+                extra = " (%d-%d%s)" % (s.minimum, s.maximum,
+                                        " " + s.unit if s.unit else "")
+            elif s.kind == CHOICE:
+                extra = " (%s)" % "|".join(str(c.value) for c in s.choices)
+            flag = "" if s.enabled else "  [disabled: %s]" % s.disabled_reason
+            print("    %-28s %-7s default=%-8s %s%s%s"
+                  % (s.key, s.kind, s.default, s.confidence, extra, flag))
+
+
+def cmd_games(args):
+    """Every game and every option, with no disc involved.
+
+    The text twin of the window's Preview: it answers "what can this do" for
+    someone who does not own the game, and it is the only path here that opens
+    nothing at all.
+    """
+    from tcxbox.games import PROFILES
+    if not args.game:
+        print("%-26s %-10s %-9s %s" % ("GAME", "TITLE ID", "OPTIONS", "ID"))
+        for p in sorted(PROFILES, key=lambda q: q.short):
+            print("%-26s %-10s %-9d %s"
+                  % (p.short, p.title_id, len(p.settings), p.id))
+        print("\nAdd a game to see its options, e.g. --cli games %s"
+              % sorted(PROFILES, key=lambda q: q.short)[0].id)
+        return 0
+    want = args.game.lower()
+    for p in PROFILES:
+        if want in (p.id.lower(), p.short.lower(), p.title_id.lower()):
+            print("%s  (title id %s)" % (p.title, p.title_id))
+            _print_settings(p)
+            return 0
+    raise SystemExit("no game matching %r -- run `--cli games` for the list"
+                     % args.game)
+
+
 def cmd_show(args):
     det = _require(args.folder)
     print("%s" % det.title)
@@ -92,21 +139,7 @@ def cmd_show(args):
         print("\npresets:")
         for i, (name, _v) in enumerate(presets):
             print("  %2d  %s" % (i, name))
-    print("\nsettings:")
-    for group in det.profile.groups():
-        print("  [%s]" % group)
-        for s in det.profile.settings:
-            if s.group != group:
-                continue
-            extra = ""
-            if s.kind == INT:
-                extra = " (%d-%d%s)" % (s.minimum, s.maximum,
-                                        " " + s.unit if s.unit else "")
-            elif s.kind == CHOICE:
-                extra = " (%s)" % "|".join(str(c.value) for c in s.choices)
-            flag = "" if s.enabled else "  [disabled: %s]" % s.disabled_reason
-            print("    %-28s %-7s default=%-8s %s%s%s"
-                  % (s.key, s.kind, s.default, s.confidence, extra, flag))
+    _print_settings(det.profile)
     return 0
 
 
@@ -154,6 +187,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="XboxModStudio --cli",
                                  description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    g = sub.add_parser("games", help="every game and option, with no disc")
+    g.add_argument("game", nargs="?")
+    g.set_defaults(fn=cmd_games)
 
     s = sub.add_parser("scan", help="list the supported games on a shelf")
     s.add_argument("folder", nargs="?")

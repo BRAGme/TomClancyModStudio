@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from . import xbe, xiso
 from .engine import has_backup
-from .games import BY_TITLE_ID, PROFILES
+from .games import BY_ID, BY_TITLE_ID, PROFILES
 from .gamedir import open_source
 
 #: how deep to look for a game root under the folder the user chose
@@ -32,6 +32,26 @@ MAX_DESCENT = 3
 
 #: extensions worth opening as a disc image
 IMAGE_SUFFIXES = (".iso", ".xiso", ".bin")
+
+
+def preview_detection(profile) -> Detection:
+    """A profile opened with no game behind it, so the options can be read.
+
+    Unlike the PlayStation 2 tool, the art here CANNOT be reached in this
+    state: `art.banner_image` opens the source before it consults its cache,
+    and the cache key is the game path, so an empty one both raises and misses.
+    Preview therefore shows the game's skin -- which is a palette and drawn
+    chrome, all ours -- and no disc artwork at all. That is also the stricter
+    reading of never shipping the games' art.
+    """
+    if isinstance(profile, str):
+        profile = BY_ID[profile]
+    return Detection(
+        "", True, profile=profile, chosen="", kind="preview",
+        title_id=profile.title_id, title_name=profile.title,
+        xbe_path="", has_backup=False, preview=True,
+        message="Preview only — no game is loaded, so nothing can be "
+                "written. Open a disc image or folder to use these options.")
 
 
 @dataclass
@@ -47,6 +67,9 @@ class Detection:
     message: str = ""
     missing: tuple = ()
     has_backup: bool = False
+    #: True for a profile opened with no game behind it, to read the options
+    #: only. Nothing is readable and nothing is writable in this state.
+    preview: bool = False
 
     @property
     def title(self):

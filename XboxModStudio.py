@@ -2,9 +2,15 @@
 
     XboxModStudio.exe              -- open the window
     XboxModStudio.exe <game>       -- open the window on that disc or folder
+    XboxModStudio.exe --preview    -- read the options with no game at all
     XboxModStudio.exe --cli ...    -- do it from a script instead
 
 Kept as one executable so a release is a single file to download.
+
+Preview mode exists so someone without the discs can see what every option
+does. Nothing is readable and nothing is writable in it: the write buttons are
+held off, and there is no artwork, because every picture in this tool is read
+out of the user's own game at run time and none of it is shipped.
 """
 
 from __future__ import annotations

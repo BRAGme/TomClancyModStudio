@@ -206,6 +206,9 @@ def _cached(cache_dir, game, source_rel, tag, build):
 
 
 def _open(detection):
+    # Callers guard on `detection.path` before reaching here. A preview
+    # detection is ok=True with an EMPTY path -- there is no game behind
+    # it -- and open_source('') raises, so "ok" alone is not enough.
     return open_source(detection.path)
 
 
@@ -215,7 +218,7 @@ def _open(detection):
 
 def banner_image(detection, cache_dir=None):
     """The backdrop the window is painted on."""
-    if not detection or not detection.ok:
+    if not detection or not detection.ok or not detection.path:
         return None
     named = (detection.profile.ui_art or {}).get("backdrop")
     source = _open(detection)
@@ -237,7 +240,7 @@ def banner_image(detection, cache_dir=None):
 
 def emblem_image(detection, cache_dir=None):
     """The game's wordmark, lifted out of its own splash screen."""
-    if not detection or not detection.ok:
+    if not detection or not detection.ok or not detection.path:
         return None
     art = detection.profile.ui_art or {}
     named = art.get("emblem")
@@ -298,7 +301,7 @@ def mission_art(detection, spec, cache_dir=None):
     carry (`XC01_PLANTATION.mis` against `C01_PLANTATION.rsb`), so that spelling
     is tried too rather than recorded per mission.
     """
-    if not detection or not detection.ok or not spec:
+    if not detection or not detection.ok or not spec or not detection.path:
         return None
     name, _, quadrant = spec.partition("#")
     source = _open(detection)

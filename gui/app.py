@@ -36,7 +36,8 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import art, engine  # noqa: E402
-from tcxbox.detect import identify, look  # noqa: E402
+from tcxbox.detect import identify, look, preview_detection  # noqa: E402
+from tcxbox.games import PROFILES  # noqa: E402
 from tcxbox.model import BOOL, INT  # noqa: E402
 
 from . import discorddialog, presence, skins, theme  # noqa: E402
@@ -48,6 +49,11 @@ APP_NAME = "Tom Clancy Xbox Mod Studio"
 PRESET_HINT = "Choose a preset…"
 VERSION = "1.0"
 NOTES_TAB = "About this game"
+
+#: Shelf entries are label -> path. Preview entries carry this instead of a
+#: path, so one picker serves both "the games on your shelf" and "every game
+#: this tool knows", and `_load_folder` stays the single way in.
+PREVIEW_PREFIX = "preview:"
 
 # A square mark -- Ghost Recon 2's stacked wordmark -- is limited by the
 # header's HEIGHT, not its width, so the wide marks fill their box while the
@@ -84,6 +90,8 @@ class App(tk.Tk):
 
         self.detection = None
         self.profile = None
+        #: set by --preview so the remembered game does not load over the top
+        self.preview_only = False
         #: label -> path for whatever the picker is currently offering
         self._shelf = {}
         self._shelf_dir = ""
@@ -390,10 +398,48 @@ class App(tk.Tk):
                 self.game_var.set(label)
                 return
 
+    # -- preview (no game) -------------------------------------------------
+    def _enter_preview(self):
+        """Fill the picker with every game this tool knows and open the first.
+
+        For reading what the options ARE without owning the disc.
+        """
+        self._shelf_dir = ""
+        self._shelf = {}
+        for p in sorted(PROFILES, key=lambda q: q.short):
+            self._shelf["%s   ·   %s   ·   preview"
+                         % (p.short, p.title_id)] = PREVIEW_PREFIX + p.id
+        names = list(self._shelf)
+        self.game_box.configure(values=names,
+                                width=min(74, max(len(n) for n in names) + 2))
+        self.path_var.set("")
+        self.game_var.set(names[0])
+        self._say("Preview: no game loaded, nothing can be written.", "warn")
+        self._load_folder(self._shelf[names[0]])
+
+    def _load_preview(self, profile_id):
+        det = preview_detection(profile_id)
+        self.detection, self.profile = det, det.profile
+        theme.use(skins.for_profile(det.profile))
+        # No artwork in preview: art.banner_image opens the game BEFORE it
+        # consults its cache and keys that cache by the game path, so an empty
+        # one both raises and misses. The skin is a palette plus drawn chrome,
+        # so the window still wears the right colours with no game present.
+        skins.set_textures({})
+        self.backdrop_src = None
+        self.emblem_src = None
+        self._restyle()
+        self.status.configure(
+            text="%s   •   title id %s   •   preview — no game loaded"
+                 % (det.profile.short, det.title_id), fg=theme.P.warn)
+        self._build_settings()
+        self._set_buttons(False)
     def _load_folder(self, path):
         path = path.strip().strip('"')
         if not path:
             return
+        if path.startswith(PREVIEW_PREFIX):
+            return self._load_preview(path[len(PREVIEW_PREFIX):])
         self._say("Reading %s" % (os.path.basename(path.rstrip("\\/")) or path))
 
         # Reading a shelf again costs a second -- it opens every disc image on
@@ -475,6 +521,11 @@ class App(tk.Tk):
         self._refresh_layout()
 
     def _set_buttons(self, on):
+        # Authoritative rather than advisory: _build_settings ends by calling
+        # this with True, so preview has to be vetoed HERE or opening a preview
+        # profile would re-enable the write buttons behind it.
+        if getattr(self.detection, "preview", False):
+            on = False
         has = bool(self.profile and self.profile.settings)
         self.apply_btn.set_enabled(on and has)
         self.revert_btn.set_enabled(on and bool(self.detection
@@ -533,9 +584,12 @@ class App(tk.Tk):
         self._publish()
         for n, item in self.nav_items.items():
             item.select(n == name)
+        where = (os.path.basename(self.detection.path)
+                 or ("preview — no game"
+                     if getattr(self.detection, "preview", False) else ""))
         self._retitle(name or self.profile.short,
-                      "%s  ·  %s" % (self.profile.title,
-                                          os.path.basename(self.detection.path)))
+                      "%s  ·  %s" % (self.profile.title, where)
+                      if where else self.profile.title)
         self._retitle_image(max(self.stage.winfo_width(), 10), theme.px(HEADER))
         self.area.clear()
         body = self.area.body
@@ -568,6 +622,23 @@ class App(tk.Tk):
         det = self.detection
         card = Chrome(body, kind="panel", pad=theme.px(16))
         card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
+        if getattr(det, "preview", False):
+            # No game was opened, so every fact that comes OFF a disc would be
+            # a guess. Only what the profile itself knows is shown.
+            rows = [("Kind", "— preview, no game loaded"),
+                    ("Game", "—"),
+                    ("Title id", det.title_id),
+                    ("Title name", det.profile.title),
+                    ("Options", "%d" % len(det.profile.settings)),
+                    ("Backup", "—")]
+            for k, v in rows:
+                r = tk.Frame(card.body, bg=theme.P.panel)
+                r.pack(fill="x", pady=theme.px(2))
+                tk.Label(r, text=k, bg=theme.P.panel, fg=theme.P.dim, width=14,
+                         anchor="w", font=theme.F("body", 8)).pack(side="left")
+                tk.Label(r, text=str(v), bg=theme.P.panel, fg=theme.P.text,
+                         anchor="w", font=theme.F("mono", 9)).pack(side="left")
+            return
         rows = [("Kind", "disc image, edited in place" if det.kind == "iso"
                  else "extracted folder"),
                 ("Game", det.path),
@@ -844,6 +915,7 @@ class App(tk.Tk):
         for p in self._recent:
             if os.path.exists(p):
                 self.after(250, lambda q=p: (self.detection is None
+                                             and not self.preview_only
                                              and self._load_folder(q)))
                 break
 
@@ -852,10 +924,16 @@ def main(argv=None):
     theme.set_dpi_aware()
     argv = list(sys.argv[1:] if argv is None else argv)
     app = App()
-    for arg in argv:
-        if os.path.exists(arg):
-            app.after(150, lambda q=arg: app._load_folder(q))
-            break
+    if "--preview" in argv or "-p" in argv:
+        # Set before the 250 ms recent-game timer fires, so a machine that has
+        # opened a game before still lands in preview when asked for preview.
+        app.preview_only = True
+        app.after(150, app._enter_preview)
+    else:
+        for arg in argv:
+            if os.path.exists(arg):
+                app.after(150, lambda q=arg: app._load_folder(q))
+                break
     app.mainloop()
 
 
