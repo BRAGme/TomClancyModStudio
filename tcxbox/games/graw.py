@@ -68,11 +68,53 @@ def _scale(key, label, group, help_text, caution=""):
                    help=help_text, caution=caution)
 
 
+#: GRAW keeps no loose mission descriptions -- its per-map mode flags are
+#: compiled into `Engine.u` -- but it ships two mode configuration files that
+#: Rainbow Six 3 does not, both loose under `System\\` and both plain text.
+#:
+#: `TeamConquestDefault.ini` is Conquest, in four variants (Survival, Total
+#: Conquest, Score Max, Time Max), each with its own spawn timing and scoring.
+#: The one number all four agree on is `fMinSpawnTimeSeconds`, 5.
+#:
+#: `R6EscortPilotGame.ini` is the escort mode, and it is three booleans long.
+#: The pilot you are escorting ships with his primary weapon DISABLED and his
+#: secondary and tertiary enabled.
+CONQUEST_FILE = r"TEAMCONQUESTDEFAULT\.INI$"
+ESCORT_FILE = r"R6ESCORTPILOTGAME\.INI$"
+
+
 SETTINGS = (
     r6engine.cards("graw_", has_templates=False,
                    aim=r6engine.GRAW_AIM, has_script=False,
                    has_boost=True)
     + r6_3._render_cards("graw_")
+    + [
+        Setting("graw_conquest_spawn", "Conquest respawn delay", CHOICE,
+                "stock", "Game modes",
+                choices=[Choice("stock", "As shipped", "Five seconds."),
+                         Choice("less", "Half", ""),
+                         Choice("little_less", "Three quarters", ""),
+                         Choice("little_more", "A quarter more", ""),
+                         Choice("more", "Half again", ""),
+                         Choice("much_more", "Double", "")],
+                confidence="applied",
+                help="fMinSpawnTimeSeconds in TeamConquestDefault.ini, which "
+                     "ships at 5 in all four Conquest variants -- Survival, "
+                     "Total Conquest, Score Max and Time Max. Scaled in all "
+                     "four together, because they agree on it."),
+        Setting("graw_pilot_armed", "Arm the pilot you escort", CHOICE,
+                "stock", "Game modes",
+                choices=[Choice("stock", "As shipped", "No primary weapon."),
+                         Choice("True", "Give him his primary", "")],
+                confidence="experimental",
+                help="R6EscortPilotGame.ini is three lines long and the first "
+                     "of them, EnablePilotPrimaryWeapon, ships False while "
+                     "the secondary and tertiary ship True. The escorted "
+                     "pilot is therefore deliberately underarmed.",
+                caution="Not play-tested. Whether the pilot's model has a "
+                        "primary weapon to draw is not established -- if he "
+                        "has none, this does nothing visible."),
+    ]
     + [
         _scale("graw_team_skill", "Teammate skill", TEAM,
                "cfg_AssaultSkill and cfg_FiringAccuracy in GR3XBoxAI.ini, "
@@ -125,6 +167,18 @@ def build_data(v: dict) -> list:
                          aim=r6engine.GRAW_AIM, has_script=False,
                          has_boost=True)
     out += r6_3._render_edits("graw_", v)
+
+    spawn = v.get("graw_conquest_spawn", "stock")
+    if spawn != "stock":
+        out.append(FileEdit("scale_ini", CONQUEST_FILE,
+                            {"factors": {"fMinSpawnTimeSeconds":
+                                         r6engine.STEPS[spawn]}},
+                            "Conquest respawn delay at %d%%"
+                            % int(r6engine.STEPS[spawn] * 100)))
+    if v.get("graw_pilot_armed") == "True":
+        out.append(FileEdit("ini_values", ESCORT_FILE,
+                            {"values": {"EnablePilotPrimaryWeapon": "True"}},
+                            "the escorted pilot keeps his primary weapon"))
 
     ai_factors, ai_values = {}, {}
     for key, names in (("graw_team_skill", TEAM_SKILL),

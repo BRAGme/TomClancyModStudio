@@ -84,6 +84,11 @@ def _op_gtf_variables(plain, params):
     return transforms.set_gtf_variables(plain, params.get("values", {}))
 
 
+def _op_campaign(plain, params):
+    return transforms.extend_campaign(plain, params.get("add", ()),
+                                      replace=bool(params.get("replace")))
+
+
 def _op_ini_values(plain, params):
     return transforms.set_ini_values(plain, params.get("values", {}))
 
@@ -136,6 +141,7 @@ OPS = {
     "bump_tier": _op_bump_tier,
     "bump_stats": _op_bump_stats,
     "gtf_variables": _op_gtf_variables,
+    "campaign": _op_campaign,
     "ini_values": _op_ini_values,
     "scale_ini": _op_scale_ini,
     "tpt_values": _op_tpt_values,

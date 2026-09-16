@@ -370,6 +370,65 @@ def _edits_change_anything(root, edits):
     return False
 
 
+def test_campaign_lists(games):
+    """Every campaign choice parses, fits the disc, and is idempotent.
+
+    The campaign list is the one edit here that is ALLOWED to change a file's
+    length, so it is the one that can overflow. A disc image grows a file only
+    into its own sector padding -- `Xiso.replace` refuses the rest rather than
+    relocating -- so every choice this tool offers has to fit that budget, and
+    the two that did not were reshaped from "add these missions" into "play
+    these missions instead" once the arithmetic said so.
+    """
+    import xml.etree.ElementTree as ET
+    checked = 0
+    for det in games:
+        profile = det.profile
+        card = [st for st in profile.settings
+                if st.key.endswith("_campaign") and st.enabled]
+        if not card:
+            continue
+        with Root(det.path) as root:
+            for choice in card[0].choices:
+                if choice.value == "stock":
+                    continue
+                edits = [e for e in profile.build_data(
+                    profile.normalise({card[0].key: choice.value}))
+                    if e.op == "campaign"]
+                must(edits, "%s: %r built no campaign edit"
+                     % (profile.short, choice.value))
+                for key, edit in dataedit.plan_data(root, edits):
+                    plain = root.read(key)
+                    out, n = dataedit.OPS[edit.op](plain, edit.params)
+                    must(n > 0, "%s/%s rewrote nothing"
+                         % (profile.short, choice.value))
+                    budget = transforms.campaign_budget(plain)
+                    must(len(out) <= budget,
+                         "%s/%s: %d bytes will not fit the %d the disc "
+                         "allocated" % (profile.short, choice.value,
+                                        len(out), budget))
+                    root_el = ET.fromstring(out.decode("latin1"))
+                    names = [e.findtext("Filename") for e in root_el]
+                    must(names and all(names),
+                         "%s/%s produced a mission with no filename"
+                         % (profile.short, choice.value))
+                    have = {q.rsplit("/", 1)[-1].upper()
+                            for q in root.match(r"/MISSION/[^/]+\.MIS$")}
+                    missing = [n2 for n2 in names if n2.upper() not in have]
+                    must(not missing,
+                         "%s/%s names %d mission(s) not on the disc: %s"
+                         % (profile.short, choice.value, len(missing),
+                            ", ".join(missing[:4])))
+                    again, n2 = dataedit.OPS[edit.op](out, edit.params)
+                    must(again == out and n2 == 0,
+                         "%s/%s is not idempotent"
+                         % (profile.short, choice.value))
+                    checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d campaign variant(s) parse, fit their sector and are "
+            "idempotent" % checked)
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -726,6 +785,8 @@ def main(argv):
     check("ini value shapes survive scaling", lambda: test_ini_shapes(games))
     check("no option quietly writes what is already there",
           lambda: test_no_option_is_a_noop(games))
+    check("every campaign list fits its disc",
+          lambda: test_campaign_lists(games))
 
     print("census")
     check("weapons split by side where the data allows",

@@ -123,6 +123,129 @@ def notes_for(name, missions, guns):
         % (name, placed, len(missions), flagged, hidden, guns))
 
 
+CAMPAIGN_FILE = r"/MISSION/CAMPAIGN\.XML$"
+
+#: Ghost Recon ships 47 mission files and its campaign names 15. Fifteen of the
+#: rest are the `_defend` twin of each campaign map -- the same terrain with the
+#: mission turned round, you holding ground instead of taking it -- and nine are
+#: the multiplayer maps. None of the 32 is referenced by `campaign.xml`.
+GR_DEFEND = (
+    "m01_caves_defend.mis",
+    "m02_farm_defend.mis",
+    "m03_rrbridge_defend.mis",
+    "m04_village_defend.mis",
+    "m05_embassy_defend.mis",
+    "m06_castle_defend.mis",
+    "m07_river_defend.mis",
+    "m08_battlefield_defend.mis",
+    "m09_swamp_defend.mis",
+    "m10_ruined_city_defend.mis",
+    "m11_pow_camp_defend.mis",
+    "m12_docks_defend.mis",
+    "m13_airbase_defend.mis",
+    "m14_mountain_defend.mis",
+    "m15_red_square_defend.mis",
+)
+
+GR_MP = (
+    "mp01_river.mis",
+    "mp02_nightbattle.mis",
+    "mp03_railroad.mis",
+    "mp04_valley.mis",
+    "mp05_docks.mis",
+    "mp06_castle.mis",
+    "mp07_stronghold.mis",
+    "mp08_creekbed.mis",
+    "mp09_wilderness.mis",
+)
+
+#: Island Thunder names 8 of its 27. Three of the unlisted ones are complete
+#: GHOST RECON missions sitting on the Island Thunder disc -- Embassy, Castle
+#: and Battlefield -- which is the one find here that is genuinely content from
+#: another game rather than a variant of this one.
+IT_GHOST_RECON = (
+    "m05_embassy.mis",
+    "m06_castle.mis",
+    "m08_battlefield.mis",
+)
+
+IT_COOP = (
+    "xcp01_hunting_lodge.mis",
+    "xcp02_island.mis",
+    "xcp03_prison.mis",
+    "xcp04_island_village.mis",
+    "xcp05_market.mis",
+)
+
+IT_DEFEND = (
+    "xd01_beach.mis",
+    "xd03_traindepot.mis",
+    "xd06_ghosttown.mis",
+)
+
+CAMPAIGN = "Campaign"
+
+#: {choice: (label, help, missions)} per game. Keyed by prefix because the two
+#: games share this file and have nothing else in common here.
+CAMPAIGN_SETS = {
+    "gr_": (
+        ("defend", "Play the Defend campaign instead",
+         "The same fifteen maps with the mission reversed -- holding ground "
+         "rather than taking it.", GR_DEFEND, True),
+        ("mp", "Play the multiplayer maps as a campaign",
+         "The nine adversarial maps, in order.", GR_MP, True),
+    ),
+    "it_": (
+        ("ghost_recon", "Add the three Ghost Recon missions",
+         "Embassy, Castle and Battlefield, complete on this disc.",
+         IT_GHOST_RECON, False),
+        ("coop", "Add the co-op maps", "All five.", IT_COOP, False),
+        ("defend", "Add the Defend maps", "All three.", IT_DEFEND, False),
+        ("all", "Add all eleven", "",
+         IT_GHOST_RECON + IT_COOP + IT_DEFEND, False),
+    ),
+}
+
+
+def _campaign_card(prefix):
+    sets = CAMPAIGN_SETS[prefix]
+    total = len({m for _v, _l, _h, ms, _r in sets for m in ms})
+    swaps = all(r for _v, _l, _h, _m, r in sets)
+    tail = ("\n\nThese choices SWAP the campaign rather than lengthening it. A "
+            "disc image can only grow a file into its own sector padding, and "
+            "a doubled campaign does not fit; one of the same length always "
+            "does."
+            if swaps else
+            "\n\nThe extra missions go on the end, after the last shipped one, "
+            "in the order shown.")
+    return Setting(
+        prefix + "campaign", "Missions in the campaign", CHOICE, "stock",
+        CAMPAIGN,
+        choices=[Choice("stock", "As shipped", "")]
+                + [Choice(v, label, help_text)
+                   for v, label, help_text, _m, _r in sets],
+        confidence="experimental",
+        help="The campaign is one file: Mission\\campaign.xml, a flat list of "
+             "mission filenames. This disc ships %d mission files the list "
+             "never names, and they are complete -- same format, same folder, "
+             "loaded the same way.%s" % (total, tail),
+        caution="Experimental. A mission written as a multiplayer or Defend "
+                "map has no briefing, and may have no ending condition a "
+                "single player can reach. Nothing here can damage a disc -- "
+                "Restore game puts the original list back exactly.")
+
+
+def _campaign_edits(prefix, v):
+    choice = v.get(prefix + "campaign", "stock")
+    for value, label, _help, missions, replace in CAMPAIGN_SETS[prefix]:
+        if choice == value:
+            return [FileEdit("campaign", CAMPAIGN_FILE,
+                             {"add": list(missions), "replace": replace},
+                             "%s (%d mission(s))"
+                             % (label.lower(), len(missions)))]
+    return []
+
+
 def _settings(prefix, missions, has_env):
     placed, flagged, hidden = _totals(missions)
     out = [
@@ -188,6 +311,7 @@ def _settings(prefix, missions, has_env):
     out += rseweapons.cards(prefix)
     out += [c for c in rstuning.cards(prefix)
             if has_env or not c.key.endswith("spot")]
+    out += [_campaign_card(prefix)]
     out += _mission_settings(prefix, missions)
     return out
 
@@ -246,7 +370,7 @@ def _mission_art_for(prefix, missions):
 
 def _build_data(prefix, missions):
     def build(v: dict) -> list:
-        out = []
+        out = _campaign_edits(prefix, v)
         # Per-mission switches are skipped entirely when the global one is on:
         # that already strips every .MIS, so a second pass over a file with
         # nothing left in it to strip would only be work.

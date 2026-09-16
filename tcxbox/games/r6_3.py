@@ -137,16 +137,129 @@ def _render_edits(prefix, v):
                      "client settings: " + ", ".join(sorted(values)))]
 
 
+MODES = "Game modes"
+
+#: Every mission description under `Maps\\` carries a block the file itself
+#: labels "Availability of Game Modes" -- one boolean per mode, and that block
+#: is what the menus read to decide which maps appear under which heading.
+#:
+#: The shipped split is strict and, once seen, plainly a content decision
+#: rather than a technical one. On Rainbow Six 3, all fourteen campaign maps
+#: allow Story, Co-op Story, Terrorist Hunt, Terrorist Hunt Co-op, Practice and
+#: No Rules, and every one of them has Survival, Team Survival and Sharpshooter
+#: turned OFF. The nine multiplayer maps are the exact mirror: Survival, Team
+#: Survival, Sharpshooter and No Rules on, Terrorist Hunt and Practice off.
+#: Eighteen of the twenty-eight maps have Survival off; thirteen have Terrorist
+#: Hunt off.
+#:
+#: One file gives the game away. `_Debug.ini`, whose map is called `rooms`, has
+#: every single flag set true -- the developers' own map, with the whole menu
+#: unlocked. Nothing in the format stops any other map from looking like that.
+#:
+#: Black Arrow has the same block plus three more modes, and is stingier still:
+#: Shooting Ground is enabled on two of its thirty-three maps.
+SP_MAPS = r"/MAPS/(?!R6MENU|_DEBUG|AUTOPLAY|RAVENSHIELD)(?!.*_MP\.)[^/]+\.INI$"
+MP_MAPS = r"/MAPS/[^/]*_MP\.INI$"
+ANY_MAP = r"/MAPS/(?!R6MENU|AUTOPLAY|RAVENSHIELD)[^/]+\.INI$"
+
+#: The modes a multiplayer map is allowed and a campaign map is not.
+MP_MODES = {"m_bSurvivalGame": "true", "m_bTeamSurvivalGame": "true",
+            "m_bSharpShooterGame": "true", "m_bTeamCaptureGame": "true",
+            "m_bTeamConquestGame": "true"}
+
+#: ...and the reverse. Practice rides with the hunt because it is the mode that
+#: puts you on a map alone with nothing shooting back, which is the useful
+#: thing to have on a map you have only ever played against people.
+SOLO_MODES = {"m_bTerroristHuntGame": "true", "m_bTerroristHuntCoopGame": "true",
+              "m_bPracticeModeGame": "true"}
+
+#: Everything the two discs between them define. `set_ini_values` only rewrites
+#: keys a file already has, so the three Black Arrow-only names simply do
+#: nothing on a Rainbow Six 3 disc rather than being added to it.
+EVERY_MODE = dict(MP_MODES, **SOLO_MODES)
+EVERY_MODE.update({"m_bStoryModeGame": "true", "m_bCoopStoryModeGame": "true",
+                   "m_bNoRulesGame": "true", "m_bShootingGroundGame": "true"})
+
+
+def _mode_cards(prefix):
+    return [
+        Setting(prefix + "modes", "Which modes each map allows", CHOICE,
+                "stock", MODES,
+                choices=[
+                    Choice("stock", "As shipped", ""),
+                    Choice("mp_on_campaign", "Multiplayer modes on the "
+                           "campaign maps",
+                           "Survival, Team Survival and Sharpshooter."),
+                    Choice("solo_on_mp", "Terrorist Hunt on the multiplayer "
+                           "maps", "And Practice with it."),
+                    Choice("both", "Both of the above", ""),
+                    Choice("everything", "Every mode on every map", ""),
+                ],
+                confidence="experimental",
+                help="Each map's mission description holds a block the file "
+                     "calls \"Availability of Game Modes\" -- one true or "
+                     "false per mode -- and the menus read it to decide which "
+                     "maps to list where. The shipped split is absolute: "
+                     "every campaign map has Survival, Team Survival and "
+                     "Sharpshooter off, and every multiplayer map has "
+                     "Terrorist Hunt and Practice off.\n\n"
+                     "The disc argues this is a choice rather than a limit: "
+                     "_Debug.ini, the developers' own map, ships with every "
+                     "flag true.",
+                caution="Experimental, and the risk is specific. A mode needs "
+                        "the spawn points it uses: Terrorist Hunt places "
+                        "terrorists from a map's own spawn list, and a "
+                        "multiplayer map that has none will start empty. "
+                        "Nothing here can corrupt a save -- if a map is no "
+                        "use in a mode, it is simply no use."),
+        Setting(prefix + "silenced", "Silenced loadout on every mission",
+                CHOICE, "stock", MODES,
+                choices=[Choice("stock", "As shipped", ""),
+                         Choice("true", "Silenced everywhere", "")],
+                confidence="applied",
+                help="m_bMissionModeUseSilencedEquipment picks which of the "
+                     "two loadouts each mission description carries -- the "
+                     "assault rifle or the suppressed UMP. Rainbow Six 3 "
+                     "turns it on for two maps out of twenty-eight and Black "
+                     "Arrow for none of thirty-three, although every mission "
+                     "description on both discs spells out a full silenced "
+                     "kit that is never used."),
+    ]
+
+
+def _mode_edits(prefix, v):
+    choice = v.get(prefix + "modes", "stock")
+    out = []
+    if choice == "everything":
+        out.append(FileEdit("ini_values", ANY_MAP, {"values": EVERY_MODE},
+                            "every game mode enabled on every map"))
+    else:
+        if choice in ("mp_on_campaign", "both"):
+            out.append(FileEdit("ini_values", SP_MAPS, {"values": MP_MODES},
+                                "multiplayer modes on the campaign maps"))
+        if choice in ("solo_on_mp", "both"):
+            out.append(FileEdit("ini_values", MP_MAPS, {"values": SOLO_MODES},
+                                "Terrorist Hunt and Practice on the "
+                                "multiplayer maps"))
+    if v.get(prefix + "silenced") == "true":
+        out.append(FileEdit("ini_values", SP_MAPS,
+                            {"values": {"m_bMissionModeUseSilencedEquipment":
+                                        "true"}},
+                            "silenced loadout on every mission"))
+    return out
+
+
 def _settings(prefix, aim, has_boost=False):
     return (r6engine.cards(prefix, has_templates=True, aim=aim,
                            has_boost=has_boost)
-            + _render_cards(prefix))
+            + _mode_cards(prefix) + _render_cards(prefix))
 
 
 def _build(prefix, aim, has_boost=False):
     def build(v):
         return (r6engine.edits(prefix, v, has_templates=True, aim=aim,
                                has_boost=has_boost)
+                + _mode_edits(prefix, v)
                 + _render_edits(prefix, v))
     return build
 

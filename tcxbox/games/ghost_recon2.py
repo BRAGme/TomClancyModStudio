@@ -71,6 +71,82 @@ TOGGLES = (
 )
 
 
+CAMPAIGN_FILE = r"/MISSION/CAMPAIGN\.XML$"
+
+#: Ghost Recon 2 ships 384 mission files and names 15; Summit Strike ships 646
+#: and names 11. Most of the difference is co-op and the per-mode variants of
+#: each map, far more than the campaign list has room for. The Lone Wolf set is
+#: the one worth offering: one `sp_lw_` file per campaign mission, the same
+#: mission with the squad taken away.
+GR2_LONE_WOLF = (
+    "sp_lw_01_s01_airfield.mis",
+    "sp_lw_02_s02_pagoda.mis",
+    "sp_lw_03_s03_ambush.mis",
+    "sp_lw_04_s04_destroyed_city.mis",
+    "sp_lw_05_s05_battle.mis",
+    "sp_lw_06_s06_train_depot.mis",
+    "sp_lw_07_s07_pilotdown.mis",
+    "sp_lw_08_s08_hospitalcamp.mis",
+    "sp_lw_09_s09_crossroads.mis",
+    "sp_lw_10_s10_train_crash.mis",
+    "sp_lw_11_s11_bridge.mis",
+    "sp_lw_12_s12_fueldepot.mis",
+    "sp_lw_13_s13_convoy.mis",
+    "sp_lw_14_s14_quarry.mis",
+    "sp_lw_15_s15_dam.mis",
+)
+
+SS_LONE_WOLF = (
+    "sp_lw_01_b01_peaks.mis",
+    "sp_lw_02_b02_base.mis",
+    "sp_lw_04_b04_valley.mis",
+    "sp_lw_06_b06_bunker.mis",
+    "sp_lw_07_b07_district.mis",
+    "sp_lw_08_b08_bunker.mis",
+    "sp_lw_09_b09_facility.mis",
+    "sp_lw_10_b10_canyons.mis",
+    "sp_lw_11_b11_fortress.mis",
+)
+
+CAMPAIGN = "Campaign"
+
+LONE_WOLF = {"gr2_": GR2_LONE_WOLF, "ss_": SS_LONE_WOLF}
+
+
+def _campaign_card(prefix):
+    wolves = LONE_WOLF[prefix]
+    return Setting(
+        prefix + "campaign", "Missions in the campaign", CHOICE, "stock",
+        CAMPAIGN,
+        choices=[Choice("stock", "As shipped", ""),
+                 Choice("lone_wolf", "Play the campaign as Lone Wolf",
+                        "All %d, in place of the shipped list."
+                        % len(wolves))],
+        confidence="experimental",
+        help="The campaign is one file: Mission\\campaign.xml, a flat list of "
+             "mission filenames. This disc ships hundreds of mission files it "
+             "never names -- co-op, Defend, and one per-mode variant of every "
+             "map -- and the Lone Wolf set is the one that makes sense as a "
+             "campaign: `sp_lw_`, the same missions with the squad taken "
+             "away. It replaces the shipped list rather than extending "
+             "it, because a disc image can only grow a file into its own "
+             "sector padding and a doubled campaign does not fit.",
+        caution="Experimental. A Lone Wolf mission may expect to be entered "
+                "from its own menu rather than from the campaign. Summit "
+                "Strike is also the shorter list: two of its eleven campaign "
+                "missions have no Lone Wolf file, so the swap is nine long. "
+                "Restore game puts the original list back exactly.")
+
+
+def _campaign_edits(prefix, v):
+    if v.get(prefix + "campaign") == "lone_wolf":
+        return [FileEdit("campaign", CAMPAIGN_FILE,
+                         {"add": list(LONE_WOLF[prefix]), "replace": True},
+                         "the campaign replaced by its %d Lone Wolf missions"
+                         % len(LONE_WOLF[prefix]))]
+    return []
+
+
 def _settings(prefix, guns, name):
     out = [
         Setting(prefix + "no_difficulty_dial", "Every soldier on every difficulty",
@@ -122,12 +198,13 @@ def _settings(prefix, guns, name):
             choices=[Choice("stock", "As shipped", ""),
                      Choice("TRUE", "On", ""), Choice("FALSE", "Off", "")],
             help=help_text or ("<%s> in every script\\\\*.ass." % tag)))
+    out.append(_campaign_card(prefix))
     return out
 
 
 def _build_data(prefix):
     def build(v: dict) -> list:
-        out = []
+        out = _campaign_edits(prefix, v)
         level = v.get(prefix + "lethality", "stock")
         if level != "stock":
             out.append(FileEdit("scale_ballistics", r"CMBTMODL\.XML$",

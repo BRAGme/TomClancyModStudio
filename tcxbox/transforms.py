@@ -290,6 +290,87 @@ def read_ini_values(plain: bytes, keys):
     return out
 
 
+CAMPAIGN_MISSION = re.compile(
+    rb"<Mission>\s*<Filename>([^<]+)</Filename>\s*"
+    rb"(?:<Hero>([^<]+)</Hero>\s*)?</Mission>", re.I)
+
+
+def read_campaign(plain: bytes):
+    """[(mission filename, hero portrait or "")] from a `campaign.xml`."""
+    return [(m.group(1).decode("latin1"),
+             (m.group(2) or b"").decode("latin1"))
+            for m in CAMPAIGN_MISSION.finditer(plain)]
+
+
+#: A disc image can only grow a file into its own sector padding --
+#: `Xiso.replace` refuses anything past `entry.allocated` rather than
+#: relocating the file -- so the real budget for a rewritten campaign is its
+#: length rounded up to the next sector. Computing it here means the transform
+#: fails loudly, naming how many missions WOULD fit, instead of handing the
+#: writer bytes it will reject with a message about sectors.
+CAMPAIGN_SECTOR = 2048
+
+
+def campaign_budget(plain: bytes) -> int:
+    return ((len(plain) + CAMPAIGN_SECTOR - 1) // CAMPAIGN_SECTOR) * CAMPAIGN_SECTOR
+
+
+def extend_campaign(plain: bytes, names, replace: bool = False,
+                    keep_length: bool = False):
+    """Add missions to a Ghost Recon campaign list. Returns (bytes, added).
+
+    The file is rewritten one mission per line rather than in the shipped
+    tab-indented form. That is not tidiness: Ghost Recon's campaign.xml has
+    only 654 bytes of sector padding to grow into and its fifteen entries spend
+    roughly 500 bytes on indentation alone, so compacting what is already there
+    is what makes room for the fifteen Defend missions the disc ships and never
+    lists. Nothing reading XML can tell the difference.
+
+    Missions already listed are skipped, which is what makes applying twice the
+    same as applying once.
+    """
+    have = read_campaign(plain)
+    if replace:
+        # The hero portraits are positional -- mission one's briefing face --
+        # so a swapped campaign of the same length keeps them where they were
+        # rather than losing them.
+        rows = [(n, have[i][1] if i < len(have) else "")
+                for i, n in enumerate(names)]
+        if [f.lower() for f, _h in rows] == [f.lower() for f, _h in have]:
+            return plain, 0
+        added = len(rows)
+    else:
+        known = {f.lower() for f, _h in have}
+        add = [n for n in names if n.lower() not in known]
+        if not add:
+            return plain, 0
+        rows = have + [(n, "") for n in add]
+        added = len(add)
+    out = [b"<Campaign>"]
+    for name, hero in rows:
+        line = b"<Mission><Filename>" + name.encode("latin1") + b"</Filename>"
+        if hero:
+            line += b"<Hero>" + hero.encode("latin1") + b"</Hero>"
+        out.append(line + b"</Mission>")
+    out.append(b"</Campaign>")
+    new = b"\n".join(out) + b"\n"
+    if keep_length:
+        new = fit_text(new, len(plain))
+    budget = campaign_budget(plain)
+    if len(new) > budget:
+        fits = 0
+        for i in range(len(rows), 0, -1):
+            trial = b"\n".join([out[0]] + out[1:i + 1] + [out[-1]]) + b"\n"
+            if len(trial) <= budget:
+                fits = i
+                break
+        raise TransformError(
+            "the rewritten campaign is %d bytes and the disc allocated %d for "
+            "it; %d mission(s) fit, not %d"
+            % (len(new), budget, fits, len(rows)))
+    return new, added
+
+
 def fit_text(new: bytes, want: int) -> bytes:
     """`new` made exactly `want` bytes long, using only its blank lines.
 
