@@ -2,7 +2,13 @@
 
     "Tom Clancys PS2 ModStudio.exe"                 -- open the window
     "Tom Clancys PS2 ModStudio.exe" <disc.iso>      -- open the window on that disc
+    "Tom Clancys PS2 ModStudio.exe" --preview       -- read the options with no disc
     "Tom Clancys PS2 ModStudio.exe" --cli ...       -- do it from a script instead
+
+Preview mode exists so someone without the disc can see what every option does.
+Nothing is readable and nothing is writable in it: the write buttons are held
+off, and the artwork is absent because it is read from the owner's own disc at
+run time and is never shipped with this tool.
 
 Kept as one executable so a release is a single file to download.
 """

@@ -111,6 +111,7 @@ def main():
         run_rpg_speed(args)
         run_split_scope(args)
         run_split_shadows(args)
+        run_team_kits(args)
         run_split_draw(args)
         run_split_wheel(args)
         run_zopfli_fallback()
@@ -2987,6 +2988,202 @@ def run_split_scope(args):
           rsescope.G_FRAMEBUFFER == (0x7C4, 0x7C8)
           and rsescope.G_VIEWPORT_RECT == 0x40A00
           and len(rsescope.FRAMEBUFFER_READS) == 8)
+
+
+def run_team_kits(args):
+    """The squad gadget slots, which live in every mission's own INI.
+
+    The assertions that matter are that the edit reaches all twelve kits on a
+    campaign map, that it leaves multiplayer maps byte-identical, and that it
+    turns on the sound bank for whatever it just handed out.
+    """
+    from tcps2 import rsekits, vokes
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+
+    if not args.rs3data:
+        return
+    print(chr(10) + "[Rainbow Six 3 -- teammate gadgets]")
+    with Iso(args.rs3data) as iso:
+        arcs = [v for v in vokes.open_archives(iso)
+                if "VOKES0" in str(getattr(v.r, "name", "")).upper()]
+        arc = arcs[0]
+        camp = arc.read_file("/MAPS/PARADE_A.INI")
+        mp = arc.read_file("/MAPS/GARAGE_MP.INI")
+
+    kits = rsekits.reads(camp)
+    check("a campaign map carries all twelve squad kits",
+          len(kits) == 12, str(len(kits)))
+    import re as _re
+    who = {_re.match(r"m_(Price|Weber|Loiselle)", k).group(1) for k, _p, _s in kits}
+    check("three operatives, four kits each",
+          who == {"Price", "Weber", "Loiselle"} and len(kits) == 12, str(sorted(who)))
+    check("and every kit names both gadget slots",
+          all(p and s for _k, p, s in kits))
+
+    out, n = rsekits.apply(camp, "teargas", "phosphorus")
+    check("setting both slots touches all 24 fields", n == 24, str(n))
+    after = rsekits.reads(out)
+    check("every kit now carries what was asked for",
+          all(p.endswith("R6TearGasGrenadeGadget")
+              and s.endswith("R6PhosphorusGrenadeGadget")
+              for _k, p, s in after))
+    check("the weapons were left alone",
+          rsekits._KIT.findall(camp).__len__() == rsekits._KIT.findall(out).__len__()
+          and camp.count(b"szPrimaryWeapon") == out.count(b"szPrimaryWeapon"))
+
+    import re
+    for name in (b"R6TearGasGrenadeGadget", b"R6PhosphorusGrenadeGadget"):
+        pat = re.compile(b"bUsing=(true|false),weaponname=" + b'"' + name + b'"', re.I)
+        was = pat.search(camp)
+        now = pat.search(out)
+        check("the sound bank for %s is switched on" % name.decode(),
+              now is not None and now.group(1).lower() == b"true",
+              "was %s" % (was.group(1).decode() if was else "?"))
+
+    o2, n2 = rsekits.apply(mp, "teargas", "teargas")
+    check("a multiplayer map is left byte-identical", n2 == 0 and o2 == mp)
+    # "teammates carry your loadout" -- the only option here that moves weapons
+    import re as _re2
+    want = {}
+    body = _re2.search(rb"m_PlayerEquipment=\(([^)]*)\)", camp).group(1)
+    for field in rsekits.FIELDS:
+        want[field] = _re2.search(
+            field.encode() + b'="([^"]*)"', body).group(1)
+    mine, mn = rsekits.match_player(camp)
+    check("matching the player rewrites every squad kit", mn > 0, str(mn))
+    got = _re2.findall(rb"m_(?:Price|Weber|Loiselle)[A-Za-z]*Equipment"
+                       rb"[A-Za-z]*=\(([^)]*)\)", mine)
+    check("all twelve squad kits were visited", len(got) == 12, str(len(got)))
+    plain_kits = [b for b in got if b"Silenced" not in b]
+    ok = True
+    for b in got:
+        for field, cls in want.items():
+            m2 = _re2.search(field.encode() + b'="([^"]*)"', b)
+            if m2 is None:
+                ok = False
+        # only the non-silenced kits must equal the plain player kit
+    check("every kit still names all four fields", ok)
+    price = _re2.search(rb"m_PriceEquipment=\(([^)]*)\)", mine).group(1)
+    check("a plain kit now carries the player's own weapon",
+          _re2.search(b'szPrimaryWeapon="([^"]*)"', price).group(1)
+          == want["szPrimaryWeapon"],
+          want["szPrimaryWeapon"].decode())
+    sil = _re2.search(rb"m_PriceSilencedEquipment=\(([^)]*)\)", mine).group(1)
+    silbody = _re2.search(rb"m_PlayerSilencedEquipment=\(([^)]*)\)", camp).group(1)
+    check("and a silenced kit copies the player's SILENCED weapon",
+          _re2.search(b'szPrimaryWeapon="([^"]*)"', sil).group(1)
+          == _re2.search(b'szPrimaryWeapon="([^"]*)"', silbody).group(1))
+
+    both, bn = rsekits.apply(camp, "teargas", "stock", match=True)
+    w = _re2.search(rb"m_WeberEquipment=\(([^)]*)\)", both).group(1)
+    check("gadget choice wins over the matched loadout",
+          _re2.search(b'szPrimaryItem="([^"]*)"', w).group(1)
+          == b"R6Weapons.R6TearGasGrenadeGadget"
+          and _re2.search(b'szPrimaryWeapon="([^"]*)"', w).group(1)
+          == want["szPrimaryWeapon"])
+    m3, n3b = rsekits.match_player(mp)
+    check("matching leaves a multiplayer map byte-identical",
+          n3b == 0 and m3 == mp)
+
+    # per-operative dials -- the desktop version of the Player Settings panel
+    def kit(buf, who):
+        return _re2.search(("m_%sEquipment=" % who).encode() +
+                           rb"\(([^)]*)\)", buf).group(1)
+
+    def field(body, name):
+        return _re2.search(name.encode() + b'="([^"]*)"', body).group(1)
+
+    solo, sn = rsekits.apply(
+        camp, per={"Price": {"szPrimaryWeapon": "m60e4",
+                             "szPrimaryItem": "teargas"},
+                   "Loiselle": {"szSecondaryWeapon": "deagle"}})
+    check("two slots on one man and one on another touch 12 fields",
+          sn == 12, str(sn))
+    check("Price got the weapon asked for, in all four of his kits",
+          field(kit(solo, "Price"), "szPrimaryWeapon")
+          == b"R63rdWeapons.LMGM60E4")
+    check("Loiselle got the sidearm asked for",
+          field(kit(solo, "Loiselle"), "szSecondaryWeapon")
+          == b"R63rdWeapons.PistolDesertEagle50")
+    check("and Weber, who was not named, is untouched",
+          kit(solo, "Weber") == kit(camp, "Weber"))
+
+    mixed, _mn = rsekits.apply(camp, "frag", "stock", match=True,
+                               per={"Price": {"szPrimaryItem": "teargas"}})
+    check("a per-man choice overrides the squad-wide one",
+          field(kit(mixed, "Price"), "szPrimaryItem")
+          == b"R6Weapons.R6TearGasGrenadeGadget"
+          and field(kit(mixed, "Weber"), "szPrimaryItem")
+          == b"R6Weapons.R6FragGrenadeGadget")
+
+    # the palette must never offer something the disc does not issue
+    kits_all = b" ".join(_re2.findall(
+        rb"m_(?:Player|Price|Weber|Loiselle)[A-Za-z]*Equipment[A-Za-z]*"
+        rb"=\(([^)]*)\)", camp))
+    for table, slot in ((rsekits.PRIMARIES, "primary weapons"),
+                        (rsekits.SECONDARIES, "sidearms")):
+        bad = [cls for _k, (cls, _l) in table.items()]
+        check("every offered %s name is well formed" % slot,
+              all("." in c and c.split(".")[0] in
+                  ("R63rdWeapons", "R6Weapons") for c in bad))
+    check("claymore, remote charge and molotov stay out of the palette",
+          not any("Claymore" in c or "RemoteCharge" in c or "Molotov" in c
+                  for c in list(rsekits.GADGETS.values())
+                  + [c for c, _l in rsekits.PRIMARIES.values()]
+                  + [c for c, _l in rsekits.SECONDARIES.values()]))
+    try:
+        rsekits.apply(camp, per={"Price": {"szPrimaryWeapon": "claymore"}})
+        refused = False
+    except rsekits.KitError:
+        refused = True
+    check("a class the disc never issues is refused for a weapon slot",
+          refused)
+    try:
+        rsekits.apply(camp, per={"Nobody": {"szPrimaryWeapon": "m4"}})
+        refused2 = False
+    except rsekits.KitError:
+        refused2 = True
+    check("an operative who does not exist is refused", refused2)
+
+    profile2 = BY_ID["r6_3_slus20883"]
+    per_cards = [s for s in profile2.settings
+                 if s.group == "Teammates" and "_" in s.key
+                 and s.key.split("_")[0] in ("price", "weber", "loiselle")]
+    check("twelve per-operative cards reach the profile",
+          len(per_cards) == 12, str(len(per_cards)))
+    made2 = [e for e in profile2.build_data(
+                 profile2.effective({"price_primary": "m60e4"}))
+             if e.op == "team_gadget"]
+    check("choosing one man's weapon writes one data edit carrying just him",
+          len(made2) == 1
+          and made2[0].params["per"] == {"Price": {"szPrimaryWeapon": "m60e4"}})
+
+
+    o3, n3 = rsekits.apply(camp, "stock", "stock")
+    check("choosing stock changes nothing", n3 == 0 and o3 == camp)
+
+    try:
+        rsekits.apply(camp, "rocket", "stock")
+        bad = False
+    except rsekits.KitError:
+        bad = True
+    check("a gadget the disc does not carry is refused", bad)
+
+    profile = BY_ID["r6_3_slus20883"]
+    for key in ("team_gadget_1", "team_gadget_2"):
+        st = profile.setting(key)
+        check("%s reaches the profile as a data edit" % key,
+              st is not None and st.touches == "data")
+    check("leaving both alone writes no data edit",
+          not [e for e in profile.build_data(profile.effective({}))
+               if e.op == "team_gadget"])
+    made = [e for e in profile.build_data(
+                profile.effective({"team_gadget_1": "teargas"}))
+            if e.op == "team_gadget"]
+    check("choosing one writes exactly one data edit",
+          len(made) == 1 and made[0].params["primary"] == "teargas"
+          and made[0].params["secondary"] == "stock")
 
 
 def run_split_shadows(args):

@@ -168,6 +168,14 @@ def _op_zone_counts(plain, params):
     return r6zones.scale(plain, float(params.get("factor", 1.0)))[0]
 
 
+def _op_team_gadget(plain, params):
+    from . import rsekits
+    return rsekits.apply(plain, params.get("primary", "stock"),
+                         params.get("secondary", "stock"),
+                         bool(params.get("match", False)),
+                         params.get("per") or {})
+
+
 def _op_ws_slot(plain, params):
     return transforms.set_ws_slot(plain, int(params["slot"]),
                                   bool(params.get("using", True)))
@@ -180,6 +188,7 @@ OPS = {
     "bump_stats": _op_bump_stats,
     "gtf_variables": _op_gtf_variables,
     "ini_values": _op_ini_values,
+    "team_gadget": _op_team_gadget,
     "ws_slot": _op_ws_slot,
     "grenade_carry": _op_grenade_carry,
     "enemy_loadout": _op_enemy_loadout,

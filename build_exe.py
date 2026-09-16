@@ -37,7 +37,7 @@ HIDDEN = [
     "tcps2.psx", "tcps2.upscale",
     "tcps2.rseloadout", "tcps2.rseguns", "tcps2.rsemissions",
     "tcps2.rsewheel", "tcps2.rserpg", "tcps2.rsesidearm", "tcps2.rsescope", "tcps2.rsedraw",
-    "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon", "tcps2.rseshadow",
+    "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon", "tcps2.rseshadow", "tcps2.rsekits",
     "tcps2.rsechatter",
     # zopfli packs the LIN chunks zlib cannot fit back into their
     # slots. Without it those chunks simply refuse every edit.

@@ -30,8 +30,9 @@ import struct
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
-from .. import (rsecanon, rsechatter, rsedraw, rseloadout, rsemandown, rserpg,
-                rseshadow, rsesidearm, rsescope, rsewheel)
+from .. import (rsecanon, rsechatter, rsedraw, rsekits, rseloadout,
+                rsemandown, rserpg, rseshadow, rsesidearm, rsescope,
+                rsewheel)
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -567,7 +568,7 @@ def _build_settings():
                         "reading comes from the key's comment and its name, "
                         "not from watching the code, so 0 is the setting to "
                         "use if you want the line reliably."),
-    ] + rsesidearm.cards("", TEAM_GROUP) + [
+    ] + rsesidearm.cards("", TEAM_GROUP) + rsekits.cards("", TEAM_GROUP) + [
 
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
@@ -905,6 +906,27 @@ def build_data(v: dict) -> list:
     if ini:
         out.append(FileEdit("ini_values", r"/R6GAMESETTINGS\.INI$", "",
                             {"values": ini}, "AI and control settings"))
+    g1 = v.get("team_gadget_1", "stock")
+    g2 = v.get("team_gadget_2", "stock")
+    mine = bool(v.get("team_match_player"))
+    per = {}
+    for who in rsekits.OPERATIVES:
+        slots = {}
+        for suffix, field, _what in rsekits._SLOTS:
+            pick = v.get("%s_%s" % (who.lower(), suffix), "stock")
+            if pick != "stock":
+                slots[field] = pick
+        if slots:
+            per[who] = slots
+    if g1 != "stock" or g2 != "stock" or mine or per:
+        # Every campaign map has its own INI. Multiplayer and menu INIs
+        # carry no squad kits, so the transform reports zero on them and
+        # leaves them byte-identical -- which is what makes one broad
+        # selector safe here.
+        out.append(FileEdit("team_gadget", r"/MAPS/[^/]+\.INI$", "",
+                            {"primary": g1, "secondary": g2, "match": mine,
+                             "per": per},
+                            "teammate gadgets"))
     carry = int(v.get("grenade_carry", 20))
     if carry != 20:
         out.append(FileEdit("grenade_carry", r"/COMMON(OFF|_SS)?\.LIN$", "",

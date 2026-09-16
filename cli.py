@@ -1,5 +1,6 @@
 """Command line for the same engine the window drives.
 
+    python ModStudio.py --cli games   [game]      -- no disc needed
     python ModStudio.py --cli scan    [folder]
     python ModStudio.py --cli info    <iso>
     python ModStudio.py --cli list    <iso>
@@ -103,9 +104,9 @@ def cmd_info(args):
     return 0
 
 
-def cmd_list(args):
-    det = _need(args.iso)
-    p = det.profile
+def _print_settings(p):
+    """One profile's options. Shared by `list` (needs a disc) and `games`
+    (does not), so the two can never drift apart."""
     if not p.settings:
         print("%s has no options yet." % p.title)
         return 0
@@ -132,6 +133,35 @@ def cmd_list(args):
               % (s.key, rng, s.default, " ".join(flags)))
         print("      %s" % s.label)
     return 0
+
+
+def cmd_list(args):
+    return _print_settings(_need(args.iso).profile)
+
+
+def cmd_games(args):
+    """Every game and every option, with no disc involved.
+
+    The text twin of the window's Preview: it answers "what can this do"
+    for someone who does not own the disc, and it is the only path here that
+    opens nothing at all.
+    """
+    from tcps2.games import PROFILES
+    if not args.game:
+        print("%-22s %-11s %-9s %s" % ("GAME", "SERIAL", "OPTIONS", "ID"))
+        for p in sorted(PROFILES, key=lambda q: q.short):
+            print("%-22s %-11s %-9d %s"
+                  % (p.short, p.serial, len(p.settings), p.id))
+        print("\nAdd a game to see its options, e.g. "
+              "--cli games %s" % sorted(PROFILES, key=lambda q: q.short)[0].id)
+        return 0
+    want = args.game.lower()
+    for p in PROFILES:
+        if want in (p.id.lower(), p.short.lower(), p.serial.lower()):
+            print("%s  (%s)" % (p.title, p.serial))
+            return _print_settings(p)
+    raise SystemExit("no game matching %r -- run `--cli games` for the list"
+                     % args.game)
 
 
 def cmd_plan(args):
@@ -250,6 +280,10 @@ def main(argv=None):
         if with_out:
             p.add_argument("--out", metavar="PATH")
         return p
+
+    gp = sub.add_parser("games", help="every game and option, with no disc")
+    gp.add_argument("game", nargs="?")
+    gp.set_defaults(fn=cmd_games)
 
     sp = sub.add_parser("scan", help="list the discs in a folder")
     sp.add_argument("folder", nargs="?")

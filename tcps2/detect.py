@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 
 from .engine import backup_dir_for, iso_crc, own_crc_shift
-from .games import BY_BOOT, PROFILES
+from .games import BY_BOOT, BY_ID, PROFILES
 from .iso import Iso, IsoError
 
 
@@ -24,6 +24,9 @@ class Detection:
     #: True when the CRC differs from stock only because of our own code patches
     crc_is_ours: bool = False
     has_backup: bool = False
+    #: True for a profile opened without a disc, to look at the options only.
+    #: Nothing is readable and nothing is writable in this state.
+    preview: bool = False
 
     @property
     def title(self):
@@ -31,6 +34,25 @@ class Detection:
 
 
 BOOT_RX = re.compile(r"BOOT2\s*=\s*cdrom0:\\?([A-Za-z0-9_.]+)", re.I)
+
+
+def preview_detection(profile) -> Detection:
+    """A profile opened with no disc behind it, so the options can be read.
+
+    `path` stays EMPTY on purpose. Every art loader and mission-art lookup
+    takes the disc path, and an empty one makes them fail their own open and
+    return nothing, so none of them needs a preview branch. A page already
+    cached from the user's own disc is still used when one exists -- which is
+    why this is not the same as shipping the artwork.
+    """
+    if isinstance(profile, str):
+        profile = BY_ID[profile]
+    return Detection(
+        "", True, profile=profile, boot=profile.boot,
+        crc=profile.pcsx2_crc, volume="(no disc)", crc_matches=True,
+        has_backup=False, preview=True,
+        message="Preview only — no disc is loaded, so nothing can be "
+                "written. Open a disc image to use these options.")
 
 
 def identify(path, crc=True) -> Detection:

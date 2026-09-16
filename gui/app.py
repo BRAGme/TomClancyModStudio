@@ -21,7 +21,8 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcps2 import art, engine  # noqa: E402
-from tcps2.detect import identify, look  # noqa: E402
+from tcps2.detect import identify, look, preview_detection  # noqa: E402
+from tcps2.games import PROFILES  # noqa: E402
 from tcps2.model import BOOL, INT  # noqa: E402
 
 from . import discorddialog, presence, skins, theme  # noqa: E402
@@ -31,7 +32,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "4.2"
+VERSION = "4.5"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -47,6 +48,11 @@ GUTTER = 22
 #: the picker below it start at the same x. Left to size themselves, "DISC" and
 #: "GAMES FOLDER" put the two fields a centimetre apart.
 LABEL_W = 13
+
+#: Shelf entries are label -> path. Preview entries carry this instead of a
+#: path, so one picker serves both "the discs in your folder" and "every game
+#: this tool knows", and `_load_iso` stays the single way in.
+PREVIEW_PREFIX = "preview:"
 
 
 def settings_path():
@@ -68,6 +74,8 @@ class App(tk.Tk):
 
         self.detection = None
         self.profile = None
+        #: set by --preview so the remembered disc does not load over the top
+        self.preview_only = False
         #: label -> path for whatever the picker is currently offering
         self._shelf = {}
         self._shelf_dir = ""
@@ -144,6 +152,8 @@ class App(tk.Tk):
         self.browse.pack(side="left", padx=(theme.px(10), 0))
         self.browse_dir = ActionButton(row, "Folder", self._browse_folder)
         self.browse_dir.pack(side="left", padx=(theme.px(6), 0))
+        self.preview_btn = ActionButton(row, "Preview", self._enter_preview)
+        self.preview_btn.pack(side="left", padx=(theme.px(6), 0))
 
         # Second line: which game, out of the discs in that folder. The two
         # fields are the two questions in order -- where are your discs, and
@@ -162,8 +172,14 @@ class App(tk.Tk):
                            padx=(0, theme.px(4)), pady=theme.px(2))
         self.game_box.bind("<<ComboboxSelected>>", self._pick_game)
 
-        self.status = tk.Label(self.stage, text="", bg=p.bg, fg=p.dim,
-                               font=theme.F("body", 9), anchor="w")
+        # Opening line rather than a blank bar: without a disc the window has
+        # nothing to say for itself, and Preview is the one thing that works
+        # in that state.
+        self.status = tk.Label(
+            self.stage,
+            text="Choose a disc image or a folder of them — or press "
+                 "Preview to read every option without a disc.",
+            bg=p.bg, fg=p.dim, font=theme.F("body", 9), anchor="w")
 
         self.group = Chrome(self.stage, kind="group", pad=theme.px(12),
                             autofit=False)
@@ -392,10 +408,49 @@ class App(tk.Tk):
         if path:
             self._load_iso(path)
 
+    # -- preview (no disc) -------------------------------------------------
+    def _enter_preview(self):
+        """Fill the picker with every game this tool knows and open the first.
+
+        For looking at what the options ARE without owning the disc, which is
+        the only way to answer "what does this do" before buying into it.
+        """
+        self._shelf_dir = ""
+        self._shelf = {}
+        for p in sorted(PROFILES, key=lambda q: q.short):
+            self._shelf["%s   ·   %s   ·   preview"
+                         % (p.short, p.serial)] = PREVIEW_PREFIX + p.id
+        names = list(self._shelf)
+        self.game_box.configure(values=names,
+                                width=min(74, max(len(n) for n in names) + 2))
+        self.path_var.set("")
+        self.game_var.set(names[0])
+        self._say("Preview: no disc loaded, nothing can be written.", "warn")
+        self._load_iso(self._shelf[names[0]])
+
+    def _load_preview(self, profile_id):
+        det = preview_detection(profile_id)
+        self.detection, self.profile = det, det.profile
+        theme.use(skins.for_profile(det.profile))
+        # Every art call takes the (empty) disc path, so each one fails its own
+        # open and returns nothing. A page cached from the user's own disc is
+        # still honoured, which is why preview looks right on the machine that
+        # owns the game and stays bare everywhere else.
+        skins.set_textures(art.chrome_images(det, theme.cache_dir()))
+        self.backdrop_src = art.banner_image(det, theme.cache_dir())
+        self.emblem_src = art.emblem_image(det, theme.cache_dir())
+        self._restyle()
+        self.status.configure(text="%s   •   preview — no disc loaded"
+                              % det.profile.serial, fg=theme.P.warn)
+        self._build_settings()
+        self._set_buttons(False)
+
     def _load_iso(self, path):
         path = path.strip().strip('"')
         if not path:
             return
+        if path.startswith(PREVIEW_PREFIX):
+            return self._load_preview(path[len(PREVIEW_PREFIX):])
         self._say("Reading %s" % (os.path.basename(path.rstrip("\\/")) or path))
 
         # Reading a shelf again opens every disc image on it, and can only find
@@ -472,6 +527,11 @@ class App(tk.Tk):
         self._refresh_layout()
 
     def _set_buttons(self, on):
+        # Authoritative rather than advisory: _build_settings ends by calling
+        # this with True, so preview has to be vetoed HERE or loading a preview
+        # profile would re-enable the write buttons behind it.
+        if getattr(self.detection, "preview", False):
+            on = False
         has = bool(self.profile and self.profile.settings)
         crc_ok = bool(self.detection and self.detection.crc_matches)
         self.apply_btn.set_enabled(on and has and crc_ok)
@@ -533,9 +593,12 @@ class App(tk.Tk):
         self._publish()
         for n, item in self.nav_items.items():
             item.select(n == name)
+        where = (os.path.basename(self.detection.path)
+                 or ("preview — no disc"
+                     if getattr(self.detection, "preview", False) else ""))
         self._retitle(name or self.profile.short,
-                      "%s  ·  %s" % (self.profile.title,
-                                          os.path.basename(self.detection.path)))
+                      "%s  ·  %s" % (self.profile.title, where)
+                      if where else self.profile.title)
         self._retitle_image(max(self.stage.winfo_width(), 10), theme.px(HEADER))
         self.area.clear()
         body = self.area.body
@@ -568,11 +631,20 @@ class App(tk.Tk):
         det = self.detection
         card = Chrome(body, kind="panel", pad=theme.px(16))
         card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
-        rows = [("File", det.path), ("Boot", det.boot),
-                ("Serial", det.profile.serial), ("Volume id", det.volume),
-                ("Disc CRC", det.crc + ("" if det.crc_matches else "  (unexpected)")),
-                ("Cheat file", det.profile.pcsx2_crc + ".pnach"),
-                ("Backup", "yes" if det.has_backup else "not taken yet")]
+        if getattr(det, "preview", False):
+            # No disc was read, so every fact that comes OFF a disc would be a
+            # guess. Only what the profile itself knows is shown.
+            rows = [("File", "— preview, no disc loaded"),
+                    ("Boot", det.boot), ("Serial", det.profile.serial),
+                    ("Expected CRC", det.profile.pcsx2_crc),
+                    ("Cheat file", det.profile.pcsx2_crc + ".pnach"),
+                    ("Backup", "—")]
+        else:
+            rows = [("File", det.path), ("Boot", det.boot),
+                    ("Serial", det.profile.serial), ("Volume id", det.volume),
+                    ("Disc CRC", det.crc + ("" if det.crc_matches else "  (unexpected)")),
+                    ("Cheat file", det.profile.pcsx2_crc + ".pnach"),
+                    ("Backup", "yes" if det.has_backup else "not taken yet")]
         for k, v in rows:
             r = tk.Frame(card.body, bg=theme.P.panel)
             r.pack(fill="x", pady=theme.px(2))
@@ -872,6 +944,7 @@ class App(tk.Tk):
         for p in self._recent:
             if os.path.isfile(p):
                 self.after(250, lambda q=p: (self.detection is None
+                                             and not self.preview_only
                                              and self._load_iso(q)))
                 break
 
@@ -880,10 +953,16 @@ def main(argv=None):
     theme.set_dpi_aware()
     argv = list(sys.argv[1:] if argv is None else argv)
     app = App()
-    for arg in argv:
-        if os.path.isfile(arg):
-            app.after(150, lambda q=arg: app._load_iso(q))
-            break
+    if "--preview" in argv or "-p" in argv:
+        # Set before the 250 ms recent-disc timer fires, so a machine that has
+        # opened a disc before still lands in preview when asked for preview.
+        app.preview_only = True
+        app.after(150, app._enter_preview)
+    else:
+        for arg in argv:
+            if os.path.isfile(arg):
+                app.after(150, lambda q=arg: app._load_iso(q))
+                break
     app.mainloop()
 
 
