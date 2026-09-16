@@ -40,8 +40,8 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tcxbox import (dataedit, engine, globfile, model, rsb,  # noqa: E402
-                    transforms, umd, xbe, xiso, xpr)
+from tcxbox import (dataedit, engine, globfile, hunt, model,  # noqa: E402
+                    rsb, transforms, umd, xbe, xiso, xpr)
 from tcxbox.detect import identify, scan                          # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
 
@@ -429,6 +429,87 @@ def test_campaign_lists(games):
             "idempotent" % checked)
 
 
+def test_hunt_counts(games):
+    """The hunt spawn counts read, scale and re-pack without moving a byte.
+
+    This is the only edit in the tool that goes inside a cooked level package,
+    so it is the only one where "the file is the same length" is not obviously
+    true. A `.LIN` is chunked deflate: changing an int changes how well its
+    chunk compresses, and the chunk has a fixed slot. `lin.substitute` fits the
+    stream back into that slot or refuses, and this checks it fits -- on every
+    level of both discs, not on a sample.
+
+    The identity case matters as much as the scaling one. A factor of 1.0 has
+    to give back the original container byte for byte, because that is what
+    makes clearing the option a real undo rather than a re-pack that happens to
+    decode the same.
+    """
+    checked = sites = 0
+    for det in games:
+        if not any(st.key.endswith("_hunt_count") for st in det.profile.settings):
+            continue
+        with Root(det.path) as root:
+            for key in root.match(r"/SYSTEM/(?!.*_SKINS)[^/]+\.LIN$"):
+                raw = root.read(key)
+                n, total = hunt.census(raw)
+                if not n:
+                    continue
+                sites += n
+                same, moved = hunt.scale(raw, 1.0)
+                must(same == raw and moved == 0,
+                     "%s/%s: a factor of 1.0 changed the container"
+                     % (det.profile.short, key))
+                out, moved = hunt.scale(raw, 2.0)
+                must(len(out) == len(raw),
+                     "%s/%s: doubling moved the container length %d -> %d"
+                     % (det.profile.short, key, len(raw), len(out)))
+                if moved:
+                    n2, total2 = hunt.census(out)
+                    must(n2 == n, "%s/%s: doubling changed the site count "
+                                  "%d -> %d" % (det.profile.short, key, n, n2))
+                    must(total2 > total,
+                         "%s/%s: doubling did not raise the total (%d -> %d)"
+                         % (det.profile.short, key, total, total2))
+                    # and the edit survives a round trip through the container
+                    again, _m = hunt.scale(out, 1.0)
+                    must(again == out, "%s/%s: re-packing an edited container "
+                                       "is not stable" % (det.profile.short, key))
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d level package(s) carrying %d spawn count(s) scale and re-pack "
+            "into the same bytes" % (checked, sites))
+
+
+def test_disc_revert_is_bit_exact(games, where):
+    """Applying and reverting leaves a disc image bit for bit as it was.
+
+    Not merely file for file. `Xiso.replace` used to zero a file's whole sector
+    padding, so reverting 21 level packages left 26,929 bytes of zeros where
+    Rainbow Six 3's own `ff` inter-file fill had been -- every file correct,
+    every checksum of the image wrong. Only the bytes the old file actually
+    occupied are cleared now, and this is the check that says so.
+    """
+    picked = [d for d in games
+              if str(d.path).lower().endswith((".iso",))
+              and any(st.key.endswith("_hunt_count") for st in d.profile.settings)]
+    must(picked, "no disc image with a level-package option to test")
+    det = picked[0]
+    copy = os.path.join(where, "revert-" + os.path.basename(str(det.path)))
+    shutil.copy2(str(det.path), copy)
+    before = hashlib.sha256(open(copy, "rb").read()).hexdigest()
+    prof = identify(copy).profile
+    key = [st.key for st in prof.settings if st.key.endswith("_hunt_count")][0]
+    engine.apply(copy, prof, prof.normalise({key: "double"}))
+    mid = hashlib.sha256(open(copy, "rb").read()).hexdigest()
+    must(mid != before, "applying changed nothing in the image")
+    engine.revert(copy, prof)
+    after = hashlib.sha256(open(copy, "rb").read()).hexdigest()
+    must(after == before,
+         "%s: reverting did not restore the image bit for bit" % prof.short)
+    os.remove(copy)
+    return "%s: applied, reverted, image identical to the byte" % prof.short
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -787,6 +868,8 @@ def main(argv):
           lambda: test_no_option_is_a_noop(games))
     check("every campaign list fits its disc",
           lambda: test_campaign_lists(games))
+    check("hunt spawn counts re-pack into the same bytes",
+          lambda: test_hunt_counts(games))
 
     print("census")
     check("weapons split by side where the data allows",
@@ -800,6 +883,8 @@ def main(argv):
               lambda: test_cycle(games, where, everything))
         check("applying twice equals applying once",
               lambda: test_idempotent(games, where, everything))
+        check("a reverted disc image is bit for bit as it was",
+              lambda: test_disc_revert_is_bit_exact(games, where))
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, _exc, tb in FAIL:

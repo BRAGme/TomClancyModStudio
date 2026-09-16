@@ -84,6 +84,14 @@ def _op_gtf_variables(plain, params):
     return transforms.set_gtf_variables(plain, params.get("values", {}))
 
 
+def _op_hunt_scale(plain, params):
+    from . import hunt
+    try:
+        return hunt.scale(plain, float(params.get("factor", 1.0)))
+    except hunt.HuntError as exc:
+        raise DataEditError(str(exc)) from exc
+
+
 def _op_campaign(plain, params):
     return transforms.extend_campaign(plain, params.get("add", ()),
                                       replace=bool(params.get("replace")))
@@ -142,6 +150,7 @@ OPS = {
     "bump_stats": _op_bump_stats,
     "gtf_variables": _op_gtf_variables,
     "campaign": _op_campaign,
+    "hunt_scale": _op_hunt_scale,
     "ini_values": _op_ini_values,
     "scale_ini": _op_scale_ini,
     "tpt_values": _op_tpt_values,
@@ -320,12 +329,21 @@ def apply_data(root, edits, store, progress=None):
                 continue
             if key in pending:
                 plain = pending[key]
+                fresh = False
             else:
                 plain = store.original(key)
-                if plain is None:
+                fresh = plain is None
+                if fresh:
                     plain = root.read(key)
-                    store.remember(key, plain)
             new, n = op(plain, edit.params)
+            # Remember AFTER the op, and only when it moved something. An edit
+            # whose selector is broad -- the hunt counts match every .LIN on
+            # the disc and change a fifth of them -- would otherwise copy 300
+            # MB into the backup folder to protect files it never touched.
+            # Correctness is unaffected: a file that was not changed is still
+            # the shipped one, so there is nothing to put back.
+            if fresh and new != plain:
+                store.remember(key, plain)
             if len(new) != len(plain) and root.packed(key):
                 raise DataEditError(
                     "%s: %s changed the file length, which neither a glob nor "

@@ -215,8 +215,15 @@ class Xiso:
         at = self.base + entry.sector * SECTOR
         self._fh.seek(at)
         self._fh.write(data)
-        pad = entry.allocated - len(data)
-        if pad:
+        # Zero only what the OLD file occupied past the end of the new one, so
+        # a shortened file cannot trail its old tail. Zeroing all the way out
+        # to `allocated` would also overwrite the disc's own inter-file fill --
+        # `ff` on Rainbow Six 3 -- and that fill is not ours to change: it
+        # costs nothing to keep, and keeping it is what lets a reverted image
+        # still match the checksum it shipped with. Reverting 21 level
+        # packages used to leave 26,929 bytes of zeros behind for this reason.
+        pad = min(entry.size, entry.allocated) - len(data)
+        if pad > 0:
             self._fh.write(b"\0" * pad)
         if len(data) != entry.size:
             self._fh.seek(entry.size_field)

@@ -249,10 +249,64 @@ def _mode_edits(prefix, v):
     return out
 
 
+#: Every cooked level package, and `Common.lin` with them. The skin packages
+#: are excluded because they carry no actors at all, so matching them would
+#: only mean decompressing forty more megabytes to find nothing.
+LEVEL_FILES = r"/SYSTEM/(?!.*_SKINS)[^/]+\.LIN$"
+
+#: choice -> factor for the hunt-count dial.
+HUNT_STEPS = {"less": 0.5, "more": 1.5, "double": 2.0, "triple": 3.0,
+              "max": 6.0}
+
+
+def _hunt_cards(prefix):
+    return [
+        Setting(prefix + "hunt_count", "Terrorists in a Terrorist Hunt",
+                CHOICE, "stock", MODES,
+                choices=[Choice("stock", "As shipped", ""),
+                         Choice("less", "Half", ""),
+                         Choice("more", "Half again", ""),
+                         Choice("double", "Double", ""),
+                         Choice("triple", "Triple", ""),
+                         Choice("max", "Six times", "Clamped at 100 a zone.")],
+                confidence="experimental",
+                help="The spawn counts on every deployment zone -- the actor "
+                     "Terrorist Hunt fills a map from, and the one a wave "
+                     "draws from. They are in no ini; they sit inside the "
+                     "cooked .LIN level packages, which is why nothing "
+                     "reaches them.\n\n"
+                     "Two dials move together. Most zones carry no count at "
+                     "all and fall back to the class default in Common.lin, "
+                     "which ships at 1 and 1; the rest override it per zone, "
+                     "and this disc's largest is 12. Scaling both is what "
+                     "makes one choice mean one thing everywhere.\n\n"
+                     "A zone that ships zero stays zero -- zero means the "
+                     "zone contributes nobody, and no multiplier changes "
+                     "that.",
+                caution="Experimental: verified as bytes, not watched in "
+                        "game. It is also the one option here that backs up "
+                        "whole level packages -- about 140 MB on Rainbow Six "
+                        "3, 53 MB on Black Arrow -- because that is what a "
+                        "level is. Counts are clamped to 100, and Restore "
+                        "game puts the packages back byte for byte."),
+    ]
+
+
+def _hunt_edits(prefix, v):
+    choice = v.get(prefix + "hunt_count", "stock")
+    if choice not in HUNT_STEPS:
+        return []
+    return [FileEdit("hunt_scale", LEVEL_FILES,
+                     {"factor": HUNT_STEPS[choice]},
+                     "terrorist hunt spawn counts at %d%%"
+                     % int(HUNT_STEPS[choice] * 100))]
+
+
 def _settings(prefix, aim, has_boost=False):
     return (r6engine.cards(prefix, has_templates=True, aim=aim,
                            has_boost=has_boost)
-            + _mode_cards(prefix) + _render_cards(prefix))
+            + _mode_cards(prefix) + _hunt_cards(prefix)
+            + _render_cards(prefix))
 
 
 def _build(prefix, aim, has_boost=False):
@@ -260,6 +314,7 @@ def _build(prefix, aim, has_boost=False):
         return (r6engine.edits(prefix, v, has_templates=True, aim=aim,
                                has_boost=has_boost)
                 + _mode_edits(prefix, v)
+                + _hunt_edits(prefix, v)
                 + _render_edits(prefix, v))
     return build
 
