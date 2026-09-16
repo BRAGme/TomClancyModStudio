@@ -33,6 +33,9 @@ HIDDEN = [
     "tcxbox.gamedir", "tcxbox.globfile", "tcxbox.umd", "tcxbox.xbe",
     "tcxbox.xiso",
     "tcxbox.dataedit", "tcxbox.transforms", "tcxbox.rseguns",
+    # Imported inside the op functions rather than at module scope, so a
+    # frozen build will not find them by following imports.
+    "tcxbox.lin", "tcxbox.upackage", "tcxbox.hunt", "tcxbox.rsesidearm",
     "tcxbox.art", "tcxbox.rsb", "tcxbox.xpr",
     "tcxbox.games", "tcxbox.games.ghost_recon", "tcxbox.games.ghost_recon2",
     "tcxbox.games.r6_3", "tcxbox.games.graw", "tcxbox.games.r6engine",
