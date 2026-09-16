@@ -137,14 +137,16 @@ def _render_edits(prefix, v):
                      "client settings: " + ", ".join(sorted(values)))]
 
 
-def _settings(prefix, aim):
-    return (r6engine.cards(prefix, has_templates=True, aim=aim)
+def _settings(prefix, aim, has_boost=False):
+    return (r6engine.cards(prefix, has_templates=True, aim=aim,
+                           has_boost=has_boost)
             + _render_cards(prefix))
 
 
-def _build(prefix, aim):
+def _build(prefix, aim, has_boost=False):
     def build(v):
-        return (r6engine.edits(prefix, v, has_templates=True, aim=aim)
+        return (r6engine.edits(prefix, v, has_templates=True, aim=aim,
+                               has_boost=has_boost)
                 + _render_edits(prefix, v))
     return build
 
@@ -199,8 +201,8 @@ BLACK_ARROW = GameProfile(
     short="Black Arrow",
     title_id="55530037",
     markers=[Marker("System", "the cooked packages and the bundle")],
-    settings=_settings("ba_", r6engine.BA_AIM),
-    build_data=_build("ba_", r6engine.BA_AIM),
+    settings=_settings("ba_", r6engine.BA_AIM, has_boost=True),
+    build_data=_build("ba_", r6engine.BA_AIM, has_boost=True),
     notes=BLACK_ARROW_NOTES,
     # Black Arrow's wordmark is printed on a lit amber panel rather than on
     # black, so its ramp sits much higher than Rainbow Six 3's.

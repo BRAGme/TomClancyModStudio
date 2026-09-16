@@ -242,6 +242,105 @@ GRAW_AIM = Aim(GRAW_STOCK, GRAW_ALTS, ps2=GRAW_PS2_AIM,
                table=_curve_table(GRAW_STOCK, GRAW_ALTS))
 
 
+#: The auto-aim the Xbox build DOES have. Rainbow Six 3 PS2's magnetic lock-on
+#: cannot be ported (its key names are in no Xbox binary), but these three are
+#: declared in `Engine.u` and shipped on all three discs, and together they are
+#: the assist that is actually here:
+#:
+#:   * `m_fAimDamping` -- rotation is multiplied by this while the auto-aim
+#:     system holds a target, so LOWER means the view slows down harder as you
+#:     pass over someone. 0.8 on Rainbow Six 3 and Black Arrow, 0.65 on GRAW.
+#:   * `m_fAimDampingMinZone` -- the fraction of the circle within which that
+#:     damping is at full strength. 0.300 everywhere.
+#:   * `m_fAimStrafeStickiness` -- how much the aim is dragged along with a
+#:     target you are strafing past. 0.175 everywhere.
+#:
+#: The four steps below move all three together, because moving one alone gives
+#: a result nobody would describe as "more help" or "less".
+AIM_ASSIST = {
+    "off": {"m_fAimDamping": "1.0", "m_fAimDampingMinZone": "0.000",
+            "m_fAimStrafeStickiness": "0.000", "m_bAutoAimZoom": "FALSE"},
+    "stronger": {"m_fAimDamping": "0.6", "m_fAimDampingMinZone": "0.450",
+                 "m_fAimStrafeStickiness": "0.300", "m_bAutoAimZoom": "TRUE"},
+    "strongest": {"m_fAimDamping": "0.4", "m_fAimDampingMinZone": "0.600",
+                  "m_fAimStrafeStickiness": "0.500", "m_bAutoAimZoom": "TRUE"},
+}
+
+AIM_ASSIST_TABLE = (
+    ("", "off", "stock", "stronger", "strongest", ""),
+    ("turn damping", "1.0", "0.8", "0.6", "0.4", "lower = slows more"),
+    ("full-effect zone", "0.000", "0.300", "0.450", "0.600", "share of circle"),
+    ("strafe stickiness", "0.000", "0.175", "0.300", "0.500", ""),
+    ("zoom snaps on", "no", "yes", "yes", "yes", ""),
+)
+
+#: The two circles and the debug overlay behind them. Rainbow Six 3 ships with
+#: the aiming circle OFF and GRAW ships with it ON, which is why this is a
+#: per-disc switch rather than a single toggle.
+RETICLE = {
+    "both": {"m_bShowAimingCircle": "TRUE", "m_bShowAutoAimCircle": "TRUE"},
+    "aiming": {"m_bShowAimingCircle": "TRUE", "m_bShowAutoAimCircle": "FALSE"},
+    "neither": {"m_bShowAimingCircle": "FALSE", "m_bShowAutoAimCircle": "FALSE"},
+}
+
+#: How far a hit shoves the view. Rainbow Six 3 and Black Arrow ship 2000.0
+#: against GRAW's 100.0 -- a twentyfold difference, and the reason being shot
+#: in Rainbow Six 3 throws your aim off the screen. The two side factors scale
+#: it per target: your squad takes half (0.5), terrorists take half again more
+#: (1.5). `m_fWeaponJumpFactor` is the muzzle climb that rides along with it.
+#: Only the base and the muzzle climb are scaled. The two side factors are
+#: RATIOS applied on top of the base, so scaling them as well would square the
+#: change -- at "half", the squad would take a quarter rather than a half --
+#: and the shipped relationship between the three sides would not survive it.
+FLINCH = ("m_fHitMoveFactor", "m_fWeaponJumpFactor")
+
+#: What darkness is worth. These multiply an observer's chance of noticing you
+#: in medium and low light -- 0.75 and 0.5, so full dark already halves it.
+#: Scaling them DOWN makes night vision and shadow worth more.
+LIGHT = ("m_fLowLightPenaltyFactor", "m_fMediumLightPenaltyFactor")
+
+#: What moving is worth, on both sides of the look. The target factors are
+#: above one because moving gets you seen (1.4 running, 1.2 walking); the
+#: spotter factors are below one because moving makes you a worse observer
+#: (0.6 and 0.8).
+MOVING_SEEN = ("m_fTargetMovingRunPenaltyFactor",
+               "m_fTargetMovingWalkPenaltyFactor")
+MOVING_SPOT = ("m_fSpotterMovingRunPenaltyFactor",
+               "m_fSpotterMovingWalkPenaltyFactor")
+
+#: Accuracy by stance: standing still, walking, running, crouched. The three
+#: modifiers ship at 1.0 and the duck bonus at 1.10, so stock barely
+#: distinguishes them -- which is the interesting part.
+STANCE = ("m_fRetStationaryAccuracyModifier", "m_fRetWalkingAccuracyModifier",
+          "m_fRetWalkingFastAccuracyModifier", "m_fRetDuckAccuracyBonus")
+
+#: Damage by where the round lands. Head is 10 for you and 2 for everyone
+#: else, torso 2, arms and legs 1, and the thresholds decide how much damage a
+#: limb absorbs before the wound registers (head 0, torso 30, arms/legs 40).
+YOUR_HEADSHOTS = ("m_iPlayerShootsHeadMultiplier",
+                  "m_iMPPlayerShootsHeadMultiplier",
+                  "m_iRainbowShootsHeadMultiplier")
+THEIR_HEADSHOTS = ("m_iTerroristShootsHeadMultiplier",
+                   "m_iArmouredTerroristShootsHeadMultiplier")
+
+#: How much being wounded costs you. Three bands, each a threshold on remaining
+#: health and a multiplier on every skill roll: 0.75 -> 0.90, 0.50 -> 0.80,
+#: 0.25 -> 0.70. Scaling the factors down makes injuries bite.
+WOUND_SKILL = ("m_fLightlyWoundedSkillFactor", "m_fModeratelyWoundedSkillFactor",
+               "m_fSeverelyWoundedSkillFactor")
+
+#: GRAW and Black Arrow only -- Rainbow Six 3's build predates all six.
+#: `m_bUnLockFPS` ships false. `m_fMaxAccel`/`m_fMaxDecel` are how fast you get
+#: to walking speed and back to nothing (720 each). The boost trio is the
+#: sprint: 1.25x above half stick, over a 9-unit zone.
+#: `m_fBoostFactor` only. `m_fBoostThreshold` is the stick deflection sprint
+#: begins at (0.5) and `m_fBoostZone` the width it ramps over -- doubling the
+#: threshold would put sprint beyond full deflection and silently turn the
+#: feature off, which is the opposite of what a dial called "double" promises.
+BOOST = ("m_fBoostFactor",)
+ACCEL = ("m_fMaxAccel", "m_fMaxDecel")
+
+
 def _scale_card(key, label, group, help_text, caution="", down=True):
     choices = [Choice("stock", "As shipped", "")]
     if down:
@@ -423,7 +522,154 @@ def _aim_cards(prefix, aim):
     return out
 
 
-def cards(prefix, has_templates, aim, has_script=True):
+def _extra_cards(prefix, has_boost):
+    """The levers the first pass of this file left in the table."""
+    out = [
+        Setting(prefix + "aim_assist", "Aim assist", CHOICE, "stock", FEEL,
+                choices=[
+                    Choice("stock", "As shipped", ""),
+                    Choice("off", "Off", "No damping, no stickiness, no "
+                                         "snap on zoom."),
+                    Choice("stronger", "Stronger", ""),
+                    Choice("strongest", "Strongest", "As much as the three "
+                                                     "keys allow."),
+                ],
+                confidence="applied",
+                help="The Xbox build has its own aim assist and never exposes "
+                     "it. Three keys drive it: the view slows while the "
+                     "auto-aim system holds a target, the aim is dragged "
+                     "along with a target you strafe past, and zooming snaps "
+                     "onto one. This moves all three together.\n\n"
+                     "This is the nearest thing to the PS2 lock-on that this "
+                     "build can actually do.",
+                table=AIM_ASSIST_TABLE),
+        Setting(prefix + "reticle", "Aiming circles", CHOICE, "stock", FEEL,
+                choices=[
+                    Choice("stock", "As shipped", ""),
+                    Choice("both", "Show both",
+                           "The accuracy circle and the auto-aim circle."),
+                    Choice("aiming", "Accuracy circle only", ""),
+                    Choice("neither", "Hide both", ""),
+                ],
+                confidence="applied",
+                help="Rainbow Six 3 ships with the accuracy circle hidden and "
+                     "GRAW ships with it shown, from the same two keys. The "
+                     "accuracy circle is how wide your shot can stray; the "
+                     "auto-aim circle is the region the assist above works "
+                     "in, so showing it is the way to see what that option "
+                     "just did."),
+        _scale_card(prefix + "flinch", "How hard a hit throws your aim", FEEL,
+                    "m_fHitMoveFactor, and the muzzle climb with it. Rainbow "
+                    "Six 3 and Black Arrow ship 2000 where GRAW ships 100 -- "
+                    "twenty times as much -- which is why taking a round here "
+                    "throws the view off the target. Half is a large change.",
+                    "The two side factors ride along, so your squad keeps "
+                    "taking half what you do and terrorists half again more."),
+        Setting(prefix + "stance_accuracy", "Reticle accuracy", CHOICE,
+                "stock", FEEL,
+                choices=[Choice("stock", "As shipped", ""),
+                         Choice("less", "Half", ""),
+                         Choice("little_less", "Three quarters", ""),
+                         Choice("little_more", "A quarter more", ""),
+                         Choice("more", "Half again", ""),
+                         Choice("much_more", "Double", "")],
+                confidence="experimental",
+                help="The four stance modifiers: standing still, walking, "
+                     "running, and the crouch bonus. Three of them ship at "
+                     "1.0, so the shipped game does not distinguish standing "
+                     "from running at all -- scaling them together is "
+                     "therefore one overall accuracy dial, not a way to "
+                     "separate the stances.",
+                caution="Which direction helps is inferred, not observed: the "
+                        "crouch one is called a BONUS and ships above 1.0, so "
+                        "higher reads as more accurate. Try it on one mission "
+                        "before trusting it."),
+        _scale_card(prefix + "minimap_zoom", "Minimap zoom", FEEL,
+                    "The default zoom and the range the stick can take it "
+                    "through -- 500 and 1000 centimetres."),
+        _scale_card(prefix + "dark_helps", "What darkness is worth", ENEMIES,
+                    "The chance of being noticed in medium and low light, "
+                    "which ship at 0.75 and 0.5. LOWER is better for you: "
+                    "half here means full dark hides you twice as well and "
+                    "night vision is worth carrying.",
+                    "Applies to terrorists looking at you and at your squad."),
+        _scale_card(prefix + "moving_seen", "How much moving gets you seen",
+                    ENEMIES,
+                    "1.4 running and 1.2 walking, against 1.0 standing still. "
+                    "Higher makes a slow approach matter more."),
+        _scale_card(prefix + "moving_spot",
+                    "How much moving spoils their watch", ENEMIES,
+                    "The other half of the same test: a terrorist on the move "
+                    "observes at 0.6 running and 0.8 walking. LOWER makes a "
+                    "patrolling guard easier to slip past than a standing "
+                    "one."),
+        _scale_card(prefix + "search_time", "How long they search", ENEMIES,
+                    "m_iDefaultSearchTime, 30 seconds, is how long a "
+                    "terrorist who has lost you keeps looking before going "
+                    "back to his patrol."),
+        _scale_card(prefix + "their_headshots", "Their headshot damage",
+                    ENEMIES,
+                    "The head multiplier a terrorist gets, armoured or not -- "
+                    "2 against the torso's 2 and a limb's 1. The shipped game "
+                    "does not reward an enemy for hitting your head."),
+        _scale_card(prefix + "your_headshots", "Your headshot damage", SQUAD,
+                    "The head multiplier for you and your squad. Yours ships "
+                    "at 10 and theirs at 2, so a Ghost is five times worse at "
+                    "a head shot than you are.",
+                    "Doubling yours makes almost any head hit fatal."),
+        _scale_card(prefix + "wound_penalty",
+                    "How much a wound costs you", SQUAD,
+                    "The skill multiplier at each of the three wound bands -- "
+                    "0.90 lightly, 0.80 moderately, 0.70 severely. LOWER "
+                    "means being shot degrades you more.",
+                    "The thresholds that decide which band you are in are "
+                    "left alone, so the ladder keeps its shape."),
+        _scale_card(prefix + "formation", "How far your squad spreads", SQUAD,
+                    "m_iRainbowFormationDistance, 100 centimetres, is the "
+                    "spacing the AI holds when it is following you."),
+        _scale_card(prefix + "hostage_wounds", "How much a hostage survives",
+                    SQUAD,
+                    "m_iHostageMaximumWounds, 10. The two difficulty "
+                    "modifiers on a terrorist's chance of executing one are "
+                    "left alone."),
+        Setting(prefix + "squad_size", "How many operatives you take", INT, 4,
+                SQUAD, minimum=1, maximum=8, confidence="experimental",
+                help="m_iNbOfRainbow, which ships at 4 -- you and three. "
+                     "Whether a mission that places four start points can use "
+                     "a fifth is not established, so this is offered as "
+                     "something to try rather than something proven.",
+                caution="Above 4 the extra operatives may have nowhere to "
+                        "spawn. If a mission fails to load, put this back."),
+    ]
+    if has_boost:
+        out += [
+            Setting(prefix + "unlock_fps", "Unlock the frame rate", CHOICE,
+                    "stock", FEEL,
+                    choices=[Choice("stock", "As shipped (locked)", ""),
+                             Choice("true", "Unlocked", "")],
+                    confidence="experimental",
+                    help="m_bUnLockFPS ships false. The key exists on GRAW "
+                         "and Black Arrow and not on Rainbow Six 3, so it is "
+                         "something the engine gained late. What it does on "
+                         "real hardware against an emulator has not been "
+                         "watched, which is why it is badged experimental.",
+                    caution="An unlocked frame rate on this engine can move "
+                            "physics and animation timing with it. Try a "
+                            "mission before committing to a campaign."),
+            _scale_card(prefix + "sprint", "Sprint", FEEL,
+                        "The boost trio: 1.25x speed above half stick "
+                        "deflection, over a nine-unit zone."),
+            _scale_card(prefix + "accel", "How fast you get moving", FEEL,
+                        "m_fMaxAccel and m_fMaxDecel, both 720 -- how quickly "
+                        "you reach walking speed and how quickly you stop.",
+                        "Scaled together, so this is weight rather than "
+                        "speed."),
+        ]
+    return out
+
+
+def cards(prefix, has_templates, aim, has_script=True,
+          has_boost=False):
     out = [
         _scale_card(prefix + "terro_skill", "Terrorist skill", ENEMIES,
                     "One multiplier per difficulty -- 0.40 on Recruit, 0.70 on "
@@ -495,7 +741,7 @@ def cards(prefix, has_templates, aim, has_script=True):
                     "The X and Y multipliers the gamepad runs through, which "
                     "ship at 0.70 and 0.60. This is the same number the "
                     "in-game menu moves, set outside it."),
-    ] + _aim_cards(prefix, aim) + [
+    ] + _aim_cards(prefix, aim) + _extra_cards(prefix, has_boost) + [
         _scale_card(prefix + "reload", "Reload speed", FEEL,
                     "m_fReloadSpeed, which ships at 1.0. Bigger is faster."),
         _scale_card(prefix + "ragdoll", "Ragdoll force", FEEL,
@@ -545,7 +791,8 @@ def cards(prefix, has_templates, aim, has_script=True):
     return out
 
 
-def edits(prefix, v, has_templates, aim, has_script=True):
+def edits(prefix, v, has_templates, aim, has_script=True,
+          has_boost=False):
     out = []
     factors = {}
     setters = {}
@@ -640,6 +887,38 @@ def edits(prefix, v, has_templates, aim, has_script=True):
     dead = v.get(prefix + "deadzone", "stock")
     if dead != "stock":
         setters[AIM_DEADZONE] = dead
+
+    assist = v.get(prefix + "aim_assist", "stock")
+    if assist in AIM_ASSIST:
+        setters.update(AIM_ASSIST[assist])
+
+    circles = v.get(prefix + "reticle", "stock")
+    if circles in RETICLE:
+        setters.update(RETICLE[circles])
+
+    scale("flinch", FLINCH)
+    scale("stance_accuracy", STANCE)
+    scale("minimap_zoom", ("m_fMinimapZoomDefault", "m_fMinimapZoomRange"))
+    scale("dark_helps", LIGHT)
+    scale("moving_seen", MOVING_SEEN)
+    scale("moving_spot", MOVING_SPOT)
+    scale("search_time", ("m_iDefaultSearchTime",))
+    scale("their_headshots", THEIR_HEADSHOTS)
+    scale("your_headshots", YOUR_HEADSHOTS)
+    scale("wound_penalty", WOUND_SKILL)
+    scale("formation", ("m_iRainbowFormationDistance",))
+    scale("hostage_wounds", ("m_iHostageMaximumWounds",))
+
+    squad = int(v.get(prefix + "squad_size", 4))
+    if squad != 4:
+        setters["m_iNbOfRainbow"] = squad
+
+    if has_boost:
+        fps = v.get(prefix + "unlock_fps", "stock")
+        if fps != "stock":
+            setters["m_bUnLockFPS"] = fps
+        scale("sprint", BOOST)
+        scale("accel", ACCEL)
 
     for key, who in CHEAT_KEYS:
         choice = v.get(prefix + "cheat_" + who.lower(), "stock")

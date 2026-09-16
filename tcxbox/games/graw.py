@@ -70,7 +70,8 @@ def _scale(key, label, group, help_text, caution=""):
 
 SETTINGS = (
     r6engine.cards("graw_", has_templates=False,
-                   aim=r6engine.GRAW_AIM, has_script=False)
+                   aim=r6engine.GRAW_AIM, has_script=False,
+                   has_boost=True)
     + r6_3._render_cards("graw_")
     + [
         _scale("graw_team_skill", "Teammate skill", TEAM,
@@ -121,7 +122,8 @@ SETTINGS = (
 
 def build_data(v: dict) -> list:
     out = r6engine.edits("graw_", v, has_templates=False,
-                         aim=r6engine.GRAW_AIM, has_script=False)
+                         aim=r6engine.GRAW_AIM, has_script=False,
+                         has_boost=True)
     out += r6_3._render_edits("graw_", v)
 
     ai_factors, ai_values = {}, {}
