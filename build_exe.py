@@ -1,6 +1,9 @@
 """Produce dist/XboxModStudio.exe.
 
-    python build_exe.py
+    python build_exe.py              -- the normal build
+    python build_exe.py --preview    -- a build that opens without a game, for
+                                        someone who wants to read the options
+                                        before owning the discs
 
 One file, no installer, no Python needed on the target machine. The imports are
 listed explicitly because the entry point defers them until it knows whether it
@@ -36,6 +39,7 @@ HIDDEN = [
     # Imported inside the op functions rather than at module scope, so a
     # frozen build will not find them by following imports.
     "tcxbox.lin", "tcxbox.upackage", "tcxbox.hunt", "tcxbox.rsesidearm",
+    "gui.tooltip",
     "tcxbox.art", "tcxbox.rsb", "tcxbox.xpr",
     "tcxbox.games", "tcxbox.games.ghost_recon", "tcxbox.games.ghost_recon2",
     "tcxbox.games.r6_3", "tcxbox.games.graw", "tcxbox.games.r6engine",
@@ -97,9 +101,24 @@ def write_version_file(path, version):
 
 def main():
     version = app_version()
-    print("building version %s" % version)
+    # A preview build opens straight into the option pages with no game
+    # loaded, for someone who wants to read what the tool does before -- or
+    # without -- owning the discs. It is the same binary with a marker file
+    # baked beside the assets; `gui.app.baked_preview` looks for it.
+    preview = "--preview" in sys.argv
+    name = NAME + (" (preview)" if preview else "")
+    marker = os.path.join(ROOT, "assets", "preview.mode")
+    if preview:
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write("This build opens in preview mode: no game required.\n")
+    elif os.path.exists(marker):
+        # A normal build must never inherit the marker from a preview build
+        # that ran before it, which is the obvious way to ship the wrong exe.
+        os.remove(marker)
+    print("building version %s%s"
+          % (version, "  [preview: opens without a game]" if preview else ""))
     args = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-            "--onefile", "--windowed", "--name", NAME,
+            "--onefile", "--windowed", "--name", name,
             "--distpath", os.path.join(ROOT, "dist"),
             "--workpath", os.path.join(ROOT, "build"),
             "--specpath", os.path.join(ROOT, "build")]
@@ -127,7 +146,9 @@ def main():
     rc = subprocess.call(args, cwd=ROOT)
     if rc:
         return rc
-    exe = os.path.join(ROOT, "dist", NAME + ".exe")
+    # `name`, not `NAME`: a preview build is written as "... (preview).exe",
+    # and checking for the wrong one would report a clean build as a failure.
+    exe = os.path.join(ROOT, "dist", name + ".exe")
     # PyInstaller has been seen to exit 0 without producing anything; a build
     # script that says nothing in that case is worse than no build script.
     if not os.path.exists(exe):

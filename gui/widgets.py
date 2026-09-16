@@ -15,7 +15,7 @@ from tkinter import ttk
 
 from tcxbox.model import BOOL, CHOICE, INT
 
-from . import skins, theme
+from . import skins, theme, tooltip
 from .controls import RadioRow, Slider, Toggle
 
 
@@ -456,6 +456,17 @@ class SettingCard(Chrome):
                                   13 if sharp else 12)
                      ).pack(side="left")
 
+        # Everything the card used to print underneath itself, in one bubble.
+        # The disabled reason goes in too: on a card that cannot be used, the
+        # reason is the most useful thing on it.
+        full = ("\n\n").join(x for x in (s.help, s.caution,
+                                          "" if s.enabled
+                                          else s.disabled_reason) if x)
+        if full:
+            hint = tooltip.Hint(head, full)
+            hint.pack(side="left", padx=(theme.px(8), 0))
+            self._controls.append(hint)
+
         if s.kind == INT:
             sl = Slider(self.body, self.var, s.minimum, s.maximum, s.unit,
                         self.on_change)
@@ -470,12 +481,25 @@ class SettingCard(Chrome):
                 row.pack(fill="x", pady=(0, theme.px(7)))
                 self._controls.append(row)
 
+        # The full prose lives in the `?` bubble and the card keeps the
+        # opening sentence of each. Three things are deliberately NOT
+        # shortened:
+        #
+        #   * a `caution`, beyond its first sentence -- a warning you have to
+        #     hover to find is not a warning;
+        #   * a `disabled_reason`, which is the whole answer to "why is this
+        #     greyed out" and is never more than a line anyway;
+        #   * a `table`. On this tool the table IS the option on several
+        #     cards -- the aiming comparison exists to put two columns of
+        #     measured numbers side by side -- and a bubble is the wrong
+        #     shape for columns.
         if s.help:
-            self._text(s.help, p.dim)
+            self._text(tooltip.first_sentence(s.help), p.dim)
         if s.table:
             self._table(s.table)
         if s.caution:
-            self._text("⚠  " + s.caution, p.warn, pady=(7, 0))
+            self._text("⚠  " + tooltip.first_sentence(s.caution),
+                       p.warn, pady=(7, 0))
         if not s.enabled and s.disabled_reason:
             self._text("✖  " + s.disabled_reason, p.bad, pady=(7, 0))
 

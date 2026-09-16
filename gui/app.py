@@ -47,7 +47,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy Xbox Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "1.0"
+VERSION = "1.1"
 NOTES_TAB = "About this game"
 
 #: Shelf entries are label -> path. Preview entries carry this instead of a
@@ -920,11 +920,23 @@ class App(tk.Tk):
                 break
 
 
+def baked_preview() -> bool:
+    """Was this executable built as a preview build?
+
+    `build_exe.py --preview` drops a marker beside the assets. Someone who
+    does not own the discs can then just double-click it: telling a person to
+    add `--preview` to a shortcut is telling them to not bother.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
+    return os.path.exists(os.path.join(base, "assets", "preview.mode"))
+
+
 def main(argv=None):
     theme.set_dpi_aware()
     argv = list(sys.argv[1:] if argv is None else argv)
     app = App()
-    if "--preview" in argv or "-p" in argv:
+    if "--preview" in argv or "-p" in argv or baked_preview():
         # Set before the 250 ms recent-game timer fires, so a machine that has
         # opened a game before still lands in preview when asked for preview.
         app.preview_only = True

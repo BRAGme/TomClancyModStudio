@@ -47,6 +47,7 @@ from tcxbox.gamedir import Root                                   # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_xiso                                                  # noqa: E402
+from gui import tooltip                                           # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -510,6 +511,46 @@ def test_disc_revert_is_bit_exact(games, where):
     return "%s: applied, reverted, image identical to the byte" % prof.short
 
 
+def test_card_summaries(games):
+    """Every card's help shortens to a sentence that still says something.
+
+    The cards moved their prose into a `?` bubble and kept the help text's own
+    first sentence on the card. That only works while the first sentence is a
+    sentence: an option whose help opens with "This is the same as the one
+    above, except..." now reads as nonsense on its own, and nothing else in
+    the tool would notice.
+
+    So: the summary has to exist, has to be shorter than what it summarises,
+    and has to be long enough to be a statement rather than a fragment.
+    """
+    short = bad = 0
+    for det in games:
+        for st in det.profile.settings:
+            for field in ("help", "caution"):
+                text = getattr(st, field)
+                if not text:
+                    continue
+                line = tooltip.first_sentence(text)
+                must(line, "%s/%s: %s shortens to nothing"
+                           % (det.profile.short, st.key, field))
+                must(len(line) <= len(" ".join(text.split())),
+                     "%s/%s: the %s summary is longer than the %s"
+                     % (det.profile.short, st.key, field, field))
+                # A summary that hides nothing cannot be a bad summary --
+                # several render toggles have help that IS "Ships on." -- so
+                # the length rule applies only where text was dropped.
+                if len(line) < 25 and line != " ".join(text.split()):
+                    short += 1
+                    bad += 1
+                    if bad <= 5:
+                        print("       thin summary: %s/%s %s -> %r"
+                              % (det.profile.short, st.key, field, line))
+    must(short == 0,
+         "%d help/caution opening(s) drop text and still shorten to under 25 "
+         "characters, which is a label rather than a summary" % short)
+    return "every help and caution opens with a usable one-line summary"
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -866,6 +907,8 @@ def main(argv):
     check("ini value shapes survive scaling", lambda: test_ini_shapes(games))
     check("no option quietly writes what is already there",
           lambda: test_no_option_is_a_noop(games))
+    check("every card shortens to a usable summary",
+          lambda: test_card_summaries(games))
     check("every campaign list fits its disc",
           lambda: test_campaign_lists(games))
     check("hunt spawn counts re-pack into the same bytes",
