@@ -187,7 +187,6 @@ def _expand_sections(doc, edits):
             out.append(e)
             continue
         for name in doc.sections():
-
             clone = copy.copy(e)
             clone.section = name
             out.append(clone)
