@@ -32,6 +32,68 @@ import re
 #: the localisation files really do use.
 ENCODINGS = ("utf-8-sig", "cp1252")
 
+#: Byte-order marks, longest first so UTF-32 is not mistaken for UTF-16.
+#:
+#: A UTF-16 file has to be recognised BEFORE the 8-bit fallback gets a look at
+#: it, because cp1252 will decode it perfectly happily -- every byte maps to
+#: some character -- and the result is a string full of NULs whose line
+#: structure is nonsense. Advanced Warfighter 2 ships one, under
+#: `Support\Detection\`, and it was the round-trip check that found it.
+BOMS = {
+    "utf-32-le": b"\xff\xfe\x00\x00",
+    "utf-32-be": b"\x00\x00\xfe\xff",
+    "utf-8": b"\xef\xbb\xbf",
+    "utf-16-le": b"\xff\xfe",
+    "utf-16-be": b"\xfe\xff",
+}
+
+#: line terminators, longest first (used by `_split`)
+ENDINGS = ("\r\n", "\n", "\r")
+
+
+def decode(raw: bytes, path=""):
+    """(text, encoding, bom) for a file of unknown flavour."""
+    for enc, mark in BOMS.items():
+        if raw.startswith(mark):
+            try:
+                return raw[len(mark):].decode(enc), enc, mark
+            except UnicodeDecodeError:            # pragma: no cover
+                break
+    for enc in ENCODINGS:
+        try:
+            return raw.decode(enc), ("utf-8" if enc == "utf-8-sig" else enc), b""
+        except UnicodeDecodeError:
+            continue
+    raise IniError("Could not decode %s" % (path or "the file"))
+
+
+def _split(text):
+    """(lines without terminators, the terminator that followed each).
+
+    The last entry's terminator is empty when the file did not end with one,
+    so joining the two lists back together reproduces the input exactly.
+    """
+    lines, ends, start, i = [], [], 0, 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\r":
+            end = "\r\n" if text[i + 1:i + 2] == "\n" else "\r"
+        elif ch == "\n":
+            end = "\n"
+        else:
+            i += 1
+            continue
+        lines.append(text[start:i])
+        ends.append(end)
+        i += len(end)
+        start = i
+    if start < n or not lines:
+        lines.append(text[start:])
+        ends.append("")
+    return lines, ends
+
+
 SECTION_RX = re.compile(r"^\s*\[(?P<name>[^\]]*)\]\s*$")
 # A key line. Unreal also accepts +Key=, -Key=, .Key= and !Key= prefixes for
 # array manipulation, so the prefix is captured rather than treated as part of
@@ -48,19 +110,18 @@ class Ini:
     """One `.ini`, held as lines, edited in place."""
 
     def __init__(self, text: str, newline: str = "\r\n", encoding: str = "cp1252",
-                 bom: bool = False, path: str = ""):
+                 bom: bytes = b"", path: str = ""):
         self.newline = newline
         self.encoding = encoding
-        self.bom = bom
+        #: the byte-order mark the file arrived with, replayed verbatim
+        self.bom = bom if isinstance(bom, bytes) else (BOMS["utf-8"] if bom else b"")
         self.path = path
-        #: `text` is split on "\n" after the line endings have been normalised
-        #: by `load`, so an index into `lines` is a real line number.
-        self.lines = text.split("\n")
-        #: True when the original file ended with a newline. Kept so saving
-        #: does not add or drop one.
-        self.trailing_newline = bool(self.lines) and self.lines[-1] == ""
-        if self.trailing_newline:
-            self.lines.pop()
+        #: Each line WITHOUT its terminator, with the terminators kept beside
+        #: them in `ends`. Not normalised to "\n" and rejoined on save, which
+        #: is the obvious approach and is wrong: it silently rewrites a lone
+        #: carriage return as a line feed. One of these installs really does
+        #: ship such a file, and the round-trip check caught it.
+        self.lines, self.ends = _split(text)
 
     # -- loading and saving ------------------------------------------------
 
@@ -68,36 +129,25 @@ class Ini:
     def load(cls, path) -> "Ini":
         with open(path, "rb") as fh:
             raw = fh.read()
-        bom = raw.startswith(b"\xef\xbb\xbf")
-        text = None
-        encoding = "cp1252"
-        for enc in ENCODINGS:
-            try:
-                text = raw.decode(enc)
-                encoding = "utf-8" if enc == "utf-8-sig" else enc
-                break
-            except UnicodeDecodeError:
-                continue
-        if text is None:                                  # pragma: no cover
-            raise IniError("Could not decode %s" % path)
+        text, encoding, bom = decode(raw, path)
         # Which ending dominates decides what a NEW line gets. A file that is
         # already mixed stays mixed for the lines we do not touch, because only
         # the changed line is rewritten.
-        newline = "\r\n" if text.count("\r\n") >= text.count("\n") - text.count("\r\n") \
-            else "\n"
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        crlf = text.count("\r\n")
+        newline = "\r\n" if crlf >= text.count("\n") - crlf else "\n"
         return cls(text, newline=newline, encoding=encoding, bom=bom,
                    path=str(path))
 
     def text(self) -> str:
-        body = self.newline.join(self.lines)
-        if self.trailing_newline:
-            body += self.newline
-        return body
+        return "".join(line + end for line, end in zip(self.lines, self.ends))
 
     def to_bytes(self) -> bytes:
-        raw = self.text().encode(self.encoding, errors="replace")
-        return (b"\xef\xbb\xbf" + raw) if self.bom else raw
+        return self.bom + self.text().encode(self.encoding, errors="replace")
+
+    @property
+    def trailing_newline(self) -> bool:
+        """Did the file end with a line terminator?"""
+        return bool(self.ends) and bool(self.ends[-1])
 
     def save(self, path=None):
         path = str(path or self.path)
@@ -214,9 +264,9 @@ class Ini:
             # A brand new section goes at the end, preceded by a blank line
             # unless the file already ends with one.
             if self.lines and self.lines[-1].strip():
-                self.lines.append("")
-            self.lines.append("[%s]" % section)
-            self.lines.append("%s=%s" % (key, text))
+                self._append("")
+            self._append("[%s]" % section)
+            self._append("%s=%s" % (key, text))
             return "added"
         # Insert after the section's last non-blank line rather than at its
         # very end, so the new key joins the block instead of drifting below
@@ -224,7 +274,7 @@ class Ini:
         at = span[1]
         while at > span[0] and not self.lines[at - 1].strip():
             at -= 1
-        self.lines.insert(at, "%s=%s" % (key, text))
+        self._insert(at, "%s=%s" % (key, text))
         return "added"
 
     def get_field(self, section, key, field, default=None):
@@ -263,11 +313,28 @@ class Ini:
                                          m.group("key"), m.group("pad"), raw)
         return "changed"
 
+    def _append(self, line):
+        """Add a line at the end, giving the file a terminator if it lacked one.
+
+        A file that did not end with a newline gets one now, because the line
+        being appended has to start on a line of its own -- that is the single
+        place where this class changes a byte it was not asked to.
+        """
+        if self.ends and not self.ends[-1]:
+            self.ends[-1] = self.newline
+        self.lines.append(line)
+        self.ends.append(self.newline)
+
+    def _insert(self, at, line):
+        self.lines.insert(at, line)
+        self.ends.insert(at, self.newline)
+
     def remove(self, section, key) -> int:
         """Delete every assignment of `key`. Returns how many went."""
         hits = self._key_lines(section, key)
         for i in reversed(hits):
             del self.lines[i]
+            del self.ends[i]
         return len(hits)
 
 

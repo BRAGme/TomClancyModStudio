@@ -128,6 +128,26 @@ PRESETS = {
     ],
 
     # -----------------------------------------------------------------
+    "graw": [
+        ("Marksman - steady and precise", {
+            "weapon_spread": "tight",
+            "weapon_recoil": "x0.5",
+        }),
+        ("Arcade - no recoil, deep magazines", {
+            "weapon_spread": "laser",
+            "weapon_recoil": "none",
+            "magazines": "x2",
+            "fire_modes": "all",
+        }),
+        ("Unwieldy - everything harder to hold", {
+            "weapon_spread": "loose",
+            "weapon_recoil": "x1.5",
+            "magazines": "x0.5",
+        }),
+        ("Stock", {}),
+    ],
+
+    # -----------------------------------------------------------------
     "vegas": [
         ("Hardcore — one life, no help", {
             "difficulty": "GAMEDIFFICULTY_ELITE",
@@ -153,3 +173,7 @@ PRESETS = {
         ("Stock", {}),
     ],
 }
+
+#: The two Advanced Warfighter games share an engine, a data layout and an
+#: option list, so they share their presets too.
+PRESETS["graw2"] = PRESETS["graw"]

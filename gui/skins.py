@@ -379,12 +379,61 @@ PC_VEGAS = replace(
     glyph_triangle="#c15b0e",
 )
 
+#: Advanced Warfighter on PC. It gets the `graw` chrome family it gave its
+#: name to -- a dark plate inside a bright double stroke, rows sheared at the
+#: top right -- but in the PC game's own colours rather than the PS2 port's.
+#:
+#: The teal was sampled from the wordmark rather than from the backdrop,
+#: because Advanced Warfighter's menu is a 3D scene and its backdrop is
+#: photography: averaging that gives the colour of a Mexican street at dusk,
+#: not the colour of the interface. The lettering is white over #00696b with
+#: an #a5bec0 bevel, and those are the three colours the UI is built from.
+PC_GRAW = replace(
+    GRAW,
+    bg="#050b0c",
+    veil="#030808",
+    panel="#0a1618",
+    panel2="#112426",
+    edge="#31b4bd",
+    edge_dim="#1a5f65",
+    text="#c3dcde",
+    dim="#8aacae",
+    faint="#749496",
+    title="#ffffff",
+    accent="#31b4bd",
+    accent_dim="#217d85",
+    sel_fill="#a5bec0",
+    sel_text="#05191b",
+    tab="#31b4bd",
+    glyph_triangle="#31b4bd",
+)
+
+#: The sequel keeps the same interface language and warms it very slightly;
+#: its own wordmark is white on the same teal.
+PC_GRAW2 = replace(
+    PC_GRAW,
+    bg="#06090a",
+    veil="#030506",
+    panel="#0c1416",
+    panel2="#142023",
+    edge="#4ac6cf",
+    edge_dim="#20686e",
+    accent="#4ac6cf",
+    accent_dim="#248289",
+    sel_fill="#b6cbcd",
+    sel_text="#06191c",
+    tab="#4ac6cf",
+    glyph_triangle="#4ac6cf",
+)
+
 BY_PROFILE = {
     "ravenshield": PC_RAVENSHIELD,
     "ghost_recon": PC_GHOST_RECON,
     "soaf": PC_SOAF,
     "lockdown": PC_LOCKDOWN,
     "vegas": PC_VEGAS,
+    "graw": PC_GRAW,
+    "graw2": PC_GRAW2,
 }
 
 DEFAULT = PC_RAVENSHIELD

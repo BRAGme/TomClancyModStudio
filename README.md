@@ -1,6 +1,6 @@
 # Tom Clancy PC Mod Studio
 
-A skinned mod manager for five Tom Clancy games on PC. Same window as the
+A skinned mod manager for seven Tom Clancy games on PC. Same window as the
 [PS2](../TomClancyPS2-ModStudio) and [Xbox](../TomClancyXbox-ModStudio) Mod
 Studios — it wears each game's own menu art, read out of your installation at
 run time — but aimed at PC installs rather than disc images.
@@ -12,6 +12,8 @@ run time — but aimed at PC installs rather than disc images.
 | The Sum of All Fears | Red Storm Ike | **builds a mod folder** |
 | Rainbow Six 3: Lockdown | Red Storm Nimitz | edits `data\` in place |
 | Rainbow Six: Vegas | Unreal Engine 3 | edits `KellerGame\Config\PC\*.ini` in place |
+| Ghost Recon Advanced Warfighter | GRIN Diesel | **writes loose files over the `.bundle` archives** |
+| GRAW 2 | GRIN Diesel | **writes loose files over the `.bundle` archives** |
 
 ```
 python ModStudio.py                    the window
@@ -32,7 +34,9 @@ Two invariants, carried over from the PS2 tool:
 **Every apply rebuilds from pristine.** Nothing is ever edited on top of an
 earlier edit. In-place games restore each touched file from the copy taken the
 first time it was written and apply the whole set to that; mod-folder games
-delete the generated folder and rebuild it from the stock mod. So applying
+delete the generated folder and rebuild it from the stock mod; the two
+Advanced Warfighter games undo their loose files and re-derive them from
+the archive. So applying
 twice equals applying once, and clearing an option really removes it instead of
 leaving behind the last value it happened to hold.
 
@@ -51,6 +55,10 @@ On top of those:
 * A generated mod folder carries a `.tcpc-generated` marker, and the tool will
   **refuse** to delete a folder that does not have one — so a hand-made mod
   that happens to share the name is safe.
+* Advanced Warfighter's `.bundle` archives are only ever read. Restore
+  removes exactly the loose files the tool added and puts back any it wrote
+  over; it never deletes `Data\`, which is shared with your own texture
+  replacements.
 * A mod build is reproducible: the same settings against the same stock data
   produce byte-identical output.
 
@@ -79,7 +87,10 @@ python tests\gui_smoke.py       open the real window on every game, walk every p
 
 `run_tests.py` never opens a retail file for writing: the editors are exercised
 read-only against the installations, and anything that writes happens in a
-sandbox copy under the temporary directory. It checks that hundreds of real
+sandbox copy under the temporary directory. The Advanced Warfighter archives
+are far too big to copy, so that test builds its own `BNDL` archive from the
+real weapon definitions, which doubles as the check that the format was
+understood rather than pattern-matched into working. It checks that hundreds of real
 `.ini`, `.tpt` and pseudo-XML files load and save byte-identically, that
 applying twice equals applying once, that clearing every option returns the
 tree to stock, and that restore returns every byte.
@@ -96,7 +107,8 @@ tcpc/
   inifile.py    Unreal .ini editing that preserves formatting; also reads .tpt
   rsexml.py     Red Storm pseudo-XML, edited one value at a time
   rsb.py        Red Storm .rsb bitmaps, versions 4-10
-  art.py        each game's own menu art and wordmark, plus Steam library discovery
+  bundle.py     GRIN Diesel .bundle archives, read-only
+  art.py        each game's own menu art and wordmark, plus finding the installs
   install.py    which game a folder holds
   engine.py     planning, applying, verifying, reverting
   games/        one declarative profile per game
@@ -107,7 +119,9 @@ docs/FORMATS.md what was reverse-engineered, and how it was settled
 The GUI is the PS2 tool's, re-aimed: same chrome painters, same setting cards,
 same badges. The palettes are **not** the console ones recoloured — each was
 sampled from the PC game's own menu page, which is how Ghost Recon ended up
-pale-grey-on-slate here rather than the gold-on-navy it wears on PS2.
+pale-grey-on-slate here rather than the gold-on-navy it wears on PS2. Advanced
+Warfighter's teal came from its wordmark rather than its backdrop, because its
+menu is a 3D scene and averaging that gives the colour of a Mexican street.
 
 ## Credit
 

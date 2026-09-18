@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import traceback
@@ -43,7 +44,7 @@ def check(name, condition, detail=""):
 def games():
     """One detection per supported game found on this machine."""
     seen, out = {}, []
-    for lib in art.steam_libraries():
+    for lib in art.search_roots():
         for det in scan_folder(lib):
             if det.profile.id not in seen:
                 seen[det.profile.id] = det
@@ -262,6 +263,8 @@ def test_apply_revert(dets):
     try:
         for det in dets:
             p = det.profile
+            if p.delivery == "overlay":
+                continue          # multi-gigabyte archives; see test_overlay
             root = sandbox_for(det, tmp)
             local = identify(root)
             if not check("%s: sandbox is still recognised" % p.short, local.ok,
@@ -303,6 +306,168 @@ def test_apply_revert(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def write_bundle(path, entries):
+    """Build a `BNDL` archive. Test-only -- the tool itself never writes one.
+
+    Having a writer here is worth more than the convenience: the reader was
+    developed against the retail archives, so a round-trip through an
+    independently written one is the check that the format was understood
+    rather than merely pattern-matched into working.
+    """
+    tree = {}
+    for name, data in entries.items():
+        node = tree
+        parts = name.split("/")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = data
+
+    # Two passes: the offsets have to be absolute, and they depend on how long
+    # the index turns out to be, which depends on the names and not on the
+    # offsets -- so build the index once with placeholders to learn its size.
+    def build(base):
+        idx, at = bytearray(), base
+
+        def walk(node):
+            nonlocal at
+            for key in sorted(node):
+                val = node[key]
+                if isinstance(val, dict):
+                    idx.append(1)
+                    idx.append(1)
+                    idx.extend(key.encode("latin-1") + b"\0")
+                    walk(val)
+                    idx.append(3)
+                else:
+                    idx.append(2)
+                    idx.extend(struct.pack("<Q", at))
+                    idx.extend(struct.pack("<I", len(val)))
+                    idx.append(1)
+                    idx.extend(key.encode("latin-1") + b"\0")
+                    at += len(val)
+        walk(tree)
+        return bytes(idx)
+
+    size = len(build(0))
+    index = build(16 + size)
+    assert len(index) == size
+    blob = b"".join(entries[k] for k in _ordered(tree))
+    with open(path, "wb") as fh:
+        fh.write(b"BNDL" + struct.pack("<I", 2)
+                 + struct.pack("<Q", 16 + len(index)))
+        fh.write(index)
+        fh.write(blob)
+
+
+def _ordered(tree, prefix=""):
+    """File paths in the order `write_bundle` lays their data down."""
+    out = []
+    for key in sorted(tree):
+        val = tree[key]
+        if isinstance(val, dict):
+            out += _ordered(val, prefix + key + "/")
+        else:
+            out.append(prefix + key)
+    return out
+
+
+def test_bundle(dets):
+    print("\n[bundle: the Diesel archives]")
+    from tcpc.bundle import Bundle, BundleSet
+    tmp = tempfile.mkdtemp(prefix="tcpc-bndl-")
+    try:
+        entries = {"context.xml": b"<context/>",
+                   "data/units/weapons/u_test.xml": b"<units><var name='a' value='1'/></units>",
+                   "data/settings/x.xml": b"x" * 5000,
+                   "settings/loose.xml": b"<loose/>"}
+        path = os.path.join(tmp, "quick.bundle")
+        write_bundle(path, entries)
+        b = Bundle(path)
+        check("a written bundle reads back", len(b) == len(entries),
+              "%d of %d" % (len(b), len(entries)))
+        check("every file comes back byte-identical",
+              all(b.read(k) == v for k, v in entries.items()))
+        b.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    for det in dets:
+        if det.profile.delivery != MOD and det.profile.layout.bundles_dir:
+            folder = os.path.join(det.path,
+                                  det.profile.layout.bundles_dir)
+            with BundleSet(folder) as bs:
+                check("%s: %d files indexed from the real archives"
+                      % (det.profile.short, len(bs)), len(bs) > 10000)
+                w = bs.find("data/units/weapons/*.xml")
+                check("%s: weapon definitions are readable XML" % det.profile.short,
+                      bool(w) and b"<units>" in bs.read(w[0]))
+
+
+def test_overlay(dets):
+    print("\n[overlay: write loose, never touch the archive]")
+    from tcpc.bundle import BundleSet
+    for det in dets:
+        p = det.profile
+        if p.delivery != "overlay":
+            continue
+        tmp = tempfile.mkdtemp(prefix="tcpc-ovl-")
+        try:
+            root = os.path.join(tmp, p.id)
+            # A stand-in install: the signature files, plus a small archive
+            # carrying the real weapon definitions out of the retail one.
+            for sig in p.layout.signature:
+                dest = os.path.join(root, sig.replace("/", os.sep))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if not sig.endswith(".bundle"):
+                    with open(dest, "wb") as fh:
+                        fh.write(b"stub")
+            entries = {}
+            with BundleSet(os.path.join(det.path,
+                                        p.layout.bundles_dir)) as bs:
+                for rel in bs.find("data/units/weapons/*.xml"):
+                    entries[rel] = bs.read(rel)
+            write_bundle(os.path.join(root, "Bundles", "quick.bundle"), entries)
+            exe = os.path.join(root, p.layout.exe.replace("/", os.sep))
+            os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+            with open(exe, "wb") as fh:
+                fh.write(b"stub")
+
+            local = identify(root)
+            if not check("%s: stand-in install is recognised" % p.short,
+                         local.ok, local.message):
+                continue
+            # a hand-placed loose file the tool must NOT delete
+            keep = os.path.join(root, "Data", "textures", "mine.dds")
+            os.makedirs(os.path.dirname(keep), exist_ok=True)
+            with open(keep, "wb") as fh:
+                fh.write(b"my texture pack")
+
+            before = tree_hash(root)
+            values = _max_values(p)
+            r1 = engine.apply(root, p, values)
+            check("%s: overlay apply wrote files" % p.short,
+                  r1.ok and len(r1.verified) > 0, "; ".join(r1.warnings[:2]))
+            check("%s: the archive was not modified" % p.short,
+                  tree_hash(root)["Bundles\\quick.bundle"]
+                  == before["Bundles\\quick.bundle"])
+            after = tree_hash(root)
+
+            engine.apply(root, p, values)
+            check("%s: applying twice equals applying once" % p.short,
+                  tree_hash(root) == after)
+
+            rv = engine.revert(root, p)
+            final = tree_hash(root)
+            check("%s: restore removes every file it added" % p.short,
+                  final == before,
+                  str([k for k in set(final) ^ set(before)][:3]))
+            check("%s: somebody else's loose file survived" % p.short,
+                  os.path.isfile(keep))
+            check("%s: revert reported what it removed" % p.short, rv.files > 0)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -338,7 +503,9 @@ def main():
         test_roundtrip(dets)
         test_art(dets)
         test_rsb(dets)
+        test_bundle(dets)
         test_apply_revert(dets)
+        test_overlay(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

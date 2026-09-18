@@ -167,13 +167,26 @@ class Doc:
     # -- finding -----------------------------------------------------------
 
     def find(self, path) -> list:
-        """Every node whose path ends with `path`, case-insensitively."""
+        """Every node whose path ends with `path`, case-insensitively.
+
+        The last segment may carry a predicate, `tag[attr=value]`, which is
+        what makes Advanced Warfighter addressable at all. Its weapon files do
+        not name their fields with elements; they are a flat list of
+        ``<var name="spread_normal" value="1.87"/>``, so "the normal spread"
+        is not an element path -- it is the element whose `name` attribute says
+        so. `weapon_data/var[name=spread_normal]` picks that one out.
+        """
         want = [p for p in str(path).replace("\\", "/").split("/") if p]
         if not want:
             return []
+        want[-1], key, value = _predicate(want[-1])
         tail = "/".join(w.lower() for w in want)
-        return [n for n in self.nodes
+        hits = [n for n in self.nodes
                 if n.path.lower() == tail or n.path.lower().endswith("/" + tail)]
+        if key is None:
+            return hits
+        return [n for n in hits
+                if (_attr_ci(n, key) or ("",))[0].lower() == value.lower()]
 
     def first(self, path):
         hits = self.find(path)
@@ -316,6 +329,17 @@ class Doc:
     def _splice(self, start, end, new):
         self._text = self._text[:start] + new + self._text[end:]
         self._nodes = None
+
+
+PREDICATE_RX = re.compile(r"^(?P<tag>[^\[]+)\[(?P<key>[^=\]]+)=(?P<value>[^\]]*)\]$")
+
+
+def _predicate(segment):
+    """Split `tag[attr=value]` into its three parts, or pass a plain tag."""
+    m = PREDICATE_RX.match(segment.strip())
+    if not m:
+        return segment, None, None
+    return m.group("tag"), m.group("key"), m.group("value")
 
 
 def _attr_ci(node, attr):

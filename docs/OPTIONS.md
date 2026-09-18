@@ -41,6 +41,13 @@ recoil), Equipment (unlock the six multiplayer-only items, grenade counts,
 explosive power), Interface (crosshair, hints, camera shake, blood, bodies, and
 two of the thirteen developer readouts that ship live).
 
+**GRAW and GRAW 2** — Weapons only, for now: spread, recoil, magazine
+capacity, unlocking every fire mode, and rate of fire. Those are the fields
+Advanced Warfighter's own weapon files comment in full, and the ones a single
+control can move across all 28 (GRAW 1) or 44 (GRAW 2) weapon definitions. The
+wider surface — AI skill, enemy counts, mission scripts — is in the same
+archives and not mapped yet.
+
 **Vegas** — Rules (difficulty, terrorist-hunt population, civilian limit, hunt
 respawning, round gap, the unused co-op leash), Weapons (damage by range,
 accuracy, movement and turning spread, suppressor penalty), Feel (aim assist,

@@ -52,6 +52,18 @@ BANNERS = {
               "KellerGame/Content/MenusPC/Textures/LoadingScreens/"
               "BackgroundDante.tga",
               "KellerGame/ImageMap/SP_Dam1.dds"],
+    # Advanced Warfighter's menu is a 3D scene, so there is no backdrop image
+    # to find -- these are its loading screens, which are the same art
+    # direction and the only full-page photography it has.
+    "graw": ["data/textures/gui/mission_loading_screens_1-4.dds"],
+    "graw2": ["data/textures/atlas_gui/mission_gfx/load_sp_m01.dds",
+              "data/textures/atlas_gui/mission_gfx/load_mp_hh.dds"],
+}
+
+#: Banners that are a sheet rather than a page, as fractions to crop out.
+#: Advanced Warfighter packs four loading screens into one 2048x2048 texture.
+BANNER_CROP = {
+    "graw": (0.0, 0.0, 0.5, 0.5),
 }
 
 #: (relative path, crop box as fractions of the decoded page) for the mark.
@@ -74,6 +86,12 @@ EMBLEMS = {
     # already cut out, alpha and all
     "vegas": ("KellerGame/Content/MenusPC/Textures/SinglePlayer/"
               "RSVegas_Logo.tga", None),
+    # inside the bundle; a proper RGBA cut-out, white lettering with the
+    # game's teal
+    "graw": ("data/textures/atlas_interface/menu/logos_diffuse/"
+             "h_1280x1024.dds", None),
+    # inside the bundle, and a MASK rather than a picture -- see EMBLEM_MODE
+    "graw2": ("data/textures/atlas_gui/general_gfx/sp_logo_h.dds", None),
 }
 
 #: how to turn a crop into a mark with a transparent background.
@@ -93,7 +111,17 @@ EMBLEM_MODE = {
     "soaf": ("key", 140, 4.0),
     "lockdown": ("alpha", 0, 0),
     "vegas": ("alpha", 0, 0),
+    "graw": ("alpha", 0, 0),
+    # Advanced Warfighter 2's wordmark is a TINT MASK, not a picture. Its
+    # alpha channel is the lettering and its colour channels are a rainbow
+    # gradient the game never shows -- the shader draws the mask in a UI
+    # colour. Every channel order was tried before concluding that; none of
+    # them produces a sane logo, and the alpha alone produces the real one.
+    "graw2": ("mask", 0, 0),
 }
+
+#: what a "mask" emblem is painted in
+MASK_INK = {"graw2": (255, 255, 255)}
 
 #: Marks whose alpha needs its holes filled after keying. Nothing needs it now
 #: that Lockdown's real cut-out is being used instead of its splash screen,
@@ -132,6 +160,44 @@ def _resolve(root, rel):
         else:
             return None
     return cur if os.path.isfile(cur) else None
+
+
+def open_from(detection, rel):
+    """Decode `rel` for this game, wherever that game keeps it.
+
+    Six of the seven games keep their menu art loose. Advanced Warfighter
+    keeps it inside a 3.8 GB archive, so the loose tree is tried first -- a
+    replacement the user dropped in is what the game would show -- and the
+    archive is the fallback.
+    """
+    hit = open_image(_resolve(detection.path, rel))
+    if hit is not None:
+        return hit
+    profile = getattr(detection, "profile", None)
+    if profile is None or not profile.layout.bundles_dir or not detection.path:
+        return None
+    try:
+        from .bundle import BundleSet
+        folder = os.path.join(detection.path,
+                              profile.layout.bundles_dir.replace("/", os.sep))
+        with BundleSet(folder) as bundles:
+            if rel not in bundles:
+                return None
+            return decode_bytes(bundles.read(rel))
+    except Exception:                             # noqa: BLE001
+        return None
+
+
+def decode_bytes(raw):
+    """A picture from bytes, for content that came out of an archive."""
+    import io
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+        return img
+    except Exception:                             # noqa: BLE001
+        return None
 
 
 def open_image(path):
@@ -228,11 +294,12 @@ def banner_image(detection, cache_dir=None):
     if hit is not None:
         return hit
     for rel in BANNERS.get(profile.id, []):
-        img = open_image(_resolve(detection.path, rel))
+        img = open_from(detection, rel)
         if img is None:
             continue
         if profile.id in CONTENT_CROP:
             img = content_crop(img)
+        img = _crop_frac(img, BANNER_CROP.get(profile.id))
         img = img.convert("RGB")
         _save_cache(img, cache)
         return img
@@ -253,7 +320,7 @@ def emblem_image(detection, cache_dir=None):
     if not spec:
         return None
     rel, box = spec
-    img = open_image(_resolve(detection.path, rel))
+    img = open_from(detection, rel)
     if img is None:
         return None
     if profile.id in CONTENT_CROP:
@@ -261,7 +328,7 @@ def emblem_image(detection, cache_dir=None):
     img = _crop_frac(img, box)
 
     mode, floor, gain = EMBLEM_MODE.get(profile.id, ("key", 110, 3.2))
-    rgba = _key(img, mode, floor, gain)
+    rgba = _key(img, mode, floor, gain, MASK_INK.get(profile.id, (255, 255, 255)))
     close = CLOSE_ALPHA.get(profile.id)
     if close:
         rgba = _close_alpha(rgba, close)
@@ -270,8 +337,13 @@ def emblem_image(detection, cache_dir=None):
     return rgba
 
 
-def _key(img, mode, floor, gain):
-    from PIL import ImageEnhance, ImageOps
+def _key(img, mode, floor, gain, ink=(255, 255, 255)):
+    from PIL import Image, ImageEnhance, ImageOps
+    if mode == "mask":
+        rgba = img.convert("RGBA")
+        flat = [Image.new("L", rgba.size, c) for c in ink]
+        return Image.merge("RGBA", tuple(flat) + (rgba.split()[-1],))
+
     if mode == "lift":
         # Stretch the crop's own range before keying. A mark set in mid-grey
         # cannot be separated from mid-grey photography by a threshold; pulling
@@ -348,7 +420,7 @@ def mission_art(detection, name, cache_dir=None):
     profile = getattr(detection, "profile", None)
     if profile is None or not name:
         return None
-    return open_image(_resolve(detection.path, name))
+    return open_from(detection, name)
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +466,37 @@ def _add(roots, path):
     seen = {os.path.normcase(os.path.normpath(r)) for r in roots}
     if os.path.normcase(os.path.normpath(path)) not in seen:
         roots.append(os.path.normpath(path))
+
+
+def search_roots() -> list:
+    """Everywhere worth looking for one of these games.
+
+    Steam's libraries first, then the top level of every fixed drive. The
+    second half is not padding: Advanced Warfighter 1 and 2 are not Steam
+    titles and sit directly on a drive root, so a Steam-only sweep finds five
+    of the seven games and quietly misses two.
+    """
+    roots = steam_libraries()
+    for drive in _fixed_drives():
+        _add(roots, drive)
+    return roots
+
+
+def _fixed_drives() -> list:
+    out = []
+    if os.name != "nt":
+        return out
+    import ctypes
+    mask = ctypes.windll.kernel32.GetLogicalDrives()
+    for i in range(26):
+        if not mask & (1 << i):
+            continue
+        root = "%s:\\" % chr(ord("A") + i)
+        # 3 is DRIVE_FIXED. Sweeping a network share or an optical drive would
+        # be slow and pointless.
+        if ctypes.windll.kernel32.GetDriveTypeW(root) == 3:
+            out.append(root)
+    return out
 
 
 def _steam_roots() -> list:

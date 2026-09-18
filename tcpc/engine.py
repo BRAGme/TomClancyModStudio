@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 
 from . import inifile, rsexml
 from .install import backup_dir_for
-from .model import (FileCopy, INPLACE, IniEdit, MOD, XmlAttr, XmlText)
+from .model import (FileCopy, INPLACE, IniEdit, MOD, OVERLAY, XmlAttr,
+                    XmlText)
 
 #: dropped in a generated mod folder so the tool can tell a folder it made
 #: from one the user made. Nothing is ever deleted without this present.
@@ -273,8 +274,12 @@ def plan(root, profile, edits) -> dict:
     is what a generated mod shadows -- expanding against the install root would
     also sweep up whatever other mods are installed beside it.
     """
-    base = source_root(root, profile)
-    names = walk_rel(base) if base and os.path.isdir(base) else []
+    if profile.delivery == OVERLAY:
+        with open_bundles(root, profile) as bs:
+            names = bs.paths()
+    else:
+        base = source_root(root, profile)
+        names = walk_rel(base) if base and os.path.isdir(base) else []
     out = {}
     for e in edits:
         for rel in expand(names, e.select):
@@ -310,6 +315,34 @@ def source_root(root, profile) -> str:
     if profile.delivery == MOD:
         return os.path.join(root, profile.layout.base_mod.replace("/", os.sep))
     return root
+
+
+def open_bundles(root, profile):
+    """The game's `.bundle` archives, newest last."""
+    from .bundle import BundleSet
+    return BundleSet(os.path.join(root,
+                                  profile.layout.bundles_dir.replace("/", os.sep)))
+
+
+def overlay_dest(root, profile, rel) -> str:
+    r"""Where a bundle path is written as a loose file.
+
+    **A bundle's root IS the install root.** The archives hold `context.xml`
+    and `settings\...` alongside `data\...`, and those are the same
+    `context.xml` and `Settings\` folder that sit loose next to the executable.
+    So a path is written where it already belongs, and the only special case is
+    the first component `data`, which is replaced with the install's real
+    `Data\` folder rather than appended to it -- otherwise the file would land
+    in `Data\data\` and shadow nothing.
+
+    That `Data\` is where the evidence points: this installation has 764
+    hand-added texture files under `Data\textures\...` shadowing
+    `data/textures/...` in the archive.
+    """
+    parts = [p for p in rel.replace("\\", "/").split("/") if p]
+    if parts and parts[0].lower() == "data":
+        parts = [profile.layout.overlay_dir or "Data"] + parts[1:]
+    return os.path.join(root, *[p.replace("/", os.sep) for p in parts])
 
 
 def mod_dir(root, profile) -> str:
@@ -403,10 +436,32 @@ def apply(root, profile, values, dry_run=False, progress=None) -> Result:
 
     if profile.delivery == MOD:
         _apply_mod(root, profile, grouped, out, dry_run, progress)
+    elif profile.delivery == OVERLAY:
+        _apply_overlay(root, profile, grouped, out, dry_run, progress)
     else:
         _apply_inplace(root, profile, grouped, out, dry_run, progress)
     out.files = len(grouped)
     return out
+
+
+def _edit_bytes(raw, rel, edits, out: Result):
+    """As `_edit_file`, but for content that came out of an archive.
+
+    Written through a temporary file rather than by giving the parsers a bytes
+    constructor, so both paths go through exactly the same loader and cannot
+    disagree about encoding, line endings or a byte-order mark.
+    """
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=os.path.splitext(rel)[1] or ".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        return _edit_file(tmp, rel, edits, out)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:                           # pragma: no cover
+            pass
 
 
 def _edit_file(src_bytes_path, rel, edits, out: Result):
@@ -527,6 +582,99 @@ def _apply_mod(root, profile, grouped, out, dry_run, progress):
                b"and stops it from ever deleting the folder.\r\n")
 
 
+def _apply_overlay(root, profile, grouped, out, dry_run, progress):
+    r"""Write loose files that shadow the bundle, and remember exactly which.
+
+    Two kinds of destination, kept apart in the manifest because reverting them
+    is not the same operation:
+
+    *created*  -- a path that did not exist loose before. Reverting DELETES it,
+                  and the game falls back to the archive.
+    *shadowed* -- a path that already had a loose file, which is not
+                  hypothetical: this installation has 764 hand-added texture
+                  files sitting in exactly that tree. A pristine copy is taken
+                  before the first write and reverting puts it back.
+
+    What reverting never does is delete the folder. `Data\` is shared with the
+    user's own replacements, so only the recorded paths are touched.
+    """
+    manifest = read_manifest(root)
+    created = list(manifest.get("created", []))
+    shadowed = list(manifest.get("files", []))
+
+    # Rebuild from pristine, same rule as everywhere else: undo the last apply
+    # completely before working out this one.
+    if not dry_run:
+        for rel in created:
+            path = os.path.join(root, rel.replace("/", os.sep))
+            if os.path.isfile(path):
+                os.remove(path)
+            _prune(os.path.dirname(path), root)
+        for rel in shadowed:
+            restore(root, rel)
+
+    now_created, now_shadowed = [], []
+    try:
+        bundles = open_bundles(root, profile)
+    except Exception as exc:                      # noqa: BLE001
+        out.ok = False
+        out.warnings.append("Could not open the game's bundles: %s" % exc)
+        return
+    with bundles:
+        for i, (rel, edits) in enumerate(sorted(grouped.items())):
+            if progress:
+                progress(i, len(grouped), rel)
+            dest = overlay_dest(root, profile, rel)
+            dest_rel = os.path.relpath(dest, root).replace(os.sep, "/")
+            existed = os.path.isfile(dest)
+            # Edit whatever the game would actually load: the loose file if
+            # there already is one, the archived copy otherwise.
+            try:
+                if existed and dest_rel not in created:
+                    with open(dest, "rb") as fh:
+                        raw = fh.read()
+                else:
+                    raw = bundles.read(rel)
+            except (KeyError, OSError) as exc:
+                out.warnings.append("%s: %s" % (rel, exc))
+                continue
+            try:
+                data = _edit_bytes(raw, rel, edits, out)
+            except (rsexml.RseXmlError, inifile.IniError) as exc:
+                out.ok = False
+                out.warnings.append("%s: %s" % (rel, exc))
+                continue
+            if not dry_run:
+                if existed and dest_rel not in created:
+                    stash(root, dest_rel)
+                    now_shadowed.append(dest_rel)
+                else:
+                    now_created.append(dest_rel)
+                _write(dest, data)
+                out.verified[dest_rel] = sha1(dest)
+
+    if not dry_run:
+        manifest["created"] = sorted(set(now_created))
+        manifest["files"] = sorted(set(now_shadowed))
+        manifest["applied"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        manifest["game"] = profile.id
+        write_manifest(root, manifest)
+
+
+def _prune(folder, root):
+    """Remove a directory this tool created, once it is empty."""
+    root = os.path.abspath(root)
+    folder = os.path.abspath(folder)
+    while folder.startswith(root) and folder != root:
+        try:
+            if os.listdir(folder):
+                return
+            os.rmdir(folder)
+        except OSError:
+            return
+        folder = os.path.dirname(folder)
+
+
 def _clear_mod(dest_root, out):
     """Delete a previously generated mod folder -- and only one of those.
 
@@ -578,6 +726,15 @@ def revert(root, profile) -> Result:
         return out
 
     manifest = read_manifest(root)
+    if profile.delivery == OVERLAY:
+        for rel in sorted(manifest.get("created", [])):
+            path = os.path.join(root, rel.replace("/", os.sep))
+            if os.path.isfile(path):
+                os.remove(path)
+                out.files += 1
+                out.changes.append(Change(rel, "loose file", "added", "removed"))
+            _prune(os.path.dirname(path), root)
+        manifest["created"] = []
     for rel in sorted(manifest.get("files", [])):
         if restore(root, rel):
             out.files += 1

@@ -57,6 +57,14 @@ CHOICE = "choice"
 #: delivery modes
 MOD = "mod"
 INPLACE = "inplace"
+#: Advanced Warfighter keeps everything in multi-gigabyte `.bundle` archives,
+#: and the Diesel engine looks a file up on disk BEFORE it looks in the
+#: archive. So the stock value is read out of the bundle, the edited file is
+#: written loose under `Data\`, and the archives are never opened for writing.
+#: Reverting deletes exactly the files the tool created and restores any it
+#: had to write over -- never the whole folder, because the user's own texture
+#: replacements live in the same tree.
+OVERLAY = "overlay"
 
 
 @dataclass
@@ -243,6 +251,12 @@ class Layout:
     config_dir: str = ""
     #: where the game's own data lives
     data_dir: str = ""
+    #: OVERLAY only: the folder holding the `.bundle` archives
+    bundles_dir: str = ""
+    #: OVERLAY only: the loose tree a bundle path is written into. A bundle
+    #: path of `data/units/x.xml` lands at `<overlay_dir>/units/x.xml`, because
+    #: the archive's own root directory IS this folder.
+    overlay_dir: str = ""
 
 
 @dataclass

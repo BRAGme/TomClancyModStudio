@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tcpc import art, engine                                   # noqa: E402
 from tcpc.games import PROFILES                                # noqa: E402
 from tcpc.install import identify, scan_folder                 # noqa: E402
-from tcpc.model import BOOL, CHOICE, INT, MOD                  # noqa: E402
+from tcpc.model import BOOL, CHOICE, INT, MOD, OVERLAY         # noqa: E402
 
 USAGE = __doc__
 
@@ -35,12 +35,12 @@ def _open(path):
 
 def cmd_find(_args):
     found = 0
-    for lib in art.steam_libraries():
+    for lib in art.search_roots():
         for det in scan_folder(lib):
             print("%-18s %s" % (det.profile.short, det.path))
             found += 1
     if not found:
-        print("No supported games found in any Steam library.")
+        print("No supported games found in a Steam library or on a drive root.")
         print("Supported: %s" % ", ".join(sorted(p.short for p in PROFILES)))
     return 0
 
@@ -54,14 +54,12 @@ def cmd_show(args):
         return 1
     p = det.profile
     print("%s\n  %s" % (p.title, det.path))
-    print("  delivery: %s" % ("generates a mod folder (%s)"
-                              % os.path.join(p.layout.mods_dir, p.mod_name)
-                              if p.delivery == MOD else
-                              "edits files in place, pristine copies kept"))
+    print("  delivery: %s" % _delivery(p))
     print("  executable: %s (%s)" % (p.layout.exe, det.exe_version or "not found"))
     if p.delivery != MOD:
-        kept = len(engine.read_manifest(det.path).get("files", []))
-        print("  backup: %s" % ("%d file(s) kept" % kept if kept
+        man = engine.read_manifest(det.path)
+        kept = len(man.get("files", [])) + len(man.get("created", []))
+        print("  backup: %s" % ("%d file(s) tracked" % kept if kept
                                 else "nothing written yet"))
     for group in p.groups():
         print("\n  [%s]" % group)
@@ -77,6 +75,16 @@ def cmd_show(args):
             print("    %-20s %-34s default=%-10s %s"
                   % (s.key, shape, s.default, s.confidence))
     return 0
+
+
+def _delivery(p):
+    if p.delivery == MOD:
+        return ("generates a mod folder (%s), retail files untouched"
+                % os.path.join(p.layout.mods_dir, p.mod_name))
+    if p.delivery == OVERLAY:
+        return ("writes loose files under %s that shadow the bundles, which "
+                "are never opened for writing" % (p.layout.overlay_dir or "Data"))
+    return "edits files in place, pristine copies kept"
 
 
 def _values(profile, pairs):
@@ -123,6 +131,8 @@ def _run(args, dry):
           % ("Would change" if dry else "Changed", changed, result.files))
     if not dry and det.profile.delivery == MOD:
         print("Mod built. Turn it on in the game's own Mods menu.")
+    if not dry and det.profile.delivery == OVERLAY:
+        print("Written as loose files. The bundles were not modified.")
     return 0 if result.ok else 1
 
 

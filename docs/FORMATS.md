@@ -305,3 +305,91 @@ rather than a filesystem overlay. This tool does not use it yet; see
 * **Vegas's cut terrorist-hunt maps.** Seven hunt map ids are missing and their
   thumbnails are still on disk, matching story levels that do ship. Wiring them
   up is pure ini editing.
+
+---
+
+## 6. GRIN Diesel `.bundle` archives (Advanced Warfighter 1 and 2)
+
+Both GRAW games keep essentially everything in `Bundles\quick.bundle` and
+`Bundles\patch.bundle`: 3.8 GB and 3.7 GB, 21,356 and 25,052 files. Format,
+little-endian, and this is the whole of it:
+
+```
+0x00  "BNDL"
+0x04  u32  version            2 in both games
+0x08  u64  index_end          the index runs from 0x10 to here
+
+records until index_end:
+  0x01  push directory   u8 marker (always 1), NUL-terminated name
+  0x02  file             u64 offset, u32 size,
+                         u8 marker (always 1), NUL-terminated name
+  0x03  pop directory
+  0x00  end of index
+```
+
+File data is stored **uncompressed**, contiguously and in index order: each
+entry's offset is the previous one's offset plus its size, which is what
+confirmed the field widths. The grammar was settled by parsing rather than
+guessed — all four indexes consume to exactly `index_end` with nothing left
+over, and not one of the 47,674 entries points past the end of its file.
+
+**`patch.bundle` wins over `quick.bundle`.** 695 paths in GRAW 1 and 571 in
+GRAW 2 appear in both, and reading the wrong one silently gives the pre-patch
+values: `data/anims/anims.xmb` is 481,239 bytes in the patch and 464,542 in the
+original.
+
+### Why nothing here writes a bundle
+
+Diesel looks a file up **on disk before it looks in the archive**, so a change
+is delivered as a loose file and the archives are never opened for writing.
+
+That is not a guess about how it ought to work. This Advanced Warfighter
+installation has 764 files under `Data\textures\...` dated 2023 — ten times the
+size of the archived versions of the same paths — which are somebody's
+high-resolution replacements, working by exactly this mechanism. The 326 loose
+files dated 2006 are what shipped.
+
+A bundle path is written where the archive says it belongs, because **the
+bundle's root is the install root**: the archives hold `context.xml` and
+`settings\...` next to `data\...`, and those are the same `context.xml` and
+`Settings\` folder that sit loose beside the executable. The one special case
+is the leading `data`, which maps to the install's real `Data\` folder.
+
+### The data is plain XML, addressed by name
+
+A weapon does not have elements named for its fields. It has a flat list:
+
+```xml
+<stats block="weapon_data">
+    <var name="clip_max"      value="30"/>
+    <var name="spread_normal" value="1.87"/>   <!-- + mods affect this -->
+    <var name="fire_modes"    value="2"/>      <!-- 1=semi 2=+auto 3=+burst -->
+</stats>
+```
+
+which is why `rsexml` grew a predicate on the last path segment:
+`var[name=spread_normal]` selects the element whose `name` says so. A weapon
+file usually defines several units — the rifle, its grenade-launcher variant,
+the husk left when it is dropped — so a name repeats within a file, and an edit
+writes all of them, scaling each from its own value.
+
+**GRAW 2's wordmark is a tint mask, not a picture.** `sp_logo_h.dds` has the
+lettering in its alpha channel and a rainbow gradient in its colour channels
+that the game never shows — the shader draws the mask in a UI colour. Every
+channel permutation was tried before concluding that; none produces a sane
+logo, and the alpha alone produces the real one. GRAW 1's
+`logos_diffuse/h_1280x1024.dds` is an ordinary RGBA cut-out and needs none of
+this. GRAW 2's bundle still carries GRAW 1's logo family, so picking by
+filename alone gets you the wrong game's wordmark.
+
+### One bug this found in the ini editor
+
+Advanced Warfighter 2 ships `Support\Detection\interpreter_local.ini` as
+**UTF-16 LE**. `cp1252` decodes it perfectly happily — every byte maps to some
+character — and the result is a string full of NULs whose lone carriage returns
+the line-ending normaliser then rewrote as line feeds, corrupting the file on
+save. The round-trip check caught it. `inifile` now recognises every byte-order
+mark before the 8-bit fallback gets a look, and keeps each line's own
+terminator beside it rather than normalising and rejoining. That also makes it
+safe on a classic-Mac file, which nothing here ships but which cost nothing to
+get right once the structure was there.

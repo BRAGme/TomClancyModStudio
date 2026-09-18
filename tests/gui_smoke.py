@@ -29,7 +29,7 @@ from tcpc.install import scan_folder                          # noqa: E402
 def find_games():
     """Every supported installation on this machine, one per game id."""
     seen, out = set(), []
-    for lib in art.steam_libraries():
+    for lib in art.search_roots():
         for det in scan_folder(lib):
             if det.profile.id in seen:
                 continue

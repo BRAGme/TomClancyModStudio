@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tcpc import art, engine  # noqa: E402
 from tcpc.games import PROFILES  # noqa: E402
 from tcpc.install import identify, look, preview_detection  # noqa: E402
-from tcpc.model import BOOL, INT, MOD  # noqa: E402
+from tcpc.model import BOOL, INT, MOD, OVERLAY  # noqa: E402
 
 from . import discorddialog, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
@@ -359,12 +359,13 @@ class App(tk.Tk):
     def _autofind(self):
         """Sweep every Steam library on the machine for supported games.
 
-        Worth doing rather than making the user browse: these five are spread
-        across whatever drives Steam was pointed at, and on this kind of
-        machine that is rarely one place.
+        Worth doing rather than making the user browse. Five of the seven are
+        spread across whatever drives Steam was pointed at, and the two
+        Advanced Warfighter games are not Steam titles at all -- they sit
+        directly on a drive root -- so the sweep covers both.
         """
         found, seen = [], set()
-        for lib in art.steam_libraries():
+        for lib in art.search_roots():
             for det in engine_scan(lib):
                 key = os.path.normcase(det.path)
                 if key not in seen:
@@ -373,8 +374,9 @@ class App(tk.Tk):
         if not found:
             self._say("No supported games found in any Steam library.", "warn")
             messagebox.showinfo(APP_NAME,
-                                "None of the five supported games turned up in "
-                                "a Steam library. Use Browse to point at one.")
+                                "None of the seven supported games turned up "
+                                "in a Steam library or at the top of a drive. "
+                                "Use Browse to point at one.")
             return
         self._fill_shelf("", found)
         self._say("Found %d game%s." % (len(found), "" if len(found) == 1 else "s"),
@@ -500,9 +502,9 @@ class App(tk.Tk):
         self._remember(det.path)
 
     def _status_line(self, det):
-        bits = [det.path]
-        bits.append("mod folder" if det.profile.delivery == MOD
-                    else "edits files in place")
+        bits = [det.path, {MOD: "builds a mod folder",
+                           OVERLAY: "writes loose files over the bundles"}
+                .get(det.profile.delivery, "edits files in place")]
         if det.has_backup:
             bits.append("backup taken")
         return "   •   ".join(bits)
@@ -661,9 +663,14 @@ class App(tk.Tk):
                 rows.append(("Built", "yes" if os.path.isdir(
                     engine.mod_dir(det.path, prof)) else "not yet"))
             else:
-                rows.append(("Backup", "yes, %d file(s) kept"
-                             % len(engine.read_manifest(det.path).get("files", []))
-                             if det.has_backup else "not taken yet"))
+                man = engine.read_manifest(det.path)
+                kept = len(man.get("files", [])) + len(man.get("created", []))
+                if prof.delivery == OVERLAY:
+                    rows.append(("Bundles", prof.layout.bundles_dir
+                                 + "  (read only, never written)"))
+                    rows.append(("Written to", prof.layout.overlay_dir))
+                rows.append(("Tracked", "%d file(s)" % kept if kept
+                             else "nothing written yet"))
         for k, v in rows:
             r = tk.Frame(card.body, bg=theme.P.panel)
             r.pack(fill="x", pady=theme.px(2))
@@ -853,6 +860,14 @@ class App(tk.Tk):
             lines.append("Nothing in the game's own files is touched. Turn the "
                          "mod on in the game's Mods menu to use it, and off to "
                          "undo it completely.")
+        elif profile.delivery == OVERLAY:
+            lines.append("Write %d loose file(s) into %s, changing %d value(s)."
+                         % (preview.files, profile.layout.overlay_dir,
+                            len(real)))
+            lines.append("They shadow the game's .bundle archives, which are "
+                         "read but never written. Restore removes exactly the "
+                         "files this tool added and puts back any it wrote "
+                         "over -- it never deletes the folder.")
         else:
             lines.append("Rewrite %d file(s) in the installation, changing %d "
                          "value(s)." % (preview.files, len(real)))
@@ -900,10 +915,14 @@ class App(tk.Tk):
         if not self._guard():
             return
         profile, path = self.profile, self.detection.path
-        what = ("Delete the generated mod folder %s?"
-                % os.path.join(profile.layout.mods_dir, profile.mod_name)
-                if profile.delivery == MOD else
-                "Put every file this tool changed back exactly as it was?")
+        if profile.delivery == MOD:
+            what = ("Delete the generated mod folder %s?"
+                    % os.path.join(profile.layout.mods_dir, profile.mod_name))
+        elif profile.delivery == OVERLAY:
+            what = ("Remove every loose file this tool wrote into %s, and put "
+                    "back any it wrote over?" % profile.layout.overlay_dir)
+        else:
+            what = "Put every file this tool changed back exactly as it was?"
         if not messagebox.askokcancel(APP_NAME, what + "\n\nClose the game first."):
             return
 
@@ -980,6 +999,8 @@ def _short_path(path, keep=2):
 def _delivery_words(profile):
     if profile.delivery == MOD:
         return "generates a mod folder (retail files untouched)"
+    if profile.delivery == OVERLAY:
+        return "writes loose files that shadow the bundles (bundles untouched)"
     return "edits files in place (pristine copies kept)"
 
 
