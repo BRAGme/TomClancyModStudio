@@ -373,14 +373,61 @@ file usually defines several units — the rifle, its grenade-launcher variant,
 the husk left when it is dropped — so a name repeats within a file, and an edit
 writes all of them, scaling each from its own value.
 
-**GRAW 2's wordmark is a tint mask, not a picture.** `sp_logo_h.dds` has the
-lettering in its alpha channel and a rainbow gradient in its colour channels
-that the game never shows — the shader draws the mask in a UI colour. Every
-channel permutation was tried before concluding that; none produces a sane
-logo, and the alpha alone produces the real one. GRAW 1's
-`logos_diffuse/h_1280x1024.dds` is an ordinary RGBA cut-out and needs none of
-this. GRAW 2's bundle still carries GRAW 1's logo family, so picking by
-filename alone gets you the wrong game's wordmark.
+
+### Is the plain `.xml` live, or is the compiled form the authority?
+
+Both games ship two copies of most data: `.xml` and `.xml.bin` in GRAW 1,
+`.xml` and `.xmb` in GRAW 2. If the engine loads the compiled one, editing the
+XML is inert — the same trap Lockdown's `.rsc` sets. **The plain `.xml` is
+live.** Three things say so:
+
+* **GRIN's own mod pipeline never compiles XML.** `public_toolsundlerundle.bat`
+  is the whole official mod build, and it is two lines: `bundler.exe
+  compile-scripts` then `bundler.exe quick-bundle`. It never calls
+  `compile-xml`, although that command exists in the same executable
+  (`Compiles the listed .xml files into .xml.bin files.`). So every mod bundle
+  built the documented way contains plain XML and no compiled XML at all.
+* **A loose `.xml` beats a stale `.xml.bin` sitting beside it.** GRAW 1's
+  `Settings\defaults.xml` (2025) names the profile `graw_profile_bragme`; its
+  `defaults.xml.bin` (2006) names `graw_profile_default`. Only the first exists
+  on disk, and the game has been reading and writing it.
+* **The compiled form is a real fallback, so it is in the chain.**
+  `ghost_lead.xml.bin` — the player model — has no `.xml` twin anywhere, and
+  the game plainly renders it. So the order is: try `.xml`, fall back to the
+  compiled form.
+
+### The palettes are authored text, not something to sample
+
+Both games state their interface colours with the roles named, which is worth
+knowing because sampling the backdrop measures the wrong thing entirely: an
+Advanced Warfighter menu is a 3D scene, and averaging it gives the colour of a
+Mexican street at dusk.
+
+* GRAW 1 — `data/gui/interface_items.xml` in the bundle, an `xdefine` block the
+  whole GUI references as `@base_color` and friends: base `#1D8997` at alpha
+  150, darker base `#006C7A`, frame `#17C5C0`, selected `#40B0BF`, hover
+  `#329CAB`, and a hot orange highlight `#FF6C00` that is easy to miss in a
+  family this teal.
+* GRAW 2 — `Settings\hud_palett_2.xml`, loose on disk and commented in English:
+  `#001717` ground, `#023D40` and `#047E80` panels, `#06C2C5` rules, `#96F7F8`
+  text, amber `#E6AB40` accent. The same file carries a complete second scheme
+  in brown that nothing selects, and its own header explains that switching
+  means copying one block over the other — which is what this tool's "HUD
+  colour scheme" option does.
+
+**GRAW 2's wordmark is THREE tint masks, not a picture.** `sp_logo_h.dds` opens as neon
+primaries, and the file is fine — you are looking at masks. Its red, green and
+blue channels are three separate coverage masks and its alpha is the outline;
+`data/objects/gui/hud_new/materials.xml` names the material `GRAW_logo` and
+binds `red_color`/`green_color`/`blue_color` to the palette entries X1, X2 and
+X3, which `Settings\hud_palett_2.xml` labels "logo dark", "logo mid" and "logo
+bright". Painting each mask in its colour and adding them gives the real
+white-and-teal wordmark. Every plain channel order was tried first and none of
+them produces anything but neon.
+
+GRAW 1's `logos_diffuse/h_1600x1200.dds` is an ordinary RGBA cut-out and needs
+none of this. GRAW 2's bundle still carries GRAW 1's entire logo family as dead
+leftovers, so picking by filename alone gets you the wrong game's wordmark.
 
 ### One bug this found in the ini editor
 

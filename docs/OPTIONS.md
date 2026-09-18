@@ -42,7 +42,8 @@ explosive power), Interface (crosshair, hints, camera shake, blood, bodies, and
 two of the thirteen developer readouts that ship live).
 
 **GRAW and GRAW 2** — Weapons only, for now: spread, recoil, magazine
-capacity, unlocking every fire mode, and rate of fire. Those are the fields
+capacity, unlocking every fire mode, and rate of fire; GRAW 2 adds its HUD
+colour scheme. Those are the fields
 Advanced Warfighter's own weapon files comment in full, and the ones a single
 control can move across all 28 (GRAW 1) or 44 (GRAW 2) weapon definitions. The
 wider surface — AI skill, enemy counts, mission scripts — is in the same

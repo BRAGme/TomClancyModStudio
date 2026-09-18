@@ -89,7 +89,7 @@ EMBLEMS = {
     # inside the bundle; a proper RGBA cut-out, white lettering with the
     # game's teal
     "graw": ("data/textures/atlas_interface/menu/logos_diffuse/"
-             "h_1280x1024.dds", None),
+             "h_1600x1200.dds", None),
     # inside the bundle, and a MASK rather than a picture -- see EMBLEM_MODE
     "graw2": ("data/textures/atlas_gui/general_gfx/sp_logo_h.dds", None),
 }
@@ -112,16 +112,26 @@ EMBLEM_MODE = {
     "lockdown": ("alpha", 0, 0),
     "vegas": ("alpha", 0, 0),
     "graw": ("alpha", 0, 0),
-    # Advanced Warfighter 2's wordmark is a TINT MASK, not a picture. Its
-    # alpha channel is the lettering and its colour channels are a rainbow
-    # gradient the game never shows -- the shader draws the mask in a UI
-    # colour. Every channel order was tried before concluding that; none of
-    # them produces a sane logo, and the alpha alone produces the real one.
-    "graw2": ("mask", 0, 0),
+    # Advanced Warfighter 2's wordmark is THREE TINT MASKS, not a picture.
+    # Its red, green and blue channels are separate coverage masks and its
+    # alpha is the outline; the shader combines them with three palette
+    # colours. `data/objects/gui/hud_new/materials.xml` names the material
+    # `GRAW_logo` and binds red_color/green_color/blue_color to the palette
+    # entries X1, X2 and X3, and `Settings\hud_palett_2.xml` gives those as
+    # "logo dark", "logo mid" and "logo bright". Rebuilding it that way is the
+    # only thing that produces the real logo -- every plain channel order
+    # comes out neon.
+    "graw2": ("tint3", 0, 0),
 }
 
-#: what a "mask" emblem is painted in
-MASK_INK = {"graw2": (255, 255, 255)}
+#: The three palette colours Advanced Warfighter 2 tints its wordmark with,
+#: read out of `Settings\hud_palett_2.xml` rather than sampled.
+TINT3 = {"graw2": ((1, 51, 56), (0, 155, 166), (252, 253, 253))}
+
+#: what a single-channel "mask" emblem is painted in. Nothing uses it now that
+#: Advanced Warfighter 2's three-mask logo is rebuilt properly, but the mode
+#: stays: a one-channel mask is a common enough way to ship a logo.
+MASK_INK = {}
 
 #: Marks whose alpha needs its holes filled after keying. Nothing needs it now
 #: that Lockdown's real cut-out is being used instead of its splash screen,
@@ -328,7 +338,8 @@ def emblem_image(detection, cache_dir=None):
     img = _crop_frac(img, box)
 
     mode, floor, gain = EMBLEM_MODE.get(profile.id, ("key", 110, 3.2))
-    rgba = _key(img, mode, floor, gain, MASK_INK.get(profile.id, (255, 255, 255)))
+    ink = TINT3.get(profile.id) or MASK_INK.get(profile.id, (255, 255, 255))
+    rgba = _key(img, mode, floor, gain, ink)
     close = CLOSE_ALPHA.get(profile.id)
     if close:
         rgba = _close_alpha(rgba, close)
@@ -343,6 +354,8 @@ def _key(img, mode, floor, gain, ink=(255, 255, 255)):
         rgba = img.convert("RGBA")
         flat = [Image.new("L", rgba.size, c) for c in ink]
         return Image.merge("RGBA", tuple(flat) + (rgba.split()[-1],))
+    if mode == "tint3":
+        return _tint3(img, ink)
 
     if mode == "lift":
         # Stretch the crop's own range before keying. A mark set in mid-grey
@@ -382,6 +395,33 @@ def _close_alpha(rgba, size):
     a = a.filter(ImageFilter.MaxFilter(size)).filter(ImageFilter.MinFilter(size))
     from PIL import Image
     return Image.merge("RGBA", (r, g, b, a))
+
+
+def _tint3(img, colours):
+    """Rebuild a three-mask logo the way its shader does.
+
+    Each of the red, green and blue channels is a separate coverage mask, and
+    each is painted in its own palette colour; the three are added, and the
+    file's alpha is the outline. Straight addition rather than a weighted
+    blend, because that is what an additive tint shader does and because the
+    three masks barely overlap.
+    """
+    rgba = img.convert("RGBA")
+    src = rgba.load()
+    out = rgba.copy()
+    dst = out.load()
+    for y in range(rgba.height):
+        for x in range(rgba.width):
+            r, g, b, a = src[x, y]
+            acc = [0, 0, 0]
+            for mask, colour in zip((r, g, b), colours):
+                if not mask:
+                    continue
+                for i in range(3):
+                    acc[i] += colour[i] * mask // 255
+            dst[x, y] = (min(255, acc[0]), min(255, acc[1]),
+                         min(255, acc[2]), a)
+    return out
 
 
 def _trim_alpha(rgba, threshold=40):

@@ -275,8 +275,17 @@ def plan(root, profile, edits) -> dict:
     also sweep up whatever other mods are installed beside it.
     """
     if profile.delivery == OVERLAY:
+        # Both namespaces, because the game reads from both. Not every file an
+        # Advanced Warfighter install loads is inside an archive:
+        # `Settings\hud_palett_2.xml` -- which is the whole HUD colour scheme,
+        # self-documented, with a second unused scheme sitting under it -- is
+        # loose only, and a bundle-only listing would never see it.
         with open_bundles(root, profile) as bs:
-            names = bs.paths()
+            names = list(bs.paths())
+        seen = {n.lower() for n in names}
+        for rel in walk_rel(root):
+            if rel.lower() not in seen and not rel.lower().startswith("bundles/"):
+                names.append(rel)
     else:
         base = source_root(root, profile)
         names = walk_rel(base) if base and os.path.isdir(base) else []

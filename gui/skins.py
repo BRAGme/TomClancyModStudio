@@ -379,51 +379,68 @@ PC_VEGAS = replace(
     glyph_triangle="#c15b0e",
 )
 
-#: Advanced Warfighter on PC. It gets the `graw` chrome family it gave its
-#: name to -- a dark plate inside a bright double stroke, rows sheared at the
-#: top right -- but in the PC game's own colours rather than the PS2 port's.
+#: Advanced Warfighter on PC, in the colours the games themselves state.
 #:
-#: The teal was sampled from the wordmark rather than from the backdrop,
-#: because Advanced Warfighter's menu is a 3D scene and its backdrop is
-#: photography: averaging that gives the colour of a Mexican street at dusk,
-#: not the colour of the interface. The lettering is white over #00696b with
-#: an #a5bec0 bevel, and those are the three colours the UI is built from.
+#: Neither of these was sampled. Both games ship their interface palette as
+#: authored text with the roles named, so these are read values:
+#:
+#:   GRAW 1  `data/gui/interface_items.xml` inside the bundle -- an `xdefine`
+#:           block the whole GUI references as `@base_color` and friends.
+#:           base #1D8997 at alpha 150, darker base #006C7A, frame #17C5C0,
+#:           selected #40B0BF, hover #329CAB, and a hot orange highlight
+#:           #FF6C00 that is easy to miss in a family this teal.
+#:   GRAW 2  `Settings\hud_palett_2.xml`, loose on disk and commented in
+#:           English: #001717 ground, #023D40 and #047E80 panels, #06C2C5
+#:           rules, #96F7F8 text, amber #E6AB40 accent.
+#:
+#: Sampling the backdrop would have given neither, because Advanced
+#: Warfighter's menu is a 3D scene and what averaging it measures is a Mexican
+#: street at dusk.
+#:
+#: The window's own ground is darkened from those, because the games lay their
+#: panels over live 3D at alpha 150 and this tool lays them over a still.
 PC_GRAW = replace(
     GRAW,
-    bg="#050b0c",
-    veil="#030808",
-    panel="#0a1618",
-    panel2="#112426",
-    edge="#31b4bd",
-    edge_dim="#1a5f65",
-    text="#c3dcde",
-    dim="#8aacae",
-    faint="#749496",
+    bg="#04171a",
+    veil="#020d0f",
+    panel="#083035",
+    panel2="#0d474e",
+    edge="#17c5c0",
+    edge_dim="#0e6b69",
+    text="#d6f2f1",
+    dim="#8fc4c2",
+    faint="#78a8a6",
     title="#ffffff",
-    accent="#31b4bd",
-    accent_dim="#217d85",
-    sel_fill="#a5bec0",
-    sel_text="#05191b",
-    tab="#31b4bd",
-    glyph_triangle="#31b4bd",
+    accent="#ff6c00",
+    accent_dim="#a34500",
+    sel_fill="#40b0bf",
+    sel_text="#04171a",
+    tab="#ff6c00",
+    warn="#ffb03a",
+    glyph_triangle="#17c5c0",
 )
 
-#: The sequel keeps the same interface language and warms it very slightly;
-#: its own wordmark is white on the same teal.
 PC_GRAW2 = replace(
-    PC_GRAW,
-    bg="#06090a",
-    veil="#030506",
-    panel="#0c1416",
-    panel2="#142023",
-    edge="#4ac6cf",
-    edge_dim="#20686e",
-    accent="#4ac6cf",
-    accent_dim="#248289",
-    sel_fill="#b6cbcd",
-    sel_text="#06191c",
-    tab="#4ac6cf",
-    glyph_triangle="#4ac6cf",
+    GRAW,
+    bg="#001717",
+    veil="#000c0c",
+    panel="#023d40",
+    panel2="#047e80",
+    edge="#06c2c5",
+    edge_dim="#04595b",
+    text="#96f7f8",
+    dim="#5fb9bb",
+    faint="#4e9b9d",
+    title="#ffffff",
+    accent="#e6ab40",
+    accent_dim="#8f6a26",
+    sel_fill="#047e80",
+    sel_text="#d8f8f9",
+    tab="#e6ab40",
+    warn="#e6ab40",
+    bad="#dd2c2c",
+    good="#069f77",
+    glyph_triangle="#06c2c5",
 )
 
 BY_PROFILE = {
