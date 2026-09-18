@@ -34,10 +34,10 @@ import shutil
 import time
 from dataclasses import dataclass, field
 
-from . import inifile, rsexml, xmlbin
+from . import inifile, rsexml, upackage, xmlbin
 from .install import backup_dir_for
-from .model import (FileCopy, INPLACE, IniEdit, MOD, OVERLAY, XmlAttr,
-                    XmlText)
+from .model import (FileCopy, INPLACE, IniEdit, MOD, OVERLAY, PropEdit,
+                    XmlAttr, XmlText)
 
 #: dropped in a generated mod folder so the tool can tell a folder it made
 #: from one the user made. Nothing is ever deleted without this present.
@@ -271,6 +271,110 @@ def apply_xml(doc: "rsexml.Doc", edits, rel, out: Result):
         out.changes.append(Change(rel, what, str(current), str(e.value), status))
 
 
+def apply_package(pkg: "upackage.Package", edits, rel, out: Result):
+    r"""Rewrite compiled class defaults in one Unreal package.
+
+    The loop is over CLASSES rather than over edits, because one edit is
+    normally aimed at every class that has the property -- "20% less recoil"
+    is 143 separate four-byte writes, and logging 143 lines would bury the
+    other changes. One line per edit is emitted instead, counting the classes
+    it reached.
+
+    A class whose defaults cannot be parsed exactly is skipped and reported.
+    That is not a formality: six classes in `R6Weapons.u` still carry compiled
+    script, and `ScriptSize` is a memory length, so their property lists cannot
+    be located by arithmetic. Guessing at one would put a four-byte write at an
+    arbitrary offset in the middle of executable bytecode.
+    """
+    names = [e.name for e in pkg.classes() if e.size > 0]
+    for e in edits:
+        want = [n for n in names if _class_match(n, e.cls)]
+        hit = 0
+        misparsed = []
+        firsts = []
+        for name in want:
+            try:
+                table = pkg.defaults(name)
+            except upackage.PackageError:
+                misparsed.append(name)
+                continue
+            prop = table.get(e.prop)
+            if prop is None:
+                continue
+            current = pkg.get(name, e.prop)
+            if current is None:                       # a type we cannot write
+                continue
+            if e.stock is not None and len(want) == 1 \
+                    and str(current).strip() != str(e.stock).strip():
+                out.changes.append(Change(rel, "%s.%s" % (name, e.prop),
+                                          str(e.stock), str(current),
+                                          "stock-mismatch"))
+                out.warnings.append(
+                    "%s: %s.%s was expected to be %s but is %s. This build "
+                    "differs from the one the option was measured on."
+                    % (rel, name, e.prop, e.stock, current))
+            value, err = _resolve_prop_value(e, current, prop)
+            if err:
+                out.warnings.append("%s: %s.%s %s" % (rel, name, e.prop, err))
+                continue
+            if pkg.set(name, e.prop, value):
+                hit += 1
+                if len(firsts) < 3:
+                    firsts.append("%s %s->%s" % (name, _brief(current),
+                                                 _brief(value)))
+        what = "%s.%s" % (e.cls, e.prop)
+        if misparsed:
+            out.warnings.append(
+                "%s: %d class(es) could not be parsed and were left alone: %s"
+                % (rel, len(misparsed), ", ".join(sorted(misparsed)[:6])))
+        if not hit:
+            out.changes.append(Change(rel, what, "", "", "absent"))
+            continue
+        out.changes.append(Change(rel, what, "%d class(es)" % hit,
+                                  _shown(e) + " [" + "; ".join(firsts) + "]",
+                                  "changed"))
+
+
+def _class_match(name, pattern) -> bool:
+    if pattern in ("*", ""):
+        return True
+    if pattern.endswith("*"):
+        return name.startswith(pattern[:-1])
+    if pattern.startswith("*"):
+        return name.endswith(pattern[1:])
+    return name == pattern
+
+
+def _brief(value):
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, float):
+        return "%g" % value
+    return str(value)
+
+
+def _resolve_prop_value(edit, current, prop):
+    """As `_resolve_value`, but the current value is already typed.
+
+    No parsing and no formatting: a package holds numbers as numbers, so the
+    string round-trip the text editors need would only lose precision here.
+    """
+    if edit.scale is None and edit.offset is None:
+        return edit.value, None
+    if isinstance(current, bool):
+        return None, "is a flag and cannot be scaled"
+    out = current * (1.0 if edit.scale is None else edit.scale)
+    if edit.offset is not None:
+        out += edit.offset
+    if edit.minimum is not None:
+        out = max(edit.minimum, out)
+    if edit.maximum is not None:
+        out = min(edit.maximum, out)
+    if prop.kind in ("int", "byte"):
+        out = int(round(out))
+    return out, None
+
+
 # ---------------------------------------------------------------------------
 # grouping edits by the file they land in
 # ---------------------------------------------------------------------------
@@ -487,6 +591,7 @@ def _edit_file(src_bytes_path, rel, edits, out: Result):
     """Load, edit and return the new bytes for one file."""
     ini_edits = [e for e in edits if isinstance(e, IniEdit)]
     xml_edits = [e for e in edits if isinstance(e, (XmlAttr, XmlText))]
+    pkg_edits = [e for e in edits if isinstance(e, PropEdit)]
     copies = [e for e in edits if isinstance(e, FileCopy)]
     if copies:
         last = copies[-1]
@@ -494,8 +599,21 @@ def _edit_file(src_bytes_path, rel, edits, out: Result):
             return last.data
         with open(last.source, "rb") as fh:
             return fh.read()
-    if ini_edits and xml_edits:
-        raise ApplyError("%s has both ini and xml edits aimed at it" % rel)
+    if len([x for x in (ini_edits, xml_edits, pkg_edits) if x]) > 1:
+        raise ApplyError("%s has more than one kind of edit aimed at it" % rel)
+    if pkg_edits:
+        before = os.path.getsize(src_bytes_path)
+        pkg = upackage.Package.load(src_bytes_path)
+        apply_package(pkg, pkg_edits, rel, out)
+        data = pkg.to_bytes()
+        # The whole safety argument for touching a compiled package is that an
+        # edit is equal-width, so the export table still describes the file.
+        # Check it rather than assert it.
+        if len(data) != before:
+            raise ApplyError(
+                "%s: package edit changed the file length from %d to %d bytes"
+                % (rel, before, len(data)))
+        return data
     if ini_edits:
         doc = inifile.Ini.load(src_bytes_path)
         apply_ini(doc, ini_edits, rel, out)

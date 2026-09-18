@@ -39,6 +39,19 @@ PRESETS = {
             "gunfire_alert": "x0.5",
             "terro_skill": "stock",
         }),
+        ("Retuned rifles — steadier and harder-hitting", {
+            "weapon_recoil": "half",
+            "weapon_accuracy": "tight",
+            "weapon_settle": "fast",
+            "ammo_damage": "x1.5",
+            "weapon_magazines": 2,
+        }),
+        ("Everybody dies fast", {
+            "ammo_damage": "x2",
+            "ammo_penetration": "max",
+            "terro_skill": "hard",
+            "terro_helmets": "half",
+        }),
         ("Approachable — learning the maps", {
             "difficulty": "0",
             "terrorists": 12,

@@ -9,8 +9,12 @@ Badges on each card mean:
 * **not working** — shipped visible and disabled, with the reason on the card
 
 As of this build, **nothing is "verified in game"**. Everything below is
-"untested" except Lockdown's `options.xml` toggles, which are "written and read
-back". The formats, the values and the round-trips are all checked by
+"untested" except Lockdown's `options.xml` toggles and Raven Shield's weapon and
+ammunition options, which are "written and read back" -- for the latter the
+read-back is unusually strong, because the values are compared against three
+independently produced datasets covering 3,046 offsets and values, and the
+written packages are checked to be the same length with every changed byte
+inside a property value. The formats, the values and the round-trips are all checked by
 `tests\run_tests.py` against the real games; what has not happened is somebody
 launching each game and watching each option do what it says.
 
@@ -24,7 +28,14 @@ from them.
 friendly fire), AI templates (competence across eight skill stats, the six-way
 personality mix, helmets), Stealth (footstep audibility per posture, gunfire
 alert radius, quiet reloads), Interface (crosshair, radar, the seven HUD
-elements, aim assist, corpses, field of view).
+elements, aim assist, corpses, field of view), Weapons (recoil, accuracy in all
+five stances, reticule settle time, extra magazines) and Ammunition (bullet
+damage, penetration, and whether the loadout menu's stat bars are rewritten to
+match what was changed).
+
+The last two groups are the only ones in the whole tool that write binary: they
+patch class defaults inside Raven Shield's compiled `system\*.u` packages at
+identical width. See section 7 of `docs/FORMATS.md`.
 
 **Ghost Recon** — Enemies (marksmanship and the other three skill rungs, body
 armour, whether multiplayer enemies are included), Lethality (the seven
@@ -81,3 +92,12 @@ field of view, camera shake, weapon bob, squad spacing).
   zero. Nothing in the data proves the engine still reads them.
 * **Raven Shield "Friendly fire"** is multiplayer only. There is no
   single-player equivalent key.
+* **Raven Shield's weapon and ammunition options** cannot switch a property ON
+  that a weapon does not already carry. Unreal serialises a property only where
+  it differs from its class default, so adding one would move every byte after
+  it and invalidate the export table. Every weapon the loadout menu offers is
+  still reached, through its own defaults or a parent's.
+* **Raven Shield "Keep the loadout menu honest"** is a proportional mirror, not
+  the game's own formula. The bars are authored percentages that clamp at 100,
+  so several weapons sit at full once recoil is heavily reduced, and a bar
+  already at 0 stays at 0.

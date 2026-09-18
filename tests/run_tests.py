@@ -26,7 +26,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tcpc import art, engine, inifile, rsb, rsexml               # noqa: E402
+from tcpc import art, engine, inifile, rsb, rsexml, upackage     # noqa: E402
 from tcpc.games import PROFILES                                  # noqa: E402
 from tcpc.install import identify, scan_folder                   # noqa: E402
 from tcpc.model import BOOL, CHOICE, INT, MOD                    # noqa: E402
@@ -208,9 +208,21 @@ def sandbox_for(det, tmp):
     root = os.path.join(tmp, det.profile.id)
     base = (det.profile.layout.base_mod + "/") if det.profile.delivery == MOD \
         else ""
+    # Three value sets, not one. `_max_values` flips a boolean OFF its
+    # default, so an option that defaults to ON contributes nothing to the max
+    # set -- Raven Shield's menu-bar mirror is exactly that, and it left
+    # `R6Description.u` out of the sandbox entirely. The booleans are put back
+    # in a third pass so every file any setting can reach gets copied.
+    maxed = _max_values(det.profile)
+    restored = dict(maxed)
+    for s in det.profile.settings:
+        if s.kind == BOOL:
+            restored[s.key] = not maxed[s.key]
     wanted = set()
-    for e in det.profile.build_edits(_max_values(det.profile)):
-        wanted.add((base + e.select).split("*")[0].rstrip("/"))
+    for values in (maxed, det.profile.effective(restored),
+                   det.profile.effective(det.profile.defaults())):
+        for e in det.profile.build_edits(values):
+            wanted.add((base + e.select).split("*")[0].rstrip("/"))
     for sig in det.profile.layout.signature:
         wanted.add(sig.split("*")[0].rstrip("/"))
     for rel in engine.walk_rel(det.path):
@@ -600,6 +612,232 @@ def test_graw_enemies(dets):
               _enemy_total(doc2.text) < before)
 
 
+def _rs3_packages(root):
+    """Every Raven Shield package present under `root`.
+
+    A sandbox holds only what an edit selects, and `R61stWeapons.u` is
+    deliberately not selected -- it carries first-person hands and no
+    statistics -- so a missing file here is the profile being precise rather
+    than something going wrong.
+    """
+    out = {}
+    for f in ("R6Weapons.u", "R63rdWeapons.u", "R61stWeapons.u",
+              "R6Description.u"):
+        path = os.path.join(root, "system", f)
+        if os.path.exists(path):
+            out[f] = upackage.Package.load(path)
+    return out
+
+
+def _csv_rows(name):
+    import csv
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "research", name)
+    with open(path, newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_packages(dets):
+    r"""Raven Shield's compiled `.u` weapon and ammunition patching.
+
+    The first half is the reason any of this can be trusted: the offsets this
+    tool computes by parsing are compared against `research/*.csv` and
+    `rs3_descbars.json`, which were derived separately during the research
+    pass. An earlier version of `upackage` searched for a property's name
+    index instead of parsing the list, agreed with the research on 1,808 of
+    1,809 weapon offsets, and was WRONG -- the one disagreement was a byte
+    pair inside a float. A single mismatch here means the same thing.
+    """
+    det = next((d for d in dets if d.profile.id == "ravenshield"), None)
+    if det is None:
+        return
+    print("\n[Raven Shield: compiled package patching]")
+    profile = det.profile
+    pkgs = _rs3_packages(det.path)
+
+    # -- offsets, against independently derived research ------------------
+    for name, files in (("rs3_weapons.csv", ("R6Weapons.u", "R63rdWeapons.u",
+                                             "R61stWeapons.u")),
+                        ("rs3_ammo.csv", ("R6Weapons.u",))):
+        agree = bad = 0
+        first = ""
+        for row in _csv_rows(name):
+            pkg = next((pkgs[f] for f in files
+                        if (pkgs[f].export(row["class"]) or _N).is_class), None)
+            if pkg is None:
+                bad += 1
+                continue
+            for col, want in row.items():
+                if not col.endswith("@") or not want:
+                    continue
+                prop = pkg.find_property(row["class"], col[:-1])
+                value = pkg.get(row["class"], col[:-1])
+                stated = (row.get(col[:-1]) or "").strip()
+                if prop is None or prop.offset != int(want, 16) \
+                        or not _same(value, stated):
+                    bad += 1
+                    first = first or "%s.%s" % (row["class"], col[:-1])
+                    continue
+                agree += 1
+        check("Raven Shield: %s -- %d offsets and values agree" % (name, agree),
+              bad == 0 and agree > 200, "%d disagree, first %s" % (bad, first))
+
+    import json
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "research", "rs3_descbars.json")
+    with open(path) as fh:
+        bars = json.load(fh)
+    desc = pkgs["R6Description.u"]
+    agree = bad = 0
+    for row in bars:
+        for col, want in list(row.items()):
+            if not col.endswith("@"):
+                continue
+            for i, expect in enumerate(row[col[:-1]]):
+                key = "%s[%d]" % (col[:-1], i)
+                prop = desc.find_property(row["class"], key)
+                if prop is None or desc.get(row["class"], key) != expect \
+                        or (i == 0 and prop.offset != int(want, 16)):
+                    bad += 1
+                else:
+                    agree += 1
+    check("Raven Shield: menu stat bars -- %d array elements agree" % agree,
+          bad == 0 and agree > 600, "%d disagree" % bad)
+
+    # -- a class that cannot be parsed is refused, not guessed at ---------
+    refused = []
+    for pkg in pkgs.values():
+        for e in pkg.classes():
+            if e.size <= 0:
+                continue
+            try:
+                pkg.defaults(e.name)
+            except upackage.PackageError:
+                refused.append(e.name)
+    check("Raven Shield: 535 classes parse, the %d with script are refused"
+          % len(refused), len(refused) == 6 and "R6Weapons" in refused,
+          str(sorted(refused)))
+    check("Raven Shield: a refused class is not written to",
+          pkgs["R6Weapons.u"].set("R6Weapons", "m_iEnergy", 1) is False)
+
+    # -- and now an actual apply, on a sandbox copy ------------------------
+    tmp = tempfile.mkdtemp(prefix="tcpc-upkg-")
+    try:
+        root = sandbox_for(det, tmp)
+        values = dict(profile.defaults())
+        values.update(weapon_recoil="half", ammo_damage="x2",
+                      weapon_magazines=4, menu_bars=True)
+        stock = _rs3_packages(root)
+        sizes = {f: os.path.getsize(os.path.join(root, "system", f))
+                 for f in stock}
+
+        result = engine.apply(root, profile, profile.effective(values))
+        check("Raven Shield: package apply succeeded", result.ok,
+              "; ".join(result.warnings[:2]))
+
+        after = _rs3_packages(root)
+        check("Raven Shield: every package is the same length as before",
+              all(os.path.getsize(os.path.join(root, "system", f)) == n
+                  for f, n in sizes.items()),
+              str({f: os.path.getsize(os.path.join(root, "system", f))
+                   for f, n in sizes.items()
+                   if os.path.getsize(os.path.join(root, "system", f)) != n}))
+
+        # recoil really halved, on a weapon the menu offers
+        was = stock["R63rdWeapons.u"].get("NormalAssaultM4",
+                                          "m_stAccuracyValues.fWeaponJump")
+        now = after["R63rdWeapons.u"].get("NormalAssaultM4",
+                                          "m_stAccuracyValues.fWeaponJump")
+        check("Raven Shield: M4 muzzle climb halved (%.3f -> %.3f)" % (was, now),
+              abs(now - was / 2) < 1e-3)
+
+        # damage is on the ammunition
+        was = stock["R6Weapons.u"].get("ammo556mmNATONormalFMJ", "m_iEnergy")
+        now = after["R6Weapons.u"].get("ammo556mmNATONormalFMJ", "m_iEnergy")
+        check("Raven Shield: 5.56 NATO energy doubled (%d -> %d)" % (was, now),
+              now == was * 2)
+
+        # ...and explosives share the field but are deliberately left alone
+        held = [c for c in ("R6FragGrenade", "R6FlashBang", "R6ClaymoreUnit",
+                            "R6BreachingChargeUnit", "R6RemoteChargeUnit")
+                if stock["R6Weapons.u"].get(c, "m_iEnergy")
+                != after["R6Weapons.u"].get(c, "m_iEnergy")]
+        check("Raven Shield: grenades and charges keep their own energy",
+              not held, str(held))
+
+        # magazines are an addition, not a multiplication
+        was = stock["R63rdWeapons.u"].get("NormalAssaultM4", "m_iNbOfClips")
+        now = after["R63rdWeapons.u"].get("NormalAssaultM4", "m_iNbOfClips")
+        check("Raven Shield: magazines %d -> %d is the stated +4" % (was, now),
+              now == was + 4)
+
+        # the menu bar moved the RIGHT way: less recoil is a HIGHER bar
+        was = stock["R6Description.u"].get("R6DescAssaultM4", "m_ARecoilPercent[0]")
+        now = after["R6Description.u"].get("R6DescAssaultM4", "m_ARecoilPercent[0]")
+        check("Raven Shield: halved recoil raised the menu's recoil bar "
+              "(%d -> %d)" % (was, now), now > was and now <= 100)
+        was = stock["R6Description.u"].get("R6DescAssaultM4", "m_ADamagePercent[0]")
+        now = after["R6Description.u"].get("R6DescAssaultM4", "m_ADamagePercent[0]")
+        check("Raven Shield: doubled damage raised the menu's damage bar "
+              "(%d -> %d)" % (was, now), now > was and now <= 100)
+        check("Raven Shield: no stat bar was pushed past 100",
+              all(after["R6Description.u"].get(e.name, "%s[%d]" % (bar, i)) <= 100
+                  for e in after["R6Description.u"].classes() if e.size > 0
+                  for bar in ("m_ADamagePercent", "m_ARecoilPercent",
+                              "m_AAccuracyPercent", "m_ARecoveryPercent")
+                  for i in range(3)
+                  if after["R6Description.u"].find_property(
+                      e.name, "%s[%d]" % (bar, i))))
+
+        # nothing outside the property values moved: every differing byte must
+        # belong to a four-byte value this tool meant to write.
+        for f in ("R63rdWeapons.u", "R6Weapons.u"):
+            a = stock[f].to_bytes()
+            b = after[f].to_bytes()
+            diff = [i for i in range(len(a)) if a[i] != b[i]]
+            owned = set()
+            for e in after[f].classes():
+                if e.size <= 0:
+                    continue
+                try:
+                    table = after[f].defaults(e.name)
+                except upackage.PackageError:
+                    continue
+                for prop in table.values():
+                    if prop.size == 4:
+                        owned.update(range(prop.offset, prop.offset + 4))
+            stray = [i for i in diff if i not in owned]
+            check("Raven Shield: %s -- all %d changed bytes sit inside a "
+                  "property value" % (f, len(diff)),
+                  diff and not stray, "%d stray at %s" % (len(stray), stray[:4]))
+
+        # the package is still loadable by the same reader, which is the only
+        # cheap proxy for "the engine will still load it"
+        check("Raven Shield: the edited packages still parse",
+              all(len(p.classes()) == len(stock[f].classes())
+                  for f, p in after.items()))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class _N:
+    is_class = False
+
+
+def _same(value, stated):
+    if not stated:
+        return True
+    try:
+        if isinstance(value, bool):
+            return str(value).lower() == stated.lower() or \
+                stated in ("1", "0") and value == (stated == "1")
+        if isinstance(value, int):
+            return int(float(stated)) == value
+        return abs(float(stated) - value) <= max(1e-4, abs(float(stated)) * 1e-5)
+    except (TypeError, ValueError):
+        return True
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -639,6 +877,7 @@ def main():
         test_apply_revert(dets)
         test_overlay(dets)
         test_graw_enemies(dets)
+        test_packages(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

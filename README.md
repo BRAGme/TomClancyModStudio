@@ -7,7 +7,7 @@ run time — but aimed at PC installs rather than disc images.
 
 | Game | Engine | How changes are delivered |
 |---|---|---|
-| Rainbow Six 3: Raven Shield | Unreal Engine 2 | edits `.ini` and `template\*.tpt` in place |
+| Rainbow Six 3: Raven Shield | Unreal Engine 2 | edits `.ini` and `template\*.tpt` in place, and patches weapon and ammunition defaults in the compiled `system\*.u` packages |
 | Ghost Recon | Red Storm Ike | **builds a mod folder** — nothing retail is touched |
 | The Sum of All Fears | Red Storm Ike | **builds a mod folder** |
 | Rainbow Six 3: Lockdown | Red Storm Nimitz | edits `data\` in place |
@@ -103,12 +103,15 @@ so it captures this window and nothing else that happens to be on the desktop.
 
 ```
 tcpc/
-  model.py      Setting + four edit kinds (IniEdit, XmlAttr, XmlText, FileCopy)
+  model.py      Setting + five edit kinds (IniEdit, XmlAttr, XmlText, PropEdit,
+                FileCopy)
   inifile.py    Unreal .ini editing that preserves formatting; also reads .tpt
   rsexml.py     Red Storm pseudo-XML, edited one value at a time
   rsb.py        Red Storm .rsb bitmaps, versions 4-10
   bundle.py     GRIN Diesel .bundle archives, read-only
   xmlbin.py     Diesel compiled XML (.xml.bin / .xmb), read and write
+  upackage.py   Unreal Engine 2 .u packages: class defaults, read and rewritten
+                in place at identical width
   art.py        each game's own menu art and wordmark, plus finding the installs
   install.py    which game a folder holds
   engine.py     planning, applying, verifying, reverting

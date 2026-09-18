@@ -283,14 +283,6 @@ rather than a filesystem overlay. This tool does not use it yet; see
 
 ## 5. What is mapped but not implemented
 
-* **Raven Shield weapon and ammunition tuning.** The `.u` packages are version
-  118 / licensee 14, uncompressed, with valid export tables and class defaults
-  stored as ordinary tagged property lists — rewritable in place at identical
-  width, with no checksum over them. Damage is `m_iEnergy` on the *ammunition*,
-  not on the gun; recoil is `fAccuracyChange` plus `fWeaponJump`. 197 weapon
-  classes and 61 ammunition classes are mapped with byte offsets in
-  `research/`. The limit: UE2 only serialises a property that differs from its
-  class default, so a cap can be turned *off* but never *added*.
 * **Raven Shield's cut game modes.** `R6DefendGame`, `R6DefendCoopGame`,
   `R6ReconGame` and `R6ReconCoopGame` are fully compiled and no shipped `.mod`
   lists their mode names. Re-enabling them is a text edit to a generated `.mod`.
@@ -540,3 +532,188 @@ mark before the 8-bit fallback gets a look, and keeps each line's own
 terminator beside it rather than normalising and rejoining. That also makes it
 safe on a classic-Mac file, which nothing here ships but which cost nothing to
 get right once the structure was there.
+
+---
+
+## 7. Unreal Engine 2 packages (Raven Shield `system\*.u`)
+
+Raven Shield's weapon and ammunition statistics are not configuration. They are
+compiled UnrealScript class defaults, and reaching them is the only binary
+writing this tool does. The packages are **version 118 / licensee 14**,
+uncompressed, with valid name, import and export tables and no checksum over
+the bytes being changed — the summary carries a GUID and the table counts, and
+neither depends on a property's value.
+
+### The rule that shapes everything
+
+**Values can be rewritten. Properties cannot be added.** Unreal serialises a
+property only where its value differs from its class default, so a class that
+ships the default has nothing to overwrite, and inserting a tag would move every
+byte after it and invalidate the export table. Every edit is therefore
+equal-width — four bytes for an int or a float, one bit inside an existing tag
+byte for a bool — and the engine refuses an edit that changes the file length.
+
+In practice this costs nothing for the options that exist: all **139 weapons the
+loadout menu offers** resolve a value for every property used, through their own
+defaults or an ancestor's. The 57 classes that do not are abstract bases like
+`AssaultAK47`, which the menu never offers and whose `Normal`/`CMag`/`Silenced`
+children inherit from, so an edit to the parent reaches them anyway.
+
+### Finding a property: why searching for one is unsafe
+
+A property is serialised as `compactIndex(nameIndex) infoByte [size] value`, so
+a name index plus an info byte looks like a findable signature. **This was the
+first implementation and it was wrong.** A name index is often a single byte,
+and one byte followed by a plausible info byte occurs by accident inside the
+*value* of an earlier property.
+
+The concrete case: searching `NormalLMGRPD` for `fRunningAccuracy` (name index
+16, so the needle is the single byte `0x10`) finds a hit at `0x00e95d`, 53 bytes
+before the real one at `0x00e992`. The bytes there are the middle of
+`m_fMuzzleVelocity`'s float — `0b 24 | 00 10 24 47`, which is name 11, type
+float, value 41999.06. Nothing about the hit looks wrong locally, and a write to
+it would have silently corrupted the muzzle velocity of one weapon.
+
+That search agreed with the independently produced `research/rs3_weapons.csv` on
+1,808 of 1,809 offsets. One disagreement in eighteen hundred was the only sign
+anything was wrong, which is the argument for chasing it rather than tolerating
+it.
+
+### So the list is parsed from its start
+
+Which means finding the start, which means walking the whole class header:
+
+```
+UField   SuperField(ci)  Next(ci)
+UStruct  ScriptText(ci)  Children(ci)  FriendlyName(ci)
+         Line(u32)  TextPos(u32)  ScriptSize(u32)  script[...]
+UState   ProbeMask(u64)  IgnoreMask(u64)  LabelTableOffset(u16)  StateFlags(u32)
+UClass   ClassFlags(u32)  ClassGuid(16)
+         Dependencies    count(ci) x { Class(ci)  Deep(u32)  ScriptTextCRC(u32) }
+         PackageImports  count(ci) x ci
+         ClassWithin(ci)  ClassConfigName(ci)
+         HideCategories  count(ci) x ci
+         Defaults        tagged property list, terminated by the name "None"
+```
+
+`UClass` extending **`UState`** is the part worth writing down. Between the
+script and the class flags sit 22 bytes belonging to the state machine, and
+reading `ClassFlags` too early lands on the low half of `ProbeMask` — which
+reads as a believable `0x0202` flags word and puts everything after it 22 bytes
+out. That mistake produces a header parse that looks plausible and is useless.
+
+The parse is checked rather than trusted: the walk must consume the class's
+serial range **exactly**, ending on `None` at its final byte. 535 of Raven
+Shield's 541 weapon, first-person and description classes do.
+
+### The six classes that are refused
+
+`ScriptSize` is the length the bytecode occupies **in memory**, not on disk, so
+a class that still carries compiled script cannot be skipped past by
+arithmetic. Six classes in `R6Weapons.u` are in that position — `R6Weapons`
+itself plus five gadget classes. None is a weapon or an ammunition type. They
+are refused rather than guessed at: a property that cannot be located exactly
+is one that will not be written, because the alternative is a four-byte write at
+an arbitrary offset inside executable bytecode.
+
+### Property tags
+
+```
+infoByte = type | (sizeCode << 4) | (arrayFlag << 7)
+```
+
+Type is the low nibble: 1 byte, 2 int, 3 bool, 4 float, 5 object, 6 name,
+7 string, 8 class, 9 array, 10 struct, 11 vector, 12 rotator, 13 str, 14 map,
+15 fixed array. Size codes 0-4 mean 1, 2, 4, 12 and 16 bytes; 5, 6 and 7 mean
+the real size follows as a `u8`, `u16` or `u32`. A struct writes its own type
+name as a compact index before the size.
+
+Two details that will each let a wrong reader look correct:
+
+* **A bool has no value bytes at all.** Bit 7 is the array flag for every other
+  type; for a bool it *is* the value. An earlier version of this reader treated
+  bools as type 1 with a one-byte value and was simply wrong about all of them —
+  which went unnoticed because the first cross-check only covered ints and
+  floats.
+* **The array index is not a compact index.** It is one byte under 128, two when
+  the top bits are `10`, four when they are `11`. It agrees with a compact index
+  for indices under 64 — exactly the range that hides the bug.
+
+### Values live inside structs, and inside arrays
+
+The accuracy numbers are not top-level properties. They sit in
+`m_stAccuracyValues`, a 49-byte struct whose value is itself a tagged property
+list, so the walk recurses and the eight accuracy fields are reached by path
+(`m_stAccuracyValues.fBaseAccuracy`). That nesting is also why the old byte
+search appeared to work at all.
+
+The loadout menu's stat bars are `ArrayProperty`: a count followed by the
+elements, reached as `m_ADamagePercent[0]`. The element *type* is not in the tag
+— it lives on the property's `Inner`, a separate export — so the width is
+derived from the count, and only a four-byte width is exposed, read as `int32`.
+That inference is deliberately narrow: a four-byte float array would be misread,
+so nothing offers to write one.
+
+### Which way the numbers point
+
+Three of the five weapon knobs are inverted, which is the reason the profile
+carries measurements rather than assertions.
+
+* **Accuracy is dispersion.** `fBaseAccuracy` is a cone, so bigger is worse.
+  `NormalAssaultM4` reads 1.26 standing, 1.74 shuffling, 2.61 walking and 10.78
+  running — the number climbs as the stance gets worse, which is the proof.
+* **Recoil is two numbers.** `fAccuracyChange` is accuracy lost per shot,
+  `fWeaponJump` is muzzle climb. Moving one alone gives a weapon that climbs as
+  far as before but recovers at a different rate.
+* **`fReticuleTime` is a delay.** Lower settles faster.
+* **Damage is not on the weapon.** It is `m_iEnergy` on the ammunition, which is
+  why a silenced weapon and its plain twin hit equally hard. 5.56 NATO is 1442,
+  7.62 NATO 2547, 9mm Parabellum 567, .50 BMG 15,825.
+
+`m_iEnergy` is also carried by frag grenades, flashbangs, claymores, breaching
+charges and remote charges, so "bullets hit harder" is scoped to class names
+matching `ammo*` plus the `R6Bullet` base. Doubling a breaching charge is not
+what anyone means by that option.
+
+### The menu would otherwise lie
+
+`R6Description.u` holds the loadout menu's five stat bars as int arrays of up to
+three entries — one per variant (NORMAL, CMAG, SILENCED); 35 weapons have three,
+15 have two and 8 have one. They are *authored percentages*, not anything the
+game computes, so a retuned gun keeps its original bars unless they are
+rewritten too.
+
+The bars run the **opposite** way to the values behind them. Measured across the
+139 equippable weapons rather than assumed:
+
+| bar | underlying value | correlation |
+|---|---|---|
+| `m_ARecoilPercent` | `fWeaponJump` | -0.980 |
+| `m_AAccuracyPercent` | `fBaseAccuracy` | -0.933 |
+| `m_ARecoveryPercent` | `fReticuleTime` | **-1.000** |
+| `m_ARangePercent` | `m_fMuzzleVelocity` | +0.812 |
+
+A higher bar is a better gun, so halving recoil has to move the recoil bar *up*
+and the mirror scales by the reciprocal. It is a proportional mirror and not the
+game's own formula: bars clamp at 100, and a bar already at 0 stays at 0.
+
+### How it is checked
+
+Three independently produced datasets, all in `research/`, are compared against
+what the parser computes — on every run, against the real installation:
+
+| source | what it covers | result |
+|---|---|---|
+| `rs3_weapons.csv` | 197 weapon classes | 2,073 offsets **and values** agree |
+| `rs3_ammo.csv` | 61 ammunition classes | 273 agree |
+| `rs3_descbars.json` | 57 menu entries | 700 array elements agree |
+
+Zero disagreements. The apply itself is then checked on a sandbox copy: every
+package keeps its exact length, and **every single changed byte lies inside a
+property value** — nothing in a header, a name table or an export table moves.
+
+### Two caveats that are not about the format
+
+A Steam file verification restores the stock packages without saying so, and a
+server running stock packages may reject a client whose do not match. Both are
+stated on the options themselves. Revert puts every byte back.

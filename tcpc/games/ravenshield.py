@@ -16,11 +16,14 @@ the three that are text:
    far a terrorist hears you per posture and pace, and how far a reload, a
    door or a gunshot carries. The whole stealth economy is in one file.
 
-The fourth tier is the compiled `.u` packages, where weapon and ammunition
-statistics live as tagged property lists that can be rewritten in place at
-identical width. That is real and it is mapped -- 197 weapon classes and 61
-ammunition classes with byte offsets -- but it is binary patching of the game's
-code packages, and nothing here does it yet. See the notes page.
+4. **The compiled `.u` packages**, where weapon and ammunition statistics live
+   as tagged property lists. These are rewritten in place at identical width,
+   so the file's length never changes and its export table stays valid. The
+   property list is parsed from the start of the class rather than searched
+   for -- see `tcpc.upackage` for why searching for one is unsafe -- and the
+   loadout menu's own stat bars are rewritten to match, so the menu does not
+   go on describing the weapon the gun used to be. The modelling is in
+   `_rs3_weapons.py`.
 
 **This installation is not stock**, and the tool says so rather than pretending
 otherwise: `system\openrvs.ini` carries `ForceStartMod=SupplyDrop`, which
@@ -29,6 +32,7 @@ Options that write to `user.ini` still apply; options that reason about stock
 class behaviour may not.
 """
 
+from . import _rs3_weapons
 from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT,
                      IniEdit, Layout, Setting)
 
@@ -204,7 +208,7 @@ SETTINGS = [
              "installation actually reads -- it overrides the engine's own "
              "DesiredFOV of 90.",
         confidence="experimental", touches="config"),
-]
+] + _rs3_weapons.settings()
 
 SKILL_SCALE = {"green": 0.66, "hard": 1.5}
 NERVE = {
@@ -313,6 +317,9 @@ def build_edits(values):
         out.append(IniEdit("system/openrvs.ini", section="OpenRVS.OpenFOV",
                            key="FieldOfView", value=v["fov"], stock="95",
                            note="field of view"))
+
+    # -- weapons and ammunition, in the compiled packages -----------------
+    out.extend(_rs3_weapons.edits(v))
     return out
 
 
@@ -378,6 +385,12 @@ It is not stock. system\openrvs.ini sets ForceStartMod=SupplyDrop, which
 replaces the player pawn, the teammate AI and the player-controller classes.
 The ini options above still apply; anything that assumes stock class behaviour
 may not.
+
+The weapon and ammunition options write to the compiled packages, which is a
+different kind of change from everything else here and carries two caveats
+worth repeating: a Steam file verification restores the stock packages without
+saying so, and a server running stock packages may reject a client whose do not
+match. Revert puts every byte back.
 
 Nothing in this profile has been watched working in a running game.
 """

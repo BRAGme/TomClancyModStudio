@@ -230,6 +230,45 @@ class XmlText(Edit):
 
 
 @dataclass
+class PropEdit(Edit):
+    r"""One compiled class default inside an Unreal Engine 2 package.
+
+    Raven Shield's weapon and ammunition statistics are not configuration --
+    they are class defaults compiled into `system\*.u`, and this is the only
+    edit kind here that writes binary. Two rules make that safe:
+
+    **Equal width, always.** A float is replaced by a float and an int by an
+    int, so the file's length never changes and its export table stays valid.
+
+    **A property that is not already authored is skipped, never added.** Unreal
+    serialises a property only when its value differs from its class default,
+    so adding one would move every byte after it. `absent` therefore defaults
+    to "skip", and a weapon that inherits a value cannot be tuned on its own --
+    its parent can.
+
+    `cls` is a class name or a glob over class names. Its real scope, though,
+    is `prop`: an edit naming `m_stAccuracyValues.fWeaponJump` reaches exactly
+    the 143 classes that have a weapon's accuracy struct, however broad the
+    glob, because nothing else in the package carries that property. Scoping by
+    what a class IS rather than by what it is called is why `cls="*"` is a
+    reasonable thing to write here.
+    """
+    cls: str = "*"
+    #: property path. Dotted into a struct (`m_stAccuracyValues.fBaseAccuracy`)
+    #: and indexed into an array (`m_ADamagePercent[0]`).
+    prop: str = ""
+    value: Any = None
+    #: only meaningful when `cls` names a single class -- a glob spans classes
+    #: whose stock values all differ, so there is no one value to expect.
+    stock: Any = None
+    scale: float = None
+    offset: float = None
+    minimum: float = None
+    maximum: float = None
+    absent: str = "skip"
+
+
+@dataclass
 class FileCopy(Edit):
     """Place a file. `source` is read from the install unless `data` is given.
 
