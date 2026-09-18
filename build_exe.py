@@ -1,15 +1,15 @@
-"""Produce dist/Tom Clancys PS2 ModStudio.exe.
+r"""Produce dist/Tom Clancys PC ModStudio.exe.
 
-    python build_exe.py              -- the public build
-    python build_exe.py --with-art   -- a private build with the game's icons
-    python build_exe.py --preview    -- a no-disc build for someone without
-                                        the games, to look round the options
+    python build_exe.py              -- the ordinary build
+    python build_exe.py --preview    -- a build that opens in preview mode, for
+                                        looking round the options without
+                                        owning the games
 
-**No-art is the default on purpose.** The loadout icons are Ubisoft artwork, so
-a build that carries them must not be published. Making the safe build the one
-you get by typing nothing means the art can only ever ship by asking for it.
-The art itself lives in `private-art/`, which is git-ignored, so it is not in
-the repository either.
+**No game art is bundled, and that is not an option here.** Every picture the
+window uses is decoded from the user's own installation at run time and cached
+under %LOCALAPPDATA%; none of it is in this repository and none of it is in the
+executable. A machine without the games gets a bare window, which is the
+correct outcome.
 
 One file, no installer, no Python needed on the target machine. The imports are
 listed explicitly because the entry point defers them until it knows whether it
@@ -28,42 +28,46 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 #: what the built executable is called. Separate from the entry script,
 #: which keeps its own name -- renaming the output must not go looking
 #: for a source file that does not exist.
-NAME = "Tom Clancys PS2 ModStudio"
+NAME = "Tom Clancys PC ModStudio"
 
 #: the script PyInstaller is pointed at
 ENTRY = "ModStudio.py"
 
-#: Where a private build picks the game's loadout icons up from, and where they
-#: land inside the bundle. Git-ignored; see the module docstring.
-ART_SOURCE = "private-art"
-ART_TARGET = os.path.join("assets", "gearicons")
-
 HIDDEN = [
-    "cli", "gui", "gui.app", "gui.theme", "gui.widgets", "gui.controls",
-    "gui.presets", "tcps2", "tcps2.iso", "tcps2.soz", "tcps2.vokes",
-    "tcps2.art", "tcps2.model", "tcps2.engine", "tcps2.detect",
-    "tcps2.games", "tcps2.games.r6_3", "tcps2.games.ghost_recon",
-    "tcps2.games.jungle_storm", "tcps2.games.ghost_recon2",
-    "tcps2.games.graw", "tcps2.games.soaf", "tcps2.games.lockdown",
-    "tcps2.games.r6tuning", "tcps2.games.rstuning", "tcps2.nimitz",
-    "tcps2.lin", "tcps2.rselzo", "tcps2.transforms", "tcps2.dataedit",
-    "tcps2.overlay", "tcps2.rsb", "gui.skins", "gui.gearicons", "gui.tooltip", "tcps2.utexture",
-    "tcps2.psx", "tcps2.upscale",
-    "tcps2.rseloadout", "tcps2.rseguns", "tcps2.rsemissions",
-    "tcps2.rsewheel", "tcps2.rserpg", "tcps2.rsesidearm", "tcps2.rsescope", "tcps2.rsedraw",
-    "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon", "tcps2.rseshadow", "tcps2.rsekits",
-    "tcps2.rsechatter",
-    # zopfli packs the LIN chunks zlib cannot fit back into their
-    # slots. Without it those chunks simply refuse every edit.
-    "zopfli", "zopfli.zlib",
-    "tcps2.localise", "tcps2.upackage", "tcps2.r6zones",
-    "tcps2.games.xboxbuild", "tcps2.games.rseweapons",
-
-    # Discord presence speaks the IPC protocol itself, so this pulls in no
-    # third-party package -- but the modules still have to be named here.
-    "gui.presence", "gui.discorddialog", "webbrowser",
-    "PIL.Image", "PIL.ImageTk", "PIL.ImageDraw", "PIL.ImageFont",
-    "PIL.ImageEnhance", "PIL.ImageFilter",
+    'cli',
+    'gui',
+    'gui.app',
+    'gui.theme',
+    'gui.widgets',
+    'gui.controls',
+    'gui.presets',
+    'gui.skins',
+    'gui.gearicons',
+    'gui.tooltip',
+    'gui.presence',
+    'gui.discorddialog',
+    'webbrowser',
+    'tcpc.art',
+    'tcpc.engine',
+    'tcpc.inifile',
+    'tcpc.install',
+    'tcpc.model',
+    'tcpc.rsb',
+    'tcpc.rsexml',
+    'tcpc.games',
+    'tcpc.games._rse',
+    'tcpc.games.ghost_recon',
+    'tcpc.games.lockdown',
+    'tcpc.games.ravenshield',
+    'tcpc.games.soaf',
+    'tcpc.games.vegas',
+    'PIL.Image',
+    'PIL.ImageTk',
+    'PIL.ImageDraw',
+    'PIL.ImageFont',
+    'PIL.ImageEnhance',
+    'PIL.ImageFilter',
+    'PIL.ImageOps',
 ]
 
 EXCLUDE = ["numpy", "scipy", "matplotlib", "pytest", "PySide6", "PyQt5",
@@ -107,7 +111,7 @@ def write_version_file(path, version):
   ]
 )
 """ % {"q": quad, "ver": version, "exe": NAME,
-       "name": "Tom Clancy PS2 Mod Studio"}
+       "name": "Tom Clancy PC Mod Studio"}
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
     return path
@@ -115,16 +119,9 @@ def write_version_file(path, version):
 
 def main():
     version = app_version()
-    with_art = "--with-art" in sys.argv
-    art = os.path.join(ROOT, ART_SOURCE, "gearicons")
-    if with_art and not os.path.isdir(art):
-        print("--with-art was asked for but %s does not exist" % art)
-        return 2
     preview = "--preview" in sys.argv
-    name = NAME + (" (art)" if with_art else "") + (" (preview)" if preview else "")
-    print("building version %s%s" % (version,
-                                     "  [private, with game art]" if with_art
-                                     else "  [public, no game art]"))
+    name = NAME + (" (preview)" if preview else "")
+    print("building version %s" % version)
     args = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
             "--onefile", "--windowed", "--name", name,
             "--distpath", os.path.join(ROOT, "dist"),
@@ -135,11 +132,9 @@ def main():
         args += ["--icon", icon,
                  "--add-data", "%s%s%s" % (os.path.join(ROOT, "assets"),
                                            os.pathsep, "assets")]
-    if with_art:
-        args += ["--add-data", "%s%s%s" % (art, os.pathsep, ART_TARGET)]
     if preview:
-        # A marker rather than a code change, so the preview build is the same
-        # binary as the public one plus one empty file.
+        # A marker rather than a code change, so the preview build is the
+        # same binary as the ordinary one plus one empty file.
         flag = os.path.join(ROOT, "build", "preview.mode")
         os.makedirs(os.path.dirname(flag), exist_ok=True)
         with open(flag, "w", encoding="utf-8") as fh:
