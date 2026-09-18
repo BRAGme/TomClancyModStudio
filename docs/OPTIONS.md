@@ -46,8 +46,12 @@ capacity, unlocking every fire mode, and rate of fire; GRAW 2 adds its HUD
 colour scheme. Those are the fields
 Advanced Warfighter's own weapon files comment in full, and the ones a single
 control can move across all 28 (GRAW 1) or 44 (GRAW 2) weapon definitions. The
-wider surface — AI skill, enemy counts, mission scripts — is in the same
-archives and not mapped yet.
+wider surface — AI skill, enemy counts, detection ranges — is mapped in
+`research/dossier-graw.md` but not built yet.
+
+Note that each of these writes TWO files: the source XML and its compiled
+twin. The retail engine reads the twin, so an edit that only touched the
+source would do nothing at all.
 
 **Vegas** — Rules (difficulty, terrorist-hunt population, civilian limit, hunt
 respawning, round gap, the unused co-op leash), Weapons (damage by range,

@@ -34,7 +34,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 
-from . import inifile, rsexml
+from . import inifile, rsexml, xmlbin
 from .install import backup_dir_for
 from .model import (FileCopy, INPLACE, IniEdit, MOD, OVERLAY, XmlAttr,
                     XmlText)
@@ -662,12 +662,88 @@ def _apply_overlay(root, profile, grouped, out, dry_run, progress):
                 _write(dest, data)
                 out.verified[dest_rel] = sha1(dest)
 
+            # ...and the compiled twin, which is the file the engine will
+            # actually read. Writing only the source would be a no-op.
+            twin = compiled_twin(profile, rel)
+            if twin is None:
+                continue
+            tdest = overlay_dest(root, profile, twin)
+            tdest_rel = os.path.relpath(tdest, root).replace(os.sep, "/")
+            texisted = os.path.isfile(tdest)
+            try:
+                if texisted and tdest_rel not in created:
+                    with open(tdest, "rb") as fh:
+                        traw = fh.read()
+                else:
+                    traw = bundles.read(twin)
+            except (KeyError, OSError):
+                continue                       # no twin: the source is the only form
+            try:
+                tdata = _edit_compiled(traw, twin, edits, out)
+            except (xmlbin.XmlBinError, rsexml.RseXmlError) as exc:
+                out.ok = False
+                out.warnings.append("%s: %s" % (twin, exc))
+                continue
+            if not dry_run:
+                if texisted and tdest_rel not in created:
+                    stash(root, tdest_rel)
+                    now_shadowed.append(tdest_rel)
+                else:
+                    now_created.append(tdest_rel)
+                _write(tdest, tdata)
+                out.verified[tdest_rel] = sha1(tdest)
+
     if not dry_run:
         manifest["created"] = sorted(set(now_created))
         manifest["files"] = sorted(set(now_shadowed))
         manifest["applied"] = time.strftime("%Y-%m-%d %H:%M:%S")
         manifest["game"] = profile.id
         write_manifest(root, manifest)
+
+
+def compiled_twin(profile, rel):
+    """The compiled counterpart of a source path, or None."""
+    suffix = getattr(profile.layout, "compiled_suffix", "")
+    if not suffix or not rel.lower().endswith(".xml"):
+        return None
+    return rel + suffix if suffix.startswith(".bin") else rel[:-4] + suffix
+
+
+def _edit_compiled(raw, rel, edits, out: Result):
+    """Apply the same edits to a compiled Diesel XML.
+
+    The edits are re-applied to the compiled tree rather than the compiled
+    file being regenerated from the edited source, because the tree is what
+    round-trips byte-identically. Regenerating would mean writing an
+    XML-to-compiled compiler and hoping it agreed with GRIN's about string
+    order; this only has to agree with itself.
+    """
+    root, includes = xmlbin.loads(raw)
+    for e in edits:
+        if not isinstance(e, XmlAttr):
+            continue
+        nodes = xmlbin.select(root, e.path)
+        if not nodes:
+            continue
+        for nd in nodes:
+            current = nd.get(e.attr)
+            if current is None:
+                continue
+            if e.scale is not None or e.offset is not None:
+                num = rsexml.parse_number(current)
+                if num is None:
+                    continue
+                value = num * (1.0 if e.scale is None else e.scale)
+                if e.offset is not None:
+                    value += e.offset
+                if e.minimum is not None:
+                    value = max(e.minimum, value)
+                if e.maximum is not None:
+                    value = min(e.maximum, value)
+                nd.set(e.attr, rsexml.format_number(value, current))
+            else:
+                nd.set(e.attr, e.value)
+    return xmlbin.dumps(root, includes)
 
 
 def _prune(folder, root):

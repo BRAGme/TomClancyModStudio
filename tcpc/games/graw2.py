@@ -30,6 +30,7 @@ LAYOUT = Layout(
     exe="graw2.exe",
     bundles_dir="Bundles",
     overlay_dir="Data",
+    compiled_suffix=".xmb",
     data_dir="Data",
 )
 
@@ -117,11 +118,15 @@ Doing it that way would put every change in a single file with an off switch,
 which is better than loose files in Data\ -- it needs a bundle writer, and this
 tool only reads them.
 
-That bundler settles a question worth writing down. Its own bundle.bat runs
-compile-scripts and then quick-bundle, and never runs compile-xml even though
-that command exists -- so an official GRIN mod bundle contains plain .xml and
-no compiled .xmb at all. The plain XML this tool edits is what the engine
-reads; the compiled form is a fallback, not the authority.
+One thing to be clear about, because it is easy to get backwards. In the
+RETAIL bundles every .xml has a compiled .xmb twin and the engine reads the
+twin -- a session log GRIN shipped by accident records 3,029 compiled opens
+against 2 source opens. So this tool writes both forms, and its compiled writer
+round-trips 7,984 of the game's 7,985 compiled files byte-identically.
+
+In a MOD bundle the opposite holds, because GRIN's own bundle.bat never runs
+compile-xml: such a bundle has no twins, so the source is what loads. Both are
+true; they are about different containers.
 
 The HUD colour option is the one thing here that is not an inference. The file
 it edits is loose, commented, ships a complete second scheme nobody selects,

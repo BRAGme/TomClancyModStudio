@@ -12,8 +12,8 @@ run time — but aimed at PC installs rather than disc images.
 | The Sum of All Fears | Red Storm Ike | **builds a mod folder** |
 | Rainbow Six 3: Lockdown | Red Storm Nimitz | edits `data\` in place |
 | Rainbow Six: Vegas | Unreal Engine 3 | edits `KellerGame\Config\PC\*.ini` in place |
-| Ghost Recon Advanced Warfighter | GRIN Diesel | **writes loose files over the `.bundle` archives** |
-| GRAW 2 | GRIN Diesel | **writes loose files over the `.bundle` archives** |
+| Ghost Recon Advanced Warfighter | GRIN Diesel | **writes loose files over the `.bundle` archives**, source and compiled twin |
+| GRAW 2 | GRIN Diesel | **writes loose files over the `.bundle` archives**, source and compiled twin |
 
 ```
 python ModStudio.py                    the window
@@ -108,6 +108,7 @@ tcpc/
   rsexml.py     Red Storm pseudo-XML, edited one value at a time
   rsb.py        Red Storm .rsb bitmaps, versions 4-10
   bundle.py     GRIN Diesel .bundle archives, read-only
+  xmlbin.py     Diesel compiled XML (.xml.bin / .xmb), read and write
   art.py        each game's own menu art and wordmark, plus finding the installs
   install.py    which game a folder holds
   engine.py     planning, applying, verifying, reverting

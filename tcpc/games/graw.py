@@ -21,6 +21,7 @@ LAYOUT = Layout(
     exe="GRAW.exe",
     bundles_dir="Bundles",
     overlay_dir="Data",
+    compiled_suffix=".bin",
     data_dir="Data",
 )
 
@@ -36,6 +37,12 @@ Advanced Warfighter keeps 21,356 files in two .bundle archives totalling 3.8 GB.
 This tool never writes to them. It reads the stock file out of the archive,
 edits it, and writes the result loose in the install at the path the archive
 itself uses -- which the Diesel engine looks at before it looks in the archive.
+
+Every data file here exists twice: u_scar_light.xml and u_scar_light.xml.bin,
+its compiled twin. THE ENGINE READS THE COMPILED ONE. A session log the game
+accidentally ships proves it -- 3,029 compiled opens against 2 source opens
+where both existed. So each option writes both forms, and the compiled writer
+round-trips all 5,674 of this game's compiled files byte-identically.
 
 That is how the 764 texture files already sitting under Data\textures\ in this
 installation work: they shadow paths that are also inside quick.bundle, and

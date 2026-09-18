@@ -21,6 +21,19 @@ mechanism.
 replacements, so the manifest records every path the tool created and every
 path it had to write over, and restoring touches only those.
 
+## The compiled twin
+
+**Both games ship every data file twice, and the engine reads the COMPILED
+copy.** `u_m416.xml` has a `u_m416.xmb` beside it (GRAW 1 uses `.xml.bin`), and
+100% of the `.xml` in both bundles has such a twin. The proof is inside the
+game: `quick.bundle` accidentally ships `temp_merged_log.xml`, a recorded
+engine session with 9,508 `<open path="...">` records, and where both forms
+exist it opened the compiled one 3,029 times and the source twice.
+
+So editing the plain XML alone does NOTHING. Every option here writes the
+source *and* its compiled twin, through `tcpc/xmlbin.py`, which round-trips all
+5,674 GRAW 1 and 7,984 of 7,985 GRAW 2 compiled files byte-identically.
+
 ## The data
 
 Diesel's gameplay files are plain, commented XML, and they are addressed

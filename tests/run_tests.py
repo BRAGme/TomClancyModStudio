@@ -426,6 +426,12 @@ def test_overlay(dets):
                                         p.layout.bundles_dir)) as bs:
                 for rel in bs.find("data/units/weapons/*.xml"):
                     entries[rel] = bs.read(rel)
+                    # ...and its compiled twin, which is the file the engine
+                    # actually reads. A stand-in archive without them would
+                    # test a path the real game never takes.
+                    twin = engine.compiled_twin(p, rel)
+                    if twin and twin in bs:
+                        entries[twin] = bs.read(twin)
             write_bundle(os.path.join(root, "Bundles", "quick.bundle"), entries)
             exe = os.path.join(root, p.layout.exe.replace("/", os.sep))
             os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
@@ -447,6 +453,14 @@ def test_overlay(dets):
             r1 = engine.apply(root, p, values)
             check("%s: overlay apply wrote files" % p.short,
                   r1.ok and len(r1.verified) > 0, "; ".join(r1.warnings[:2]))
+            suffix = p.layout.compiled_suffix
+            wrote_compiled = [k for k in r1.verified if k.lower().endswith(suffix)]
+            check("%s: the COMPILED twin was written too" % p.short,
+                  len(wrote_compiled) > 0,
+                  "editing only the source is a no-op in this engine")
+            check("%s: the compiled twin carries the edit" % p.short,
+                  _twin_edited(root, det.path, p, wrote_compiled),
+                  "the engine reads this file, so an unchanged one is a no-op")
             check("%s: the archive was not modified" % p.short,
                   tree_hash(root)["Bundles\\quick.bundle"]
                   == before["Bundles\\quick.bundle"])
@@ -466,6 +480,37 @@ def test_overlay(dets):
             check("%s: revert reported what it removed" % p.short, rv.files > 0)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _twin_edited(root, real_root, profile, rels):
+    """Did a written compiled file come back DIFFERENT from the retail one?
+
+    Compared against the real archive rather than against a fixed number,
+    because the option the sweep picks is not always the one that lowers the
+    value -- an earlier version of this check asserted "spread went down" and
+    failed on a preset that widens it.
+    """
+    from tcpc import xmlbin
+    from tcpc.bundle import BundleSet
+    with BundleSet(os.path.join(real_root, profile.layout.bundles_dir)) as bs:
+        for rel in rels:
+            key = rel.replace("\\", "/")
+            if key.lower().startswith("data/"):
+                key = "data/" + key.split("/", 1)[1]
+            if key not in bs:
+                continue
+            path = os.path.join(root, rel.replace("/", os.sep))
+            try:
+                with open(path, "rb") as fh:
+                    mine, _a = xmlbin.loads(fh.read())
+                theirs, _b = xmlbin.loads(bs.read(key))
+            except Exception:                     # noqa: BLE001
+                continue
+            a = [n.get("value") for n in xmlbin.select(mine, "var[name=spread_normal]")]
+            b = [n.get("value") for n in xmlbin.select(theirs, "var[name=spread_normal]")]
+            if a and b and a != b:
+                return True
+    return False
 
 
 def test_mod_guard(dets):

@@ -257,6 +257,11 @@ class Layout:
     #: path of `data/units/x.xml` lands at `<overlay_dir>/units/x.xml`, because
     #: the archive's own root directory IS this folder.
     overlay_dir: str = ""
+    #: OVERLAY only: how this game names a file's COMPILED twin. GRAW 1
+    #: appends `.bin`, GRAW 2 replaces `.xml` with `.xmb`. The engine loads
+    #: the twin in preference to the source, so an edit that does not reach it
+    #: does nothing at all -- which is why this is not optional.
+    compiled_suffix: str = ""
 
 
 @dataclass

@@ -376,25 +376,56 @@ writes all of them, scaling each from its own value.
 
 ### Is the plain `.xml` live, or is the compiled form the authority?
 
-Both games ship two copies of most data: `.xml` and `.xml.bin` in GRAW 1,
-`.xml` and `.xmb` in GRAW 2. If the engine loads the compiled one, editing the
-XML is inert — the same trap Lockdown's `.rsc` sets. **The plain `.xml` is
-live.** Three things say so:
+**The compiled form wins, and getting this backwards makes every option a
+no-op.** Both games ship each data file twice — `.xml` plus `.xml.bin` (GRAW 1)
+or `.xmb` (GRAW 2) — and 100% of the `.xml` in both bundles has a twin: 5,672
+of 5,674 and 7,984 of 7,985.
 
-* **GRIN's own mod pipeline never compiles XML.** `public_toolsundlerundle.bat`
-  is the whole official mod build, and it is two lines: `bundler.exe
-  compile-scripts` then `bundler.exe quick-bundle`. It never calls
-  `compile-xml`, although that command exists in the same executable
-  (`Compiles the listed .xml files into .xml.bin files.`). So every mod bundle
-  built the documented way contains plain XML and no compiled XML at all.
-* **A loose `.xml` beats a stale `.xml.bin` sitting beside it.** GRAW 1's
-  `Settings\defaults.xml` (2025) names the profile `graw_profile_bragme`; its
-  `defaults.xml.bin` (2006) names `graw_profile_default`. Only the first exists
-  on disk, and the game has been reading and writing it.
-* **The compiled form is a real fallback, so it is in the chain.**
-  `ghost_lead.xml.bin` — the player model — has no `.xml` twin anywhere, and
-  the game plainly renders it. So the order is: try `.xml`, fall back to the
-  compiled form.
+The decisive evidence is inside the game. `quick.bundle` accidentally ships
+`temp_merged_log.xml`, a recorded GRIN engine session with **9,508
+`<open path="...">` records**. Where both forms of a file exist, it opened:
+
+| | count |
+|---|---|
+| the compiled `.xml.bin` | **3,029** |
+| the plain `.xml` | **2** |
+
+(The two are `tunnel_wave.xml` and `tunnel_sound.xml`, which have no twin.)
+Disassembly agrees: the loader builds `<base>.bin`, probes both, and compares
+file times with `CompareFileTime` — ties go to the compiled file.
+
+So this tool writes **both** forms. `tcpc/xmlbin.py` is a reader and writer for
+the compiled format, verified by re-encoding every compiled file in both games:
+5,674 of 5,674 and 7,984 of 7,985 come back byte-identical, the one exception
+being `hud_palett.xmb`, which is not a compiled XML at all.
+
+The compiled format, little-endian:
+
+```
+"XML"
+u32   string count, then that many NUL-terminated strings
+node                                       (the root)
+u32   include count, then that many NUL-terminated paths
+
+node:
+  1  element  u32 name, u32 attr count, (u32 key, u32 value) pairs,
+              u32 child count, that many nodes -- all indices into the table
+  2  text     u32 index
+  4  macro    an xdefine: inline NUL-terminated name, u32 param count and
+              names, u32 count and that many u32s, inline body, ONE pad byte
+```
+
+Edits are applied to the parsed tree rather than by recompiling the edited
+source, because the tree is what round-trips exactly. Regenerating would mean
+writing an XML-to-compiled compiler and hoping it agreed with GRIN's about
+string-table order; this only has to agree with itself.
+
+**A mod bundle is the other way round**, which is worth stating because both
+facts are true and they sound contradictory. GRIN's own
+`public_toolsundlerundle.bat` runs `compile-scripts` and `quick-bundle`
+and never `compile-xml`, so a mod bundle built the documented way contains
+plain `.xml` with no twins — and there the source is what loads. The rule is
+not "source or compiled", it is "the twin if there is one".
 
 ### The palettes are authored text, not something to sample
 
