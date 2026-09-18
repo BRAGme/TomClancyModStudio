@@ -81,7 +81,7 @@ and why.
 ## Tests
 
 ```
-python tests\run_tests.py       93 checks against the real games
+python tests\run_tests.py       149 checks against the real games
 python tests\gui_smoke.py       open the real window on every game, walk every page
 ```
 

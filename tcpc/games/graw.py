@@ -8,7 +8,7 @@ See `_graw.py` for why that works and `docs/FORMATS.md` for the `BNDL` layout.
 Most options are shared with Advanced Warfighter 2 and live in `_graw.py`.
 """
 
-from . import _graw
+from . import _graw, _graw_enemies
 from ..model import GameProfile, Layout, OVERLAY
 
 LAYOUT = Layout(
@@ -25,11 +25,45 @@ LAYOUT = Layout(
     data_dir="Data",
 )
 
-SETTINGS = _graw.shared_settings()
+#: Every enemy squad template and its full roster, read out of this game's
+#: own compiled `group_manager` -- the compiled copy, because the source is
+#: macro-generated and only the compiled form has the groups expanded.
+#: Friendly squads are not in it and so cannot be caught by the rename.
+SQUAD_SIZE = {
+    "mex_guerilla_heavy": 4,
+    "mex_guerilla_heavy_night": 4,
+    "mex_guerilla_patrol": 4,
+    "mex_guerilla_patrol_night": 4,
+    "mex_guerilla_recon": 4,
+    "mex_guerilla_vehicle_crew": 2,
+    "mex_guerilla_vehicle_passangers": 4,
+    "mex_infantry_heavy": 4,
+    "mex_infantry_patrol": 4,
+    "mex_infantry_patrol_night": 4,
+    "mex_infantry_recon": 4,
+    "mex_infantry_vehicle_crew": 2,
+    "mex_infantry_vehicle_passangers": 4,
+    "mex_special_forces_heavy": 4,
+    "mex_special_forces_patrol": 4,
+    "mex_special_forces_recon": 4,
+    "mex_special_forces_silent_ops": 4,
+    "mex_special_forces_vehicle_crew": 2,
+    "mex_special_forces_vehicle_passangers": 4,
+}
+
+#: the living-enemy health values these files actually contain.
+#: GRAW 1's living enemies are 4; two special NPCs are 8; husks are 16 in the
+#: same files and are deliberately absent from this table.
+ENEMY_HEALTH = ['4', '8']
+ENEMY_HEALTH_ATTRS = ['damage_points']
+
+SETTINGS = _graw.shared_settings() + _graw_enemies.settings()
 
 
 def build_edits(values):
-    return _graw.shared_edits(values)
+    return (_graw.shared_edits(values)
+            + _graw_enemies.edits(values, SQUAD_SIZE, ENEMY_HEALTH,
+                                  ENEMY_HEALTH_ATTRS))
 
 
 NOTES = r"""

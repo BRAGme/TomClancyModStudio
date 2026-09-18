@@ -460,6 +460,75 @@ GRAW 1's `logos_diffuse/h_1600x1200.dds` is an ordinary RGBA cut-out and needs
 none of this. GRAW 2's bundle still carries GRAW 1's entire logo family as dead
 leftovers, so picking by filename alone gets you the wrong game's wordmark.
 
+### Enemy counts are encoded in a NAME, not a number
+
+A world file does not place soldiers. It places squads:
+
+```xml
+<unit name="group_unit" group="mex_guerilla_patrol2" group_id="patrol01">
+  <order order="Sniper" .../>
+  <position pos_x="-14707.789" pos_y="22192.504" pos_z="850"/>
+</unit>
+```
+
+and the trailing digit is the squad's size. A group declared `split="true"` is
+expanded by the group manager into sub-groups `<name>1` … `<name>N`, where N is
+its full roster and `<name>K` is that roster cut to K.
+
+So "more enemies" is not a value to scale — it is a **rename**, to a different
+string per placement, and only the names the generator makes exist. That is
+what `XmlAttr.remap` was added for: a per-element map from old value to new,
+which leaves alone any element whose value is not a key.
+
+Checked before being trusted, across all 44 GRAW 1 world files:
+
+| | |
+|---|---|
+| distinct group references | 86 |
+| …suffixed | 58 |
+| …bare (and every one is a declared group) | 28 |
+| references whose base group is undefined | **0** |
+| references asking for a K larger than the base roster | **0** |
+
+So raising K to the roster stays strictly inside the range the shipped game
+already uses. **No shipped world references a `split` group bare**, which is
+why the tool raises the suffix instead of stripping it — stripping would have
+relied on a form the game never demonstrates.
+
+The roster table comes from each game's own **compiled** `group_manager`, not
+its source: GRAW 2 generates most of its groups from `xdefine` macros, and only
+the compiled copy has them expanded. Source versus compiled for GRAW 2:
+9 literal `skill_shooting` values against **132** once expanded.
+
+Measured effect, mission 1: 45 → 83 enemies in GRAW 1, 46 → 212 in GRAW 2. The
+difference is that GRAW 2's patrol squads hold eight men where GRAW 1's hold
+four. Across GRAW 1's whole campaign, 1,053 → 2,600.
+
+Friendly squads are named `friendly*`, `us_marines_*` and `loyalists*`, are not
+in the table, and so cannot be caught by the rename — asserted by a test.
+
+### Enemy skill, and why a blanket scale is safe there but not for health
+
+`skill_shooting` sits on the soldier templates. Every one of the 34 in GRAW 1
+and 132 in GRAW 2 belongs to a `mex_*` or `ag_*` soldier — established by
+walking the tree and reading each node's owning `<soldier>` rather than by
+trusting the file's layout — so scaling all of them cannot reach the player's
+squad. `overall_enemy_precision` in `sb_global` is the global multiplier on
+top, and it lives in a `default` attribute rather than a `value` one.
+
+`damage_points` is different. GRAW 1 keeps living enemies at 4, two special
+NPCs at 8, and the **husks** — the bodies left behind — at 16, all in the same
+files. A blanket scale would make corpses harder to shoot apart, so health is a
+remap of the living values only.
+
+### There are no enemy waves
+
+Worth stating because it is the obvious next thing to look for. Enemies are
+**placed, then activated** — never created. Across both campaigns the mission
+scripts call `ActivateGroup` and `RemoveGroup`; `CreateUnit` exists and spawns
+props, weapons and vehicles, never soldiers. The only trace of a wave anywhere
+is a dead default in `sb_group_unit.xml`: `var[group_name]/@default="wave_a"`.
+
 ### One bug this found in the ini editor
 
 Advanced Warfighter 2 ships `Support\Detection\interpreter_local.ini` as

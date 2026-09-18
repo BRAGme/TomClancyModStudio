@@ -186,6 +186,14 @@ class XmlAttr(Edit):
     path: str = ""
     attr: str = ""
     value: Any = None
+    #: {old value: new value}, applied per element and only where the current
+    #: value is a key. For the edits that are neither a constant nor a scaling:
+    #: Advanced Warfighter encodes how many soldiers a placement spawns in the
+    #: GROUP NAME it references, so "fuller squads" is a rename from
+    #: `mex_guerilla_patrol2` to `mex_guerilla_patrol4` -- a different string
+    #: per placement, and one that must not be invented, because only the names
+    #: the group manager generates exist.
+    remap: dict = field(default_factory=dict)
     stock: Any = None
     #: multiply the file's own value instead of replacing it, so one setting
     #: can say "every weapon 20% less accurate" across 108 files that all start
@@ -205,6 +213,10 @@ class XmlAttr(Edit):
 class XmlText(Edit):
     path: str = ""
     value: Any = None
+    #: {old: new}, as on `XmlAttr` -- for element text rather than an
+    #: attribute. Both kinds carry it so a caller never has to know which
+    #: dialect a game uses to know what an edit can express.
+    remap: dict = field(default_factory=dict)
     stock: Any = None
     scale: float = None
     #: added after scaling, so an edit reads `value * scale + offset`. Needed

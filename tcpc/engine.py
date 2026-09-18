@@ -246,6 +246,16 @@ def apply_xml(doc: "rsexml.Doc", edits, rel, out: Result):
                 "%s: %s was expected to be %s but is %s."
                 % (rel, what, e.stock, current))
 
+        if e.remap:
+            # No single "before" value to print: a remap gives each element the
+            # value ITS OWN value maps to, so the first element's is not the
+            # story. The count is.
+            status, n = (doc.remap_attr(e.path, e.attr, e.remap) if is_attr
+                         else doc.remap_text(e.path, e.remap))
+            out.changes.append(Change(rel, what, "%d value(s)" % n,
+                                      "remapped", status))
+            continue
+
         if e.scale is not None or e.offset is not None:
             # Scaling is delegated so each matching element can start from its
             # own value; see `rsexml.scale_attr` for why that matters.
@@ -653,7 +663,12 @@ def _apply_overlay(root, profile, grouped, out, dry_run, progress):
                 out.ok = False
                 out.warnings.append("%s: %s" % (rel, exc))
                 continue
-            if not dry_run:
+            # A file the edits did not actually move is not written at all.
+            # Not just tidiness: "every level's world file" is 44 files and
+            # 60 MB per form in Advanced Warfighter, and most of them are
+            # multiplayer maps that place no soldiers, so without this a
+            # single option would copy tens of megabytes to say nothing.
+            if not dry_run and data != raw:
                 if existed and dest_rel not in created:
                     stash(root, dest_rel)
                     now_shadowed.append(dest_rel)
@@ -684,7 +699,7 @@ def _apply_overlay(root, profile, grouped, out, dry_run, progress):
                 out.ok = False
                 out.warnings.append("%s: %s" % (twin, exc))
                 continue
-            if not dry_run:
+            if not dry_run and tdata != traw:
                 if texisted and tdest_rel not in created:
                     stash(root, tdest_rel)
                     now_shadowed.append(tdest_rel)
@@ -729,7 +744,11 @@ def _edit_compiled(raw, rel, edits, out: Result):
             current = nd.get(e.attr)
             if current is None:
                 continue
-            if e.scale is not None or e.offset is not None:
+            if e.remap:
+                new = e.remap.get(str(current).strip())
+                if new is not None:
+                    nd.set(e.attr, new)
+            elif e.scale is not None or e.offset is not None:
                 num = rsexml.parse_number(current)
                 if num is None:
                     continue

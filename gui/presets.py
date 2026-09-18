@@ -144,6 +144,28 @@ PRESETS = {
             "weapon_recoil": "x1.5",
             "magazines": "x0.5",
         }),
+        ("Full-strength opposition", {
+            "enemy_squads": "full",
+        }),
+        ("Veteran enemies - better, not more", {
+            "enemy_skill": "x1.5",
+            "enemy_precision": "x1.4",
+            "enemy_health": "x2",
+        }),
+        ("Overrun - more of them, and sharper", {
+            "enemy_squads": "full",
+            "enemy_skill": "x1.5",
+            "enemy_precision": "x1.4",
+        }),
+        ("Stealth is worth it", {
+            "enemy_senses": "dull",
+            "enemy_squads": "full",
+        }),
+        ("Thinned out - a gentler campaign", {
+            "enemy_squads": "thin",
+            "enemy_skill": "x0.6",
+            "enemy_health": "x0.5",
+        }),
         ("Stock", {}),
     ],
 

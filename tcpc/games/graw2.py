@@ -17,7 +17,7 @@ contains plain `.xml` and no compiled `.xmb` at all, which means the plain XML
 this tool edits is the copy the engine reads.
 """
 
-from . import _graw
+from . import _graw, _graw_enemies
 from ..model import CHOICE, Choice, GameProfile, Layout, OVERLAY, Setting, XmlAttr
 
 LAYOUT = Layout(
@@ -83,11 +83,56 @@ EXTRA = [
         confidence="experimental", touches="data"),
 ]
 
-SETTINGS = _graw.shared_settings() + EXTRA
+#: Every enemy squad template and its full roster, read out of this game's
+#: own compiled `group_manager` -- the compiled copy, because the source is
+#: macro-generated and only the compiled form has the groups expanded.
+#: Friendly squads are not in it and so cannot be caught by the rename.
+SQUAD_SIZE = {
+    "ag_mex_mercenary_heavy": 4,
+    "ag_mex_mercenary_heavy_night": 4,
+    "ag_mex_mercenary_patrol": 8,
+    "ag_mex_mercenary_patrol_night": 4,
+    "ag_mex_mercenary_recon": 4,
+    "ag_mex_mercenary_vehicle_crew": 2,
+    "ag_mex_mercenary_vehicle_passangers": 4,
+    "ag_mex_special_forces_grenadier": 2,
+    "ag_mex_special_forces_heavy": 4,
+    "ag_mex_special_forces_heavy_night": 4,
+    "ag_mex_special_forces_patrol": 8,
+    "ag_mex_special_forces_patrol_night": 4,
+    "ag_mex_special_forces_recon": 4,
+    "ag_mex_special_forces_vehicle_crew": 2,
+    "ag_mex_special_forces_vehicle_passangers": 4,
+    "mex_mercenary_heavy": 4,
+    "mex_mercenary_heavy_night": 4,
+    "mex_mercenary_patrol": 8,
+    "mex_mercenary_patrol_night": 4,
+    "mex_mercenary_recon": 4,
+    "mex_mercenary_vehicle_crew": 3,
+    "mex_mercenary_vehicle_passangers": 4,
+    "mex_special_forces_grenadier": 2,
+    "mex_special_forces_heavy": 4,
+    "mex_special_forces_heavy_night": 4,
+    "mex_special_forces_patrol": 8,
+    "mex_special_forces_patrol_night": 4,
+    "mex_special_forces_recon": 4,
+    "mex_special_forces_vehicle_crew": 3,
+    "mex_special_forces_vehicle_passangers": 4,
+}
+
+#: the living-enemy health values these files actually contain.
+#: GRAW 2 made health fractional and keeps a matching maximum, so both vars
+#: move together.
+ENEMY_HEALTH = ['2.75', '3', '4']
+ENEMY_HEALTH_ATTRS = ['damage_points', 'damage_points_max']
+
+SETTINGS = _graw.shared_settings() + _graw_enemies.settings() + EXTRA
 
 
 def build_edits(values):
-    out = _graw.shared_edits(values)
+    out = (_graw.shared_edits(values)
+           + _graw_enemies.edits(values, SQUAD_SIZE, ENEMY_HEALTH,
+                                 ENEMY_HEALTH_ATTRS))
     if values["hud_scheme"] == "brown":
         for name, value in HUD_ALT.items():
             out.append(XmlAttr(HUD_PALETTE, path="HUD/xdefine[name=%s]" % name,

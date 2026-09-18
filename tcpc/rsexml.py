@@ -281,6 +281,50 @@ class Doc:
             spans.append((old, start, end))
         return self._scale(spans, factor, offset, minimum, maximum)
 
+    def remap_attr(self, path, attr, table):
+        """Rewrite this attribute wherever its current value is in `table`.
+
+        Not a scale and not a constant: each element gets the value its own
+        current value maps to, and an element whose value is not in the table
+        is left alone. That last part is the point -- it is what keeps a
+        blanket edit off the values it was not meant for.
+        """
+        spans = []
+        for node in self.find(path):
+            hit = _attr_ci(node, attr)
+            if hit is None:
+                continue
+            old, start, end = hit
+            new = table.get(old.strip())
+            if new is not None and str(new) != old:
+                spans.append((start, end, str(new)))
+        if not spans:
+            return "same", 0
+        for start, end, new in sorted(spans, reverse=True):
+            self._text = self._text[:start] + new + self._text[end:]
+        self._nodes = None
+        return "changed", len(spans)
+
+    def remap_text(self, path, table):
+        """As `remap_attr`, for element text."""
+        spans = []
+        for node in self.find(path):
+            if node.text_span is None:
+                continue
+            start, end = node.text_span
+            old = self._text[start:end]
+            if "<" in old:
+                raise RseXmlError("%s is not a leaf element" % node.path)
+            new = table.get(old.strip())
+            if new is not None and str(new) != old:
+                spans.append((start, end, str(new)))
+        if not spans:
+            return "same", 0
+        for start, end, new in sorted(spans, reverse=True):
+            self._text = self._text[:start] + new + self._text[end:]
+        self._nodes = None
+        return "changed", len(spans)
+
     def _scale(self, spans, factor, offset, minimum, maximum):
         todo = []
         for hit in spans:

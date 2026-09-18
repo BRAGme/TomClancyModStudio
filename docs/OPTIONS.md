@@ -41,19 +41,27 @@ recoil), Equipment (unlock the six multiplayer-only items, grenade counts,
 explosive power), Interface (crosshair, hints, camera shake, blood, bodies, and
 two of the thirteen developer readouts that ship live).
 
-**GRAW and GRAW 2** — Weapons only, for now: spread, recoil, magazine
-capacity, unlocking every fire mode, and rate of fire; GRAW 2 adds its HUD
-colour scheme. Those are the fields
-Advanced Warfighter's own weapon files comment in full, and the ones a single
-control can move across all 28 (GRAW 1) or 44 (GRAW 2) weapon definitions. The
-wider surface — AI skill, enemy counts, detection ranges — is mapped in
-`research/dossier-graw.md` but not built yet.
+**GRAW and GRAW 2** — Weapons (spread, recoil, magazine capacity, every fire
+mode, rate of fire) and Enemies (squad size, marksmanship, global accuracy,
+toughness, how far they see and hear). GRAW 2 adds its HUD colour scheme.
 
-Note that each of these writes TWO files: the source XML and its compiled
-twin. The retail engine reads the twin, so an edit that only touched the
-source would do nothing at all.
+The squad-size option is the unusual one and worth understanding before you use
+it. Advanced Warfighter's world files place SQUADS, not soldiers, and the
+squad's size is the digit on the end of the name it references —
+`mex_guerilla_patrol2` is that patrol cut to two men. So "more enemies" is a
+rename rather than a number, and the tool only ever renames to a size the game
+itself generates. It changes how many spawn without moving anybody: positions,
+patrol routes and mission triggers are untouched.
 
-**Vegas** — Rules (difficulty, terrorist-hunt population, civilian limit, hunt
+Measured on the real campaigns: mission 1 goes 45 → 83 in GRAW 1 and
+46 → 212 in GRAW 2, the difference being that GRAW 2's patrol squads hold
+eight men where GRAW 1's hold four.
+
+Note that each of these writes TWO files: the source XML and its compiled twin.
+The retail engine reads the twin, so an edit that only touched the source would
+do nothing at all.
+
+**Vegas** — Rules**Vegas** — Rules (difficulty, terrorist-hunt population, civilian limit, hunt
 respawning, round gap, the unused co-op leash), Weapons (damage by range,
 accuracy, movement and turning spread, suppressor penalty), Feel (aim assist,
 field of view, camera shake, weapon bob, squad spacing).

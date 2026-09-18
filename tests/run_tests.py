@@ -17,6 +17,7 @@ so that is asserted on hundreds of real files rather than on one fixture.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import struct
 import sys
@@ -513,6 +514,92 @@ def _twin_edited(root, real_root, profile, rels):
     return False
 
 
+def _enemy_total(text):
+    """Enemy soldiers a world file places.
+
+    Advanced Warfighter places squads, not men, and the squad's size is the
+    digit on the end of the name it references -- so counting enemies is
+    counting suffixes.
+    """
+    total = 0
+    for ref in re.findall(r'<unit name="group_unit"[^>]*group="([^"]+)"', text):
+        if not ref.lower().startswith(("mex", "ag_")):
+            continue
+        m = re.match(r"^(.*?)(\d+)$", ref)
+        total += int(m.group(2)) if m else 1
+    return total
+
+
+def test_graw_enemies(dets):
+    """The squad rename is the largest single edit in the tool.
+
+    It rewrites names rather than numbers, and a name the group manager cannot
+    generate is a squad that does not spawn -- so the table is checked against
+    the game it came from rather than trusted.
+    """
+    print("\n[GRAW enemy levers]")
+    from tcpc.bundle import BundleSet
+    from tcpc.games import BY_ID
+    import importlib
+    for det in dets:
+        p = det.profile
+        if p.id not in ("graw", "graw2"):
+            continue
+        mod = importlib.import_module("tcpc.games." + p.id)
+        sizes = getattr(mod, "SQUAD_SIZE", {})
+        check("%s: squad table is not empty" % p.short, bool(sizes))
+
+        values = dict(p.defaults())
+        values["enemy_squads"] = "full"
+        table = {}
+        for e in p.build_edits(values):
+            if e.select.endswith("world.xml") and e.remap:
+                table = e.remap
+
+        bad = [v for v in table.values()
+               if not any(v == "%s%d" % (b, n) for b, n in sizes.items())]
+        check("%s: every renamed-to squad is one the game generates" % p.short,
+              bool(table) and not bad, str(bad[:4]))
+        friendly = [k for k in list(table) + list(table.values())
+                    if not k.lower().startswith(("mex", "ag_"))]
+        check("%s: no friendly squad is renamed" % p.short, not friendly,
+              str(friendly[:4]))
+
+        with BundleSet(os.path.join(det.path, p.layout.bundles_dir)) as bs:
+            refs = set()
+            worlds = [w for w in bs.paths() if w.endswith("/xml/world.xml")]
+            for w in worlds:
+                refs.update(re.findall(
+                    r'<unit name="group_unit"[^>]*group="([^"]+)"',
+                    bs.read(w).decode("latin-1")))
+            first = [w for w in worlds if "mission01" in w]
+            text = bs.read(first[0]).decode("latin-1") if first else ""
+        check("%s: the table reaches names the shipped worlds use" % p.short,
+              bool(set(table) & refs),
+              "no world references anything this would rewrite")
+
+        if not text:
+            continue
+        doc = rsexml.Doc(text)
+        status, n = doc.remap_attr("unit[name=group_unit]", "group", table)
+        before, after = _enemy_total(text), _enemy_total(doc.text)
+        check("%s: mission 1 renames %d placements" % (p.short, n),
+              status == "changed" and n > 0)
+        check("%s: mission 1 gains enemies (%d -> %d)"
+              % (p.short, before, after), after > before)
+
+        values["enemy_squads"] = "thin"
+        thin = {}
+        for e in p.build_edits(values):
+            if e.select.endswith("world.xml") and e.remap:
+                thin = e.remap
+        doc2 = rsexml.Doc(text)
+        doc2.remap_attr("unit[name=group_unit]", "group", thin)
+        check("%s: half-strength loses enemies (%d -> %d)"
+              % (p.short, before, _enemy_total(doc2.text)),
+              _enemy_total(doc2.text) < before)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -551,6 +638,7 @@ def main():
         test_bundle(dets)
         test_apply_revert(dets)
         test_overlay(dets)
+        test_graw_enemies(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")
