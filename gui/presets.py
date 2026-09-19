@@ -83,6 +83,7 @@ PRESETS = {
         }),
         ("Armour that actually stops bullets", {
             "armour_works": True,
+            "armour_value": "x1.7",
             "enemy_armour": "up",
             "weapon_damage": "x1.5",
         }),

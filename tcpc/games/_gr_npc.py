@@ -299,3 +299,53 @@ def armour_edits(values, base_mod_dir):
                 out.append("%s<%s>%s</%s>%s" % (lead, name, value, name, end))
     return [FileCopy(COMBAT_MODEL, data="".join(out).encode("latin-1"),
                      note="armoured-chest factors the base game omits")]
+
+
+#: The four factors, once they exist. Ghost Recon's stock ladder is the
+#: expansions' -- 0 / 150 / 350 / 750 -- which is steeper at the top than Sum
+#: of All Fears' 0 / 150 / 350 / 550.
+ARMOUR_TAGS = ["BallisticArmoredChestFactor%d" % i for i in range(4)]
+
+ARMOUR_SCALE = {"x1.7": 1.7, "x0.5": 0.5}
+
+
+def armour_value_setting():
+    return Setting(
+        "armour_value", "How much body armour helps", CHOICE, "stock",
+        group="Enemies", requires={"armour_works": True},
+        help="One factor per armour level, applied to chest hits, and the "
+             "engine divides it into the shot's kill energy -- so a bigger "
+             "number absorbs more. Level 0 is zero, meaning no armour and no "
+             "protection; level 3 is 750. Sum of All Fears has had this "
+             "option all along; Ghost Recon could not, because until the "
+             "switch above there were no factors in the file to scale.",
+        choices=[
+            Choice("stock", "Stock", "0 / 150 / 350 / 750."),
+            Choice("x1.7", "Armour matters more", ""),
+            Choice("x0.5", "Armour matters less", ""),
+            Choice("none", "Armour does nothing",
+                   "All four at zero, which is what the base game does "
+                   "already by leaving them out."),
+        ],
+        confidence="experimental", touches="mod")
+
+
+def armour_value_edits(values):
+    """Scale the factors `armour_edits` has just put in the file.
+
+    Order matters and the engine provides it: a `FileCopy` supplies the
+    file's starting content and the edits in the same group are then applied
+    on top of it, so these reach the generated factors rather than the base
+    game's missing ones.
+    """
+    if not values.get("armour_works"):
+        return []
+    choice = values.get("armour_value", "stock")
+    if choice == "none":
+        return [XmlText(COMBAT_MODEL, path=tag, value="0.000000",
+                        note="armour value") for tag in ARMOUR_TAGS]
+    factor = ARMOUR_SCALE.get(choice)
+    if not factor:
+        return []
+    return [XmlText(COMBAT_MODEL, path=tag, scale=factor, minimum=0,
+                    note="armour value") for tag in ARMOUR_TAGS]

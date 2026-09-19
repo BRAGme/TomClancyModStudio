@@ -35,7 +35,7 @@ LAYOUT = Layout(
 )
 
 SETTINGS = (_rse.shared_settings("ghost_recon") + _gr_npc.settings()
-            + [_gr_npc.armour_setting()])
+            + [_gr_npc.armour_setting(), _gr_npc.armour_value_setting()])
 
 
 def build_edits(values, root=None):
@@ -55,6 +55,7 @@ def build_edits(values, root=None):
         out += _gr_npc.armour_edits(
             values, os.path.join(str(root),
                                  LAYOUT.base_mod.replace("/", os.sep)))
+        out += _gr_npc.armour_value_edits(values)
     return out
 
 
@@ -105,6 +106,20 @@ no base gun in the retail campaign at all. See _gr_npc.py.
 One seam is honest and unavoidable: m1911 only.kit is carried by both a few
 friendly NPCs and by enemies, so those friendlies get the enemy's pistol.
 Every other kit separates cleanly.
+
+Body armour does nothing in the base campaign, and that is a shipped
+omission rather than a design choice. Equip\CmbtModl.xml holds one factor per
+body part, which the engine divides into a shot's kill energy; four of them
+are the armoured-chest factors, one per armour level. The base file has eight
+entries. Both expansions have twelve -- identical but for
+BallisticArmoredChestFactor0..3 at 0 / 150 / 350 / 750. The loader zeroes
+every factor before reading the file, so an absent factor is zero, and a zero
+factor divided into any energy is a certain kill. Every armour level therefore
+behaves exactly like no armour.
+
+"Make body armour work" ships those four numbers, copied from the expansions'
+own files. "How much body armour helps" then scales them, which is the option
+Sum of All Fears has always had and this game could not.
 
 Nothing in this profile has been watched working in a running game.
 """

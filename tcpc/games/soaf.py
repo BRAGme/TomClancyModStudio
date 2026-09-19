@@ -68,6 +68,32 @@ EXTRA = [
             Choice("none", "Armour does nothing", "All four at zero."),
         ],
         confidence="experimental", touches="mod"),
+    Setting(
+        "recruit_shield", "How much Recruit protects your squad", CHOICE,
+        "stock", group="Difficulty",
+        help="The combat model carries a separate multiplier on the chance "
+             "of one of YOUR people being killed, used on the Recruit tier "
+             "only. Stock halves it. It is the one part of the difficulty "
+             "model that protects your squad rather than handicapping the "
+             "enemy, and the difficulty-tier option above does not touch it.",
+        choices=[
+            Choice("stock", "Stock", "Half the usual chance, on Recruit."),
+            Choice("x0.5", "Recruit protects them more", "A quarter."),
+            Choice("x2", "Recruit protects them less",
+                   "Back to the same chance as every other tier."),
+        ],
+        confidence="experimental", touches="mod"),
+    Setting(
+        "arcade_lethality", "Arcade mode lethality", CHOICE, "stock",
+        group="Difficulty",
+        help="A multiplier on every kill chance, applied in arcade mode. "
+             "Stock halves it. Does nothing outside arcade mode.",
+        choices=[
+            Choice("stock", "Stock", "Half."),
+            Choice("x0.5", "Gentler still", ""),
+            Choice("x2", "As lethal as the normal game", ""),
+        ],
+        confidence="experimental", touches="mod"),
 ]
 
 SETTINGS = _rse.shared_settings("soaf") + _soaf_npc.settings() + EXTRA
@@ -144,6 +170,12 @@ def build_edits(values, root=None):
         for tag in ARMOUR_FACTORS:
             out.append(XmlText(COMBAT_MODEL, path=tag, scale=factor,
                                minimum=0, note="armour value"))
+    for key, tag in (("recruit_shield", "RecruitFriendlyKillChanceFactor"),
+                     ("arcade_lethality", "ArcadeModeKillChanceFactor")):
+        factor = {"x0.5": 0.5, "x2": 2.0}.get(v[key])
+        if factor:
+            out.append(XmlText(COMBAT_MODEL, path=tag, scale=factor,
+                               minimum=0, maximum=1, note=tag))
     return out
 
 
