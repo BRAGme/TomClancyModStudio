@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tcpc import art, engine, inifile, rsb, rsexml, upackage     # noqa: E402
 from tcpc.games import PROFILES                                  # noqa: E402
 from tcpc.install import identify, scan_folder                   # noqa: E402
-from tcpc.model import BOOL, CHOICE, INT, MOD                    # noqa: E402
+from tcpc.model import BOOL, CHOICE, INT, IniEdit, MOD, Setting  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -94,6 +94,70 @@ def test_profiles():
 # ---------------------------------------------------------------------------
 # the editors, read-only against the real data
 # ---------------------------------------------------------------------------
+
+def test_created_files():
+    r"""An in-place profile that ADDS a file the game never shipped.
+
+    Raven Shield's cut game modes need a `.mod` that does not exist, which
+    breaks the assumption every other in-place edit rests on: that the file is
+    already there and has a pristine copy to go back to. A created file has no
+    pristine copy, so undoing it means DELETING it -- and getting that wrong
+    leaves litter in someone's game folder that no Revert will ever clear.
+    """
+    print("\n[in-place profiles that create a file]")
+    from tcpc.model import FileCopy, GameProfile, Layout
+
+    root = tempfile.mkdtemp(prefix="tcpc-new-")
+    try:
+        os.makedirs(os.path.join(root, "system"))
+        stock = os.path.join(root, "system", "existing.ini")
+        with open(stock, "w") as fh:
+            fh.write("[a]\nk=1\n")
+        body = b"[Engine.R6Mod]\nm_szGameTypes=RGM_DefendMode\n"
+        profile = GameProfile(
+            id="t", title="T", short="T",
+            layout=Layout(signature=["system/existing.ini"], data_dir="system"),
+            delivery="inplace",
+            settings=[Setting("make", "Make", BOOL, False)],
+            build_edits=lambda v: ([FileCopy("system/Generated.mod", data=body,
+                                             note="generated mod")]
+                                   if v["make"] else []))
+        made = os.path.join(root, "system", "Generated.mod")
+
+        engine.apply(root, profile, {"make": True})
+        check("created: the new file is written", os.path.isfile(made))
+        check("created: with exactly the stated content",
+              open(made, "rb").read() == body)
+        check("created: the manifest records it as created, not modified",
+              engine.read_manifest(root).get("created") == ["system/Generated.mod"]
+              and engine.read_manifest(root).get("files") == [])
+
+        engine.apply(root, profile, {"make": True})
+        check("created: applying twice leaves one copy",
+              os.path.isfile(made) and open(made, "rb").read() == body)
+
+        engine.apply(root, profile, {"make": False})
+        check("created: clearing the option deletes it", not os.path.isfile(made))
+
+        engine.apply(root, profile, {"make": True})
+        engine.revert(root, profile)
+        check("created: revert deletes it", not os.path.isfile(made))
+        check("created: a file that was already there is untouched",
+              open(stock).read() == "[a]\nk=1\n")
+
+        # and the guard: a missing file that NOTHING can supply is still an
+        # error, not an invitation to invent one.
+        profile.build_edits = lambda v: [IniEdit("system/absent.ini",
+                                                 section="a", key="k", value=2)]
+        out = engine.apply(root, profile, {"make": True})
+        check("created: an ordinary edit to a missing file is still refused",
+              not os.path.isfile(os.path.join(root, "system", "absent.ini"))
+              and out.warnings,
+              "no file should be invented and the user should be told: %s"
+              % out.warnings[:2])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
 
 def test_roundtrip(dets):
     print("\n[round-trip: load and save must return identical bytes]")
@@ -869,6 +933,7 @@ def main():
     test_profiles()
     test_globs()
     test_numbers()
+    test_created_files()
     if dets:
         test_roundtrip(dets)
         test_art(dets)

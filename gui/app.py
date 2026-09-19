@@ -38,8 +38,22 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy PC Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "1.0"
+#: Bumped whenever the option set changes, because the only question a user
+#: can ask about a downloaded executable is "is this the new one" -- and with
+#: a fixed name and a fixed version there is no way to answer it. The window
+#: title and the first log line both carry it.
+VERSION = "1.1"
 NOTES_TAB = "About this game"
+
+
+def _option_count():
+    """Every enabled option across every profile.
+
+    On the ready line because it is the cheapest possible answer to "did the
+    build I just downloaded actually get the new options" -- a number that
+    moves is worth more than a version that might not have been bumped.
+    """
+    return sum(1 for p in PROFILES for s in p.settings if s.enabled)
 
 HEADER = 148
 ACTION_H = 46
@@ -215,7 +229,8 @@ class App(tk.Tk):
                            state="disabled")
         self.log.pack(fill="both", expand=True)
         self._log_tags()
-        self._say("%s %s -- ready." % (APP_NAME, VERSION))
+        self._say("%s %s (%d options across %d games) -- ready."
+                  % (APP_NAME, VERSION, _option_count(), len(PROFILES)))
 
     def _log_tags(self):
         for tag in ("good", "warn", "bad"):

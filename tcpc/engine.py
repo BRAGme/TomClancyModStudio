@@ -405,11 +405,22 @@ def plan(root, profile, edits) -> dict:
         names = walk_rel(base) if base and os.path.isdir(base) else []
     out = {}
     for e in edits:
-        for rel in expand(names, e.select):
+        hits = expand(names, e.select)
+        if not hits and isinstance(e, FileCopy) and not _is_glob(e.select):
+            # A `FileCopy` naming one exact path that is not there yet is not a
+            # miss -- it is the point. This is how an in-place profile ships a
+            # file the game never had. A GLOB that matches nothing is still a
+            # miss, because there is no single path to invent.
+            hits = [e.select.replace("\\", "/")]
+        for rel in hits:
             if not in_scope(rel, e.scope):
                 continue
             out.setdefault(rel, []).append(e)
     return out
+
+
+def _is_glob(pattern) -> bool:
+    return any(ch in pattern for ch in "*?")
 
 
 def in_scope(rel, scope) -> bool:
@@ -634,6 +645,7 @@ def _write(path, data):
 def _apply_inplace(root, profile, grouped, out, dry_run, progress):
     manifest = read_manifest(root)
     touched = set(manifest.get("files", []))
+    made = set(manifest.get("created", []))
 
     # Rebuild from pristine: put back everything a previous apply changed,
     # INCLUDING files this apply no longer touches. That is what makes
@@ -641,16 +653,25 @@ def _apply_inplace(root, profile, grouped, out, dry_run, progress):
     for rel in sorted(touched):
         if not dry_run:
             restore(root, rel)
+    # A file the tool INVENTED has no pristine copy, so undoing it means
+    # deleting it. Same rule, different verb.
+    for rel in sorted(made):
+        if not dry_run:
+            path = os.path.join(root, rel.replace("/", os.sep))
+            if os.path.isfile(path):
+                os.remove(path)
+            _prune(os.path.dirname(path), root)
 
-    now = []
+    now, created = [], []
     for i, (rel, edits) in enumerate(sorted(grouped.items())):
         if progress:
             progress(i, len(grouped), rel)
         abs_path = os.path.join(root, rel.replace("/", os.sep))
-        if not os.path.isfile(abs_path):
+        fresh = not os.path.isfile(abs_path)
+        if fresh and not _supplies_whole_file(edits):
             out.warnings.append("%s is not in this installation." % rel)
             continue
-        if not dry_run:
+        if not dry_run and not fresh:
             stash(root, rel)
         try:
             data = _edit_file(abs_path, rel, edits, out)
@@ -661,16 +682,34 @@ def _apply_inplace(root, profile, grouped, out, dry_run, progress):
         if not dry_run:
             _write(abs_path, data)
             out.verified[rel] = sha1(abs_path)
-        now.append(rel)
+        (created if fresh else now).append(rel)
+        if fresh:
+            out.changes.append(Change(rel, "new file", "absent", "created"))
 
     if not dry_run:
         manifest["files"] = sorted(set(now))
+        manifest["created"] = sorted(set(created))
         manifest["applied"] = time.strftime("%Y-%m-%d %H:%M:%S")
         manifest["game"] = profile.id
         write_manifest(root, manifest)
         # Files that were touched before and are not any more have been
         # restored; their pristine copies stay, because the option may come
         # back and the first copy is the only trustworthy one.
+
+
+def _supplies_whole_file(edits) -> bool:
+    """Can these edits produce a file that is not there yet?
+
+    Only a `FileCopy` can: every other edit kind changes something in content
+    it has to read first. This is what lets an in-place profile ADD a file --
+    Raven Shield's cut game modes need a `.mod` that the game never shipped --
+    without weakening the rule that an edit to a missing file is an error.
+    """
+    for e in edits:
+        if isinstance(e, FileCopy) and (e.data is not None
+                                        or (e.source and os.path.isfile(e.source))):
+            return True
+    return False
 
 
 def _apply_mod(root, profile, grouped, out, dry_run, progress):
@@ -948,7 +987,11 @@ def revert(root, profile) -> Result:
         return out
 
     manifest = read_manifest(root)
-    if profile.delivery == OVERLAY:
+    # `created` covers every delivery that can add a file the installation did
+    # not have -- the loose overlay, and an in-place profile that generates
+    # one (Raven Shield's `.mod` files). A file with no pristine copy cannot
+    # be restored, only removed, so it is tracked separately from `files`.
+    if profile.delivery in (OVERLAY, INPLACE):
         for rel in sorted(manifest.get("created", [])):
             path = os.path.join(root, rel.replace("/", os.sep))
             if os.path.isfile(path):
