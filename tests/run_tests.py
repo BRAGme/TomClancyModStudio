@@ -784,6 +784,71 @@ def test_packages(dets):
     check("Raven Shield: a refused class is not written to",
           pkgs["R6Weapons.u"].set("R6Weapons", "m_iEnergy", 1) is False)
 
+    # -- the header is NOT the same shape for a class and a function ------
+    # `UObject::Serialize` writes a tagged property list for every object
+    # whose class is not `UClass`, so a Function, State or Struct export
+    # carries an empty one -- a single `None` byte -- before `SuperField`.
+    # Miss it and the whole header shifts one index, which does not crash and
+    # does not look wrong: `FriendlyName` simply comes out of `Children`.
+    # The check is that `FriendlyName` resolves to the export's own name,
+    # which Unreal guarantees for everything except an operator, where it is
+    # the token instead (`DivideEqual_VectorFloat` is `/=`).
+    OPERATORS = set("+-*/%^&|!~<>=$@") | {"Dot", "Cross", "ClockwiseFrom"}
+
+    def friendly(pkg, e):
+        pos = pkg._struct_prologue(e)
+        back = e.offset
+        if not e.is_class:
+            back = pkg._walk(back, e.offset + e.size, "", [])
+        for _ in range(4):
+            _v, back = upackage.compact_index(pkg.data, back)
+        idx, end = upackage.compact_index(pkg.data, back)
+        assert end == pos, "prologue disagrees with itself"
+        return pkg.names[idx] if 0 <= idx < len(pkg.names) else None
+
+    named = ops = broken = classes = 0
+    wrong = []
+    for pkg in pkgs.values():
+        for e in pkg.exports:
+            if e.size <= 0:
+                continue
+            kind = "Class" if e.is_class else e.class_name
+            if kind not in ("Class", "Function", "State", "Struct"):
+                continue
+            try:
+                got = friendly(pkg, e)
+            except Exception as exc:                      # noqa: BLE001
+                broken += 1
+                wrong.append("%s: %s" % (e.name, exc))
+                continue
+            if got == e.name:
+                named += 1
+                classes += e.is_class
+            elif got and not e.is_class and set(got) <= OPERATORS:
+                ops += 1
+            else:
+                broken += 1
+                wrong.append("%s -> %r" % (e.name, got))
+    # No operators are expected in these three packages -- they live in
+    # Core.u, which a sandbox never selects -- so `ops` is reported, not
+    # required.
+    check("Raven Shield: %d class/function/state/struct headers parse "
+          "(%d named, %d operators)" % (named + ops, named, ops),
+          broken == 0 and classes > 100 and named > 1000, str(wrong[:4]))
+
+    # ...and the reason the branch is there: without it, a function's header
+    # is read one index short. If this ever starts passing, the fix is gone.
+    pkg = pkgs["R6Weapons.u"]
+    e = next(x for x in pkg.exports
+             if x.class_name == "Function" and x.size > 0)
+    pos = e.offset
+    for _ in range(5):                       # the old, class-only walk
+        _v, pos = upackage.compact_index(pkg.data, pos)
+    check("Raven Shield: a function header does not start where a class "
+          "header does", pos != pkg._struct_prologue(e),
+          "%s: the class-only walk and the real prologue both end at 0x%x"
+          % (e.name, pos))
+
     # -- types: a `b` prefix settles nothing ------------------------------
     caps = ("bSingle", "bThreeRound", "bFullAuto", "bCMag", "bSilencer",
             "bLight", "bMiniScope", "bHeatVision")

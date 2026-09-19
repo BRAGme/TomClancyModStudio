@@ -32,6 +32,7 @@ write to it would have quietly corrupted the muzzle velocity instead.
 So the list is parsed from its start instead, which means finding the start,
 which means walking the whole class header::
 
+    UObject  tagged property list -- ONLY for a non-Class; see below
     UField   SuperField(ci)  Next(ci)
     UStruct  ScriptText(ci)  Children(ci)  FriendlyName(ci)
              Line(u32)  TextPos(u32)  ScriptSize(u32)  script[...]
@@ -43,6 +44,14 @@ which means walking the whole class header::
              ClassWithin(ci)  ClassConfigName(ci)
              HideCategories count(ci) x ci
              Defaults       tagged property list, terminated by the name "None"
+
+`UClass` is also the one class the engine does NOT give a leading tagged
+property list: `UObject::Serialize` writes one for every object whose class is
+not `UClass`. A Function, State or Struct export therefore starts with one --
+empty, so a single `None` byte -- and a reader that misses it silently reads
+the whole header one index out. Only classes are parsed here, so this costs
+nothing today; it is handled anyway because nothing about the mistake looks
+wrong locally.
 
 `UClass` extending `UState` is the part worth writing down: between the script
 and the class flags sit 22 bytes belonging to the state machine, and reading
@@ -331,6 +340,39 @@ class Package:
 
     # -- the class header --------------------------------------------------
 
+    def _struct_prologue(self, export):
+        """Position just past `export`'s `UStruct` header, before `Line`.
+
+        A `Class` begins at `SuperField`. **Everything else does not.**
+        `UObject::Serialize` writes a tagged property list for every object
+        whose class is not `UClass`, and `UClass` is the engine's one
+        exception -- so a Function, State or Struct export carries a list
+        first. For those three it is always empty, which is a single `None`
+        byte, and `None` is name 0 in every one of these packages.
+
+        A reader that skips it therefore does not crash. It takes that zero
+        for `SuperField`, shifts the whole header one index along, and reads
+        `FriendlyName` out of `Children` -- which is the whole danger: the
+        result is plausible rather than absurd.
+
+        Measured across all 23 of Raven Shield's script packages, with the
+        list consumed: `FriendlyName` resolves to a real name for all 1,975
+        class exports and all 9,107 function, state and struct exports. 9,002
+        of the latter name the export itself; the remaining 105 are operators,
+        whose friendly name is the token -- `DivideEqual_VectorFloat` is `/=`,
+        and the named ones are `Dot`, `Cross` and `ClockwiseFrom`.
+
+        Non-field objects -- a Sound, a Texture -- carry a real list here, so
+        it is walked rather than assumed to be one byte.
+        """
+        d = self.data
+        pos = export.offset
+        if not export.is_class:
+            pos = self._walk(pos, export.offset + export.size, "", [])
+        for _ in range(5):     # SuperField Next ScriptText Children Friendly
+            _v, pos = compact_index(d, pos)
+        return pos
+
     def _defaults_start(self, export):
         """Where `export`'s default-property list begins.
 
@@ -339,9 +381,7 @@ class Package:
         skips it.
         """
         d = self.data
-        pos = export.offset
-        for _ in range(5):     # SuperField Next ScriptText Children Friendly
-            _v, pos = compact_index(d, pos)
+        pos = self._struct_prologue(export)
         script_size = struct.unpack_from("<I", d, pos + 8)[0]
         if script_size:
             raise PackageError(
