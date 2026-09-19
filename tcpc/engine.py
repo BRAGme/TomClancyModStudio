@@ -36,8 +36,8 @@ from dataclasses import dataclass, field
 
 from . import inifile, rsexml, upackage, xmlbin
 from .install import backup_dir_for
-from .model import (FileCopy, INPLACE, IniEdit, MOD, OVERLAY, PropEdit,
-                    XmlAttr, XmlText)
+from .model import (FileCopy, INPLACE, IniEdit, IniLines, MOD, OVERLAY,
+                    PropEdit, XmlAttr, XmlText)
 
 #: dropped in a generated mod folder so the tool can tell a folder it made
 #: from one the user made. Nothing is ever deleted without this present.
@@ -228,6 +228,33 @@ def apply_ini(doc: "inifile.Ini", edits, rel, out: Result):
         out.changes.append(Change(rel, what, str(current), str(value),
                                   "changed" if status in ("changed", "added")
                                   else status))
+
+
+def apply_ini_lines(doc: "inifile.Ini", edits, rel, out: Result):
+    """Add, drop and swap elements of a repeated-key list."""
+    for e in edits:
+        what = "[%s] %s" % (e.section or "-", e.key)
+        before = doc.get_all(e.section, e.key)
+        n = 0
+        for old, new in e.swap.items():
+            if doc.replace_line(e.section, e.key, old, new) == "changed":
+                n += 1
+        for old, new in e.sub.items():
+            n += doc.substitute(e.section, e.key, old, new)
+        for value in e.drop:
+            if doc.remove_line(e.section, e.key, value) == "changed":
+                n += 1
+        for value in e.add:
+            if doc.add_line(e.section, e.key, value) == "added":
+                n += 1
+        after = doc.get_all(e.section, e.key)
+        if not n:
+            out.changes.append(Change(rel, what, "%d entr(ies)" % len(before),
+                                      "already as asked", "same"))
+            continue
+        out.changes.append(Change(rel, what, "%d entr(ies)" % len(before),
+                                  "%d, %d change(s)" % (len(after), n),
+                                  "changed"))
 
 
 def apply_xml(doc: "rsexml.Doc", edits, rel, out: Result):
@@ -601,6 +628,7 @@ def _edit_bytes(raw, rel, edits, out: Result):
 def _edit_file(src_bytes_path, rel, edits, out: Result):
     """Load, edit and return the new bytes for one file."""
     ini_edits = [e for e in edits if isinstance(e, IniEdit)]
+    line_edits = [e for e in edits if isinstance(e, IniLines)]
     xml_edits = [e for e in edits if isinstance(e, (XmlAttr, XmlText))]
     pkg_edits = [e for e in edits if isinstance(e, PropEdit)]
     copies = [e for e in edits if isinstance(e, FileCopy)]
@@ -610,7 +638,7 @@ def _edit_file(src_bytes_path, rel, edits, out: Result):
             return last.data
         with open(last.source, "rb") as fh:
             return fh.read()
-    if len([x for x in (ini_edits, xml_edits, pkg_edits) if x]) > 1:
+    if len([x for x in (ini_edits + line_edits, xml_edits, pkg_edits) if x]) > 1:
         raise ApplyError("%s has more than one kind of edit aimed at it" % rel)
     if pkg_edits:
         before = os.path.getsize(src_bytes_path)
@@ -625,9 +653,12 @@ def _edit_file(src_bytes_path, rel, edits, out: Result):
                 "%s: package edit changed the file length from %d to %d bytes"
                 % (rel, before, len(data)))
         return data
-    if ini_edits:
+    if ini_edits or line_edits:
         doc = inifile.Ini.load(src_bytes_path)
-        apply_ini(doc, ini_edits, rel, out)
+        if ini_edits:
+            apply_ini(doc, ini_edits, rel, out)
+        if line_edits:
+            apply_ini_lines(doc, line_edits, rel, out)
         return doc.to_bytes()
     doc = rsexml.Doc.load(src_bytes_path)
     apply_xml(doc, xml_edits, rel, out)

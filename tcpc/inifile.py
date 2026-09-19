@@ -337,6 +337,93 @@ class Ini:
             del self.ends[i]
         return len(hits)
 
+    # -- array keys --------------------------------------------------------
+    #
+    # Unreal reads some keys as a LIST, by assigning them once per element:
+    #
+    #     m_szGameTypes="RGM_StoryMode"
+    #     m_szGameTypes="RGM_PracticeMode"
+    #
+    # `set` is wrong for those -- it rewrites the last line, which changes one
+    # element instead of adding one. These three work on the list as a whole.
+    # All of them are idempotent, which matters because every apply rebuilds
+    # from pristine and then runs the same edits again.
+
+    def add_line(self, section, key, value) -> str:
+        """Ensure one `key=value` line exists, comparing ignoring case.
+
+        Added immediately after the last existing element so the list stays
+        together, rather than at the end of the section where it would be
+        separated from its own kind by whatever sits between.
+        """
+        value = _fmt(value)
+        hits = self._key_lines(section, key)
+        want = value.strip().lower()
+        for i in hits:
+            if KEY_RX.match(self.lines[i]).group("value").strip().lower() == want:
+                return "same"
+        line = "%s=%s" % (key, value)
+        if hits:
+            self._insert(hits[-1] + 1, line)
+            return "added"
+        span = self._section_span(section)
+        if span is None:
+            self._append("[%s]" % section)
+            self._append(line)
+            return "added"
+        self._insert(span[1], line)
+        return "added"
+
+    def remove_line(self, section, key, value) -> str:
+        """Delete the `key=value` lines whose value matches, ignoring case."""
+        want = _fmt(value).strip().lower()
+        hits = [i for i in self._key_lines(section, key)
+                if KEY_RX.match(self.lines[i]).group("value").strip().lower()
+                == want]
+        for i in reversed(hits):
+            del self.lines[i]
+            del self.ends[i]
+        return "changed" if hits else "same"
+
+    def substitute(self, section, key, old, new) -> int:
+        """Replace the literal text `old` inside every `key=` line's VALUE.
+
+        For an element that is a struct with many fields, where only one field
+        is wrong and the rest differ from line to line -- a map's
+        `SkinsPerGameTypes=(package=...,type=...,green=...,red=...)` names the
+        game class alongside four character classes that are different on every
+        map, so there is no whole value to match on. Returns how many lines
+        changed.
+        """
+        n = 0
+        for i in self._key_lines(section, key):
+            m = KEY_RX.match(self.lines[i])
+            value = m.group("value")
+            if old not in value:
+                continue
+            self.lines[i] = (self.lines[i][:m.start("value")]
+                             + value.replace(old, new)
+                             + self.lines[i][m.end("value"):])
+            n += 1
+        return n
+
+    def replace_line(self, section, key, old, new) -> str:
+        """Rewrite the element equal to `old` as `new`, keeping its position.
+
+        Position matters here: Raven Shield's map files list the game modes in
+        menu order, so removing and re-adding would silently reorder the menu.
+        """
+        want = _fmt(old).strip().lower()
+        done = False
+        for i in self._key_lines(section, key):
+            m = KEY_RX.match(self.lines[i])
+            if m.group("value").strip().lower() != want:
+                continue
+            self.lines[i] = self.lines[i][:m.start("value")] + _fmt(new) \
+                + self.lines[i][m.end("value"):]
+            done = True
+        return "changed" if done else "same"
+
 
 _FIELD_CACHE = {}
 

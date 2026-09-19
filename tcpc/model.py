@@ -230,6 +230,41 @@ class XmlText(Edit):
 
 
 @dataclass
+class IniLines(Edit):
+    r"""A key Unreal reads as a LIST, written once per element.
+
+    `IniEdit` is wrong for these. Unreal builds an array by assigning the same
+    key repeatedly::
+
+        GameTypes=(package=R6Game,type=R6StoryModeGame,maxNb=16)
+        GameTypes=(package=R6Game,type=R6TerroristHuntGame,maxNb=16)
+
+    and `set` rewrites the LAST line, which changes an element instead of
+    adding one. So this edit works on the list as a whole: `add` ensures values
+    are present, `drop` removes them, `swap` rewrites one in place.
+
+    `swap` exists separately from drop-then-add because position is meaningful:
+    Raven Shield lists a map's modes in menu order, so removing and re-adding
+    would silently reorder somebody's menu.
+
+    All three are idempotent, which they have to be -- every apply rebuilds
+    from pristine and runs the same edits again.
+    """
+    section: str = ""
+    key: str = ""
+    #: values to ensure are present
+    add: list = field(default_factory=list)
+    #: values to ensure are absent
+    drop: list = field(default_factory=list)
+    #: {old: new}, whole values rewritten where they sit
+    swap: dict = field(default_factory=dict)
+    #: {old: new} applied as a literal substring INSIDE each value, for a
+    #: struct element where only one field is wrong and the rest differ from
+    #: line to line -- so there is no whole value to match on.
+    sub: dict = field(default_factory=dict)
+
+
+@dataclass
 class PropEdit(Edit):
     r"""One compiled class default inside an Unreal Engine 2 package.
 

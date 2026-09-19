@@ -72,7 +72,7 @@ Note that each of these writes TWO files: the source XML and its compiled twin.
 The retail engine reads the twin, so an edit that only touched the source would
 do nothing at all.
 
-**Vegas** — Rules**Vegas** — Rules (difficulty, terrorist-hunt population, civilian limit, hunt
+**Vegas** — Rules (difficulty, terrorist-hunt population, civilian limit, hunt
 respawning, round gap, the unused co-op leash), Weapons (damage by range,
 accuracy, movement and turning spread, suppressor penalty), Feel (aim assist,
 field of view, camera shake, weapon bob, squad spacing).

@@ -950,6 +950,115 @@ def _same(value, stated):
         return True
 
 
+def test_rs3_modes(dets):
+    r"""Raven Shield's game modes: the cut four, and the per-map mode lists.
+
+    The interesting assertion is the last one. Every class name this profile
+    writes into a map file is checked against `R6Game.u`'s own export table, so
+    a typo here fails the suite rather than shipping a map that names a class
+    the engine cannot resolve -- which is exactly the shipped bug the
+    `fix_survival` option exists to correct.
+    """
+    det = next((d for d in dets if d.profile.id == "ravenshield"), None)
+    if det is None:
+        return
+    print("\n[Raven Shield: game modes]")
+    profile, root = det.profile, det.path
+    exported = {e.name for e in
+                upackage.Package.load(os.path.join(root, "system", "R6Game.u"))
+                .classes() if e.size > 0}
+
+    # every class the profile names must exist
+    from tcpc.games import _rs3_modes
+    named = {c for c, _cap in _rs3_modes.HUNT_MODES + _rs3_modes.STORY_MODES}
+    named |= {spec[1].split(".", 1)[1] for spec in _rs3_modes.CUT_MODES}
+    missing = sorted(n for n in named if n not in exported)
+    check("Raven Shield: all %d game classes the profile names exist in "
+          "R6Game.u" % len(named), not missing, str(missing))
+
+    # and the cut ones really are unlisted by every shipped .mod
+    listed = set()
+    mods = os.path.join(root, "Mods")
+    for f in os.listdir(mods) if os.path.isdir(mods) else []:
+        if not f.lower().endswith(".mod"):
+            continue
+        with open(os.path.join(mods, f), encoding="latin-1") as fh:
+            for line in fh:
+                m = re.match(r'\s*m_szGameTypes\s*=\s*"?([A-Za-z_0-9]+)', line)
+                if m:
+                    listed.add(m.group(1))
+    cut_tokens = {"RGM_DefendMode", "RGM_ReconMode", "RGM_SquadDeathmatch",
+                  "RGM_SquadTeamDeathmatch"}
+    check("Raven Shield: the four cut modes are listed by no shipped .mod",
+          listed and not (cut_tokens & listed), str(sorted(cut_tokens & listed)))
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-modes-")
+    try:
+        sandbox = sandbox_for(det, tmp)
+        maps = os.path.join(sandbox, "maps")
+        if not os.path.isdir(maps):
+            check("Raven Shield: map files reached the sandbox", False)
+            return
+
+        def bad_refs():
+            out = []
+            for f in sorted(os.listdir(maps)):
+                if not f.lower().endswith(".ini"):
+                    continue
+                with open(os.path.join(maps, f), encoding="latin-1") as fh:
+                    for line in fh:
+                        m = re.search(r"(GameTypes|SkinsPerGameTypes)="
+                                      r"\(package=R6Game,type=(\w+)", line)
+                        if m and m.group(2) not in exported:
+                            out.append((f, m.group(1), m.group(2)))
+            return out
+
+        def with_hunt():
+            n = 0
+            for f in os.listdir(maps):
+                if not f.lower().endswith(".ini"):
+                    continue
+                with open(os.path.join(maps, f), encoding="latin-1") as fh:
+                    if any("type=R6TerroristHuntGame," in ln for ln in fh):
+                        n += 1
+            return n
+
+        before_bad, before_hunt = bad_refs(), with_hunt()
+        check("Raven Shield: the shipped maps really do name a missing class "
+              "(%d line(s))" % len(before_bad), len(before_bad) == 3,
+              str(before_bad))
+
+        values = dict(profile.defaults())
+        values.update(cut_modes=True, map_modes="hunt", fix_survival=True)
+        result = engine.apply(sandbox, profile, profile.effective(values))
+        check("Raven Shield: modes apply succeeded", result.ok,
+              "; ".join(result.warnings[:2]))
+
+        check("Raven Shield: Terrorist Hunt reached every map (%d -> %d)"
+              % (before_hunt, with_hunt()),
+              with_hunt() > before_hunt
+              and with_hunt() == len([f for f in os.listdir(maps)
+                                      if f.lower().endswith(".ini")]))
+        check("Raven Shield: no map now names a class R6Game.u does not export",
+              not bad_refs(), str(bad_refs()))
+
+        made = os.path.join(sandbox, "Mods", "Defend.game")
+        check("Raven Shield: a .game descriptor was created", os.path.isfile(made))
+        if os.path.isfile(made):
+            doc = inifile.Ini.load(made)
+            check("Raven Shield: it registers the cut class in both sections",
+                  all(doc.get(s, "GameType") == "R6Game.R6DefendGame"
+                      for s in _rs3_modes.GAME_SECTIONS))
+
+        engine.revert(sandbox, profile)
+        check("Raven Shield: revert puts the shipped typo back, byte for byte",
+              bad_refs() == before_bad and with_hunt() == before_hunt)
+        check("Raven Shield: revert removes the .game descriptors",
+              not os.path.exists(made))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -991,6 +1100,7 @@ def main():
         test_overlay(dets)
         test_graw_enemies(dets)
         test_packages(dets)
+        test_rs3_modes(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

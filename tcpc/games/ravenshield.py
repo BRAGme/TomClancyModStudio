@@ -32,7 +32,7 @@ Options that write to `user.ini` still apply; options that reason about stock
 class behaviour may not.
 """
 
-from . import _rs3_weapons
+from . import _rs3_modes, _rs3_weapons
 from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT,
                      IniEdit, Layout, Setting)
 
@@ -208,7 +208,7 @@ SETTINGS = [
              "installation actually reads -- it overrides the engine's own "
              "DesiredFOV of 90.",
         confidence="experimental", touches="config"),
-] + _rs3_weapons.settings()
+] + _rs3_modes.settings() + _rs3_weapons.settings()
 
 SKILL_SCALE = {"green": 0.66, "hard": 1.5}
 NERVE = {
@@ -318,6 +318,9 @@ def build_edits(values):
                            key="FieldOfView", value=v["fov"], stock="95",
                            note="field of view"))
 
+    # -- game modes -------------------------------------------------------
+    out.extend(_rs3_modes.edits(v))
+
     # -- weapons and ammunition, in the compiled packages -----------------
     out.extend(_rs3_weapons.edits(v))
     return out
@@ -356,16 +359,6 @@ weapon and equipment pools. The difficulty level in the menu is only a reaction
 timer by comparison; the game's own description says so.
 
 WHAT IS NOT HERE, AND WHY
-
-Weapon and ammunition tuning. Raven Shield keeps these as compiled
-UnrealScript class defaults inside system\*.u -- 197 weapon classes and 61
-ammunition classes -- and they CAN be rewritten in place: the packages are
-uncompressed, the export tables are valid, and each value is a fixed-width
-field in a tagged property list with no checksum over it. Damage lives on the
-ammunition as m_iEnergy, not on the gun; recoil is fAccuracyChange plus
-fWeaponJump. It is mapped but not implemented, because patching the game's code
-packages deserves its own round of testing rather than being slipped in beside
-a set of ini edits.
 
 Unlocking the cut game modes. R6DefendGame, R6DefendCoopGame, R6ReconGame and
 R6ReconCoopGame are fully compiled in R6Game.u and no shipped .mod lists their
