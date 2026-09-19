@@ -113,6 +113,7 @@ def main():
         run_split_shadows(args)
         run_host_filesystem(args)
         run_host_root(args)
+        run_op_contract(args)
         run_ai_cover(args)
         run_team_kits(args)
         run_gear_icons(args)
@@ -543,7 +544,13 @@ def run_missions(iso, args):
         raw = arc.read_entry(ent)
         before = sorted(v for _a, _p, v in r6zones.sites(lin.decompress(raw)))
         fn = dataedit.OPS["zone_counts"]
-        new, _touched = lin.substitute(raw, lambda pl: fn(pl, {"factor": 2.0}))
+        # `[0]`, because an operation returns (bytes, count) and `substitute`
+        # wants only the bytes. This line used to pass the pair straight
+        # through, which worked solely because zone_counts was returning bare
+        # bytes -- the test was shaped around the defect and so could never
+        # report it.
+        new, _touched = lin.substitute(raw,
+                                       lambda pl: fn(pl, {"factor": 2.0})[0])
         after = sorted(v for _a, _p, v in r6zones.sites(lin.decompress(new)))
         check("the counts double", after == [v * 2 for v in before],
               "%s -> %s" % (before[:4], after[:4]))
@@ -3450,6 +3457,86 @@ def run_host_filesystem(args):
 #: filled from the disc when one is given, so the contract check below has
 #: real bytes to run an operation against rather than a synthetic buffer.
 _COVER_BYTES = []
+
+
+def run_op_contract(args):
+    """Every data operation must hand back (bytes, count).
+
+    This exists because the same defect shipped twice. `dataedit` does
+    `new, n = op(plain, params)`, so an operation that returns bare bytes
+    makes Python unpack the file one character at a time -- and the failure
+    lands on the user's disc mid-apply, not here. `zone_counts` did it by
+    taking `[0]` off a correct pair; `ai_cover` did it by never building one.
+    Neither was caught, because the tests around them called the underlying
+    module directly and the module was fine.
+
+    So this reaches every operation the profile can actually emit, through
+    the real dispatch table, against a real file its own selector matched.
+    """
+    if not args.rs3data:
+        return
+    from tcps2 import dataedit, lin, vokes
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+    from tcps2.model import BOOL
+
+    print(chr(10) + "[every data operation returns (bytes, count)]")
+    profile = BY_ID["r6_3_slus20883"]
+
+    # One non-default value per setting is enough to reach its operation.
+    reachable = {}
+    for s in profile.settings:
+        if s.choices:
+            tries = [c.value for c in s.choices]
+        elif s.kind == BOOL:
+            tries = [True]
+        elif s.maximum is not None:
+            tries = [s.maximum, s.minimum]
+        else:
+            tries = []
+        for v in tries:
+            if v == s.default:
+                continue
+            try:
+                edits = profile.build_data(profile.effective({s.key: v}))
+            except Exception:                                # noqa: BLE001
+                continue
+            for e in edits:
+                reachable.setdefault(e.op, e)
+
+    check("the sweep reaches a useful number of operations",
+          len(reachable) >= 5, "%d" % len(reachable))
+
+    with Iso(args.rs3data) as iso:
+        where = {}
+        for arc in vokes.open_archives(iso):
+            for key in arc.files:
+                where.setdefault(key, arc)
+        for op, edit in sorted(reachable.items()):
+            hit = next((k for k in sorted(where)
+                        if re.search(edit.select, k, re.I)), None)
+            if hit is None:
+                check("%s: a file its selector matches" % op, False,
+                      edit.select)
+                continue
+            arc = where[hit]
+            raw = arc.read_entry(arc.files[hit])
+            plain = lin.decompress(raw) if lin.is_lin(raw) else raw
+            fn = dataedit.OPS[op]
+            try:
+                if op in dataedit._WANTS_CONTAINER:
+                    got = fn(plain, edit.params, raw)
+                else:
+                    got = fn(plain, edit.params)
+            except Exception as exc:                         # noqa: BLE001
+                check("%s runs on %s" % (op, hit), False,
+                      "%s: %s" % (type(exc).__name__, exc))
+                continue
+            check("%s returns (bytes, count)" % op,
+                  isinstance(got, tuple) and len(got) == 2
+                  and isinstance(got[0], (bytes, bytearray))
+                  and isinstance(got[1], int),
+                  "%r from %s" % (type(got), hit))
 
 
 def run_ai_cover(args):

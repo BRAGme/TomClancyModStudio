@@ -187,7 +187,11 @@ _WANTS_CONTAINER = {"enemy_loadout"}
 
 def _op_zone_counts(plain, params):
     from . import r6zones
-    return r6zones.scale(plain, float(params.get("factor", 1.0)))[0]
+    # The whole pair. `scale` already returns (bytes, changed) -- taking [0]
+    # dropped the count and handed back bare bytes, which the caller then
+    # tried to unpack one character at a time. It failed on the first level
+    # package it touched, killed the apply, and reported nothing.
+    return r6zones.scale(plain, float(params.get("factor", 1.0)))
 
 
 def _op_team_gadget(plain, params):
