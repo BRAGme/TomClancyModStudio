@@ -65,6 +65,7 @@ from ..model import CHOICE, Choice, Setting, XmlAttr
 WORLDS = "data/levels/*/xml/world.xml"
 GROUPS = "data/lib/managers/xml/group_manager.xml"
 GLOBAL = "data/sb_templates/global/sb_global.xml"
+SETTINGS_FILE = "data/sb_templates/sb_settings.xml"
 ENEMY_UNITS = "data/units/beings/u_mex*.xml"
 
 
@@ -142,6 +143,21 @@ def settings(game_id="graw"):
                 Choice("x2", "Twice as tough", ""),
                 Choice("x0.5", "Half as tough", ""),
                 Choice("one_shot", "One shot", "Everything drops to 1."),
+            ],
+            confidence="experimental", touches="data"),
+        Setting(
+            "difficulty", "Difficulty the campaign starts on", CHOICE,
+            "normal", group="Enemies",
+            help="Both games ship three tiers and default to the middle one. "
+                 "The tier TABLES are compiled into the scripts and are not "
+                 "reachable from here, but which tier is the default is plain "
+                 "data.",
+            caution="On the easy tier the game also heals you to full at each "
+                    "checkpoint, which the other two tiers do not do.",
+            choices=[
+                Choice("easy", "Easy", ""),
+                Choice("normal", "Normal", "As shipped."),
+                Choice("hard", "Hard", ""),
             ],
             confidence="experimental", touches="data"),
         Setting(
@@ -234,6 +250,12 @@ def edits(values, squad_size, health_values, health_attrs,
             out.append(XmlAttr(ENEMY_UNITS, path="var[name=%s]" % attr,
                                attr="value", remap=dict(table),
                                note="enemy toughness"))
+
+    # -- difficulty tier --------------------------------------------------
+    if v["difficulty"] != "normal":
+        out.append(XmlAttr(SETTINGS_FILE, path="var[name=difficulty]",
+                           attr="default", value=v["difficulty"],
+                           stock="normal", note="difficulty tier"))
 
     # -- senses ----------------------------------------------------------
     senses = {"keen": 1.5, "dull": 0.66, "blind": 0.33}.get(v["enemy_senses"])

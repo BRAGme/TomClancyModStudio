@@ -24,7 +24,8 @@ from them.
 
 ## The shape of each game's catalogue
 
-**Raven Shield** — Difficulty (terrorist count, difficulty level, AI backup,
+**Raven Shield** — Game modes (the four cut modes, which modes each map
+allows, a shipped class-name typo), Difficulty (terrorist count, difficulty level, AI backup,
 friendly fire), AI templates (competence across eight skill stats, the six-way
 personality mix, helmets), Stealth (footstep audibility per posture, gunfire
 alert radius, quiet reloads), Interface (crosshair, radar, the seven HUD
@@ -76,6 +77,43 @@ do nothing at all.
 respawning, round gap, the unused co-op leash), Weapons (damage by range,
 accuracy, movement and turning spread, suppressor penalty), Feel (aim assist,
 field of view, camera shake, weapon bob, squad spacing).
+
+## Options shipped visibly DISABLED, with the reason on the card
+
+Two Advanced Warfighter options were found to do nothing and are shipped off
+rather than quietly inert:
+
+* **Global enemy accuracy** (both games). `apply_difficulty_settings` assigns
+  `overall_enemy_precision` a literal on every difficulty tier including
+  Normal, and runs every session — at profile load in the first game, at
+  network init in the second. Whatever the file says is overwritten before it
+  is read. Both games keep the variable in that same compiled script and
+  nowhere else, which is how it was caught.
+* **How far enemies see and hear** (Advanced Warfighter 2 only). The sequel's
+  compiled scripts contain not one reference to any `ad_` key; the first
+  game's `aidetection.dxe` does. The sequel uses a different family (`det_*`,
+  108 references). The `ad_` keys are still in its data, which is exactly why
+  this looked like it worked.
+
+## Corrections to options that shipped wrong
+
+* **Advanced Warfighter "Enemy marksmanship" ran backwards.** `skill_shooting`
+  is a SPREAD, so a lower number is a better shot. The game's own ladder:
+  GRAW 1 gives the boss `mex_carlos` 0.30, special forces 0.85, regular
+  infantry 1.00 and guerillas 1.20; GRAW 2 gives the eight special-forces
+  leaders 2.0 and all 124 other soldiers 2.5. "Elite" had been doubling the
+  number. A test now rebuilds that ladder from the compiled data and asserts
+  the option scales the same way the game's own tiering does.
+* **Ghost Recon's "also apply to multiplayer and co-op enemies" hit the wrong
+  side**, and was on by default. It pointed at `Actor\MP Actor Files\`, which
+  holds the PLAYER's four multiplayer classes. The real script-spawned enemies
+  are `opposing_force_*` in the Actor root and were already covered. Removed.
+* **Sum of All Fears' enemy options reached 49 friendlies** — eleven support
+  teams and a hostage — because "enemy" was scoped to a folder. An enemy is
+  now an actor with no `<KitPath>`, which is a content test.
+* **Lockdown's "enemies deliberately miss you" was half-written.** It set
+  `ForcedMiss` but left `AdjustForcedMissSingleShot/Burst/FullAuto` at
+  25/20/10; the game's own never-miss configuration sets all four.
 
 ## Where an option deliberately does less than its name suggests
 
