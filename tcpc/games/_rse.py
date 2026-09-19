@@ -47,6 +47,24 @@ MP_ACTORS = "Actor/opposing_force_*.atr"
 GUNS = "Equip/*.gun"
 COMBAT_MODEL = "Equip/CmbtModl.xml"
 
+#: How hard a weapon hits. The engine builds kill energy from five fields on
+#: the `.gun`, all present on every one of Ghost Recon's 32 and Sum of All
+#: Fears' 35:
+#:
+#:     v(d)      = V0 + V1*d + V2*d*d
+#:     energy(d) = K1*v(d) + K2*v(d)*v(d)
+#:
+#: and the hit-location factor in `CmbtModl.xml` is then a DIVISOR of that:
+#: `killChance = 1 - (factor / energy)`. So the gun is the numerator and the
+#: combat model the denominator, which is why this tool has options on both.
+#:
+#: Only the two K's are scaled. Energy is LINEAR in them -- scaling both by
+#: the same factor scales energy by exactly that factor and leaves every
+#: ballistic curve's shape untouched -- whereas it is quadratic in the
+#: velocity trio, and several weapons carry negative V1/V2 that make their
+#: curve invert past MaxRange. Retail K1 runs -0.6 to 10 and K2 0.002 to 10.
+KILL_COEFFS = ("KillCoefficient1", "KillCoefficient2")
+
 #: Enemy behaviour is scripted per TEAM in the mission plans, not on the
 #: actors. Measured across every mission in both games: all 208 Ghost Recon
 #: and 65 Sum of All Fears alertness steps -- and every ROE, speed and grenade
@@ -156,6 +174,26 @@ def shared_settings(game_id="ghost_recon"):
             ],
             confidence="experimental", touches="mod"),
     ]) + [
+        Setting(
+            "weapon_damage", "How hard weapons hit", CHOICE, "stock",
+            group="Weapons",
+            help="The engine works out whether a shot kills from the "
+                 "weapon's own kill energy against a factor for the body "
+                 "part hit. This scales the energy every weapon delivers. "
+                 "At fifty metres a stock 9mm reaches about 480 and an M16 "
+                 "about 1989, so the spread between a pistol and a rifle is "
+                 "already four to one.",
+            caution="Scaled so that every weapon's ballistic curve keeps its "
+                    "shape -- only the two kill coefficients move, never the "
+                    "velocity ones, which are quadratic and carry negative "
+                    "signs on some weapons.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x1.5", "Harder", ""),
+                Choice("x2", "Lethal", "Doubled."),
+                Choice("x0.6", "Softer", ""),
+            ],
+            confidence="experimental", touches="mod"),
         # -- Lethality ---------------------------------------------------
         Setting(
             "lethality", "How lethal a hit is", CHOICE, "stock",
@@ -294,6 +332,11 @@ def shared_edits(values, game_id):
             out.append(XmlAttr(MISSIONS, path="Speed", attr="Rate",
                                scale=pace, minimum=0.1, note="enemy speed"))
 
+    punch = {"x1.5": 1.5, "x2": 2.0, "x0.6": 0.6}.get(v["weapon_damage"])
+    if punch:
+        for tag in KILL_COEFFS:
+            out.append(XmlText(GUNS, path=tag, scale=punch, note="damage: " + tag))
+
     # -- lethality --------------------------------------------------------
     lethal = {"lethal": 0.5, "brutal": 0.25, "spongy": 2.0}.get(v["lethality"])
     if lethal:
@@ -358,6 +401,7 @@ STANCES = ("Stand", "Crouch", "Prone")
 
 NPC_ACCURACY = {"tight": 0.66, "loose": 1.5, "wild": 2.0}
 NPC_RECOIL = {"none": 0.0, "half": 0.5, "double": 2.0}
+NPC_DAMAGE = {"x1.5": 1.5, "x2": 2.0, "x0.6": 0.6}
 
 
 def npc_name(name):

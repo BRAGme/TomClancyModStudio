@@ -77,8 +77,14 @@ PRESETS = {
         }),
         ("Deadly on both sides", {
             "lethality": "brutal",
+            "weapon_damage": "x1.5",
             "enemy_skill": "sharp",
             "enemy_armour": "none",
+        }),
+        ("Armour that actually stops bullets", {
+            "armour_works": True,
+            "enemy_armour": "up",
+            "weapon_damage": "x1.5",
         }),
         ("Veteran opposition", {
             "enemy_skill": "sharp",
@@ -95,6 +101,7 @@ PRESETS = {
         ("Outgunned — they shoot straighter than you", {
             "npc_weapons": True,
             "npc_accuracy": "tight",
+            "npc_damage": "x1.5",
             "npc_mags": 4,
             "enemy_skill": "sharp",
             "weapon_accuracy": "loose",

@@ -60,8 +60,8 @@ from the folder picks those up.
 import os
 import re
 
-from ._rse import (ITEM_RX, NPC_ACCURACY, NPC_RECOIL, NPC_SUFFIX, PACES,
-                   STANCES, npc_name)
+from ._rse import (ITEM_RX, KILL_COEFFS, NPC_ACCURACY, NPC_DAMAGE,
+                   NPC_RECOIL, NPC_SUFFIX, PACES, STANCES, npc_name)
 from ..model import BOOL, CHOICE, Choice, FileCopy, INT, Setting, XmlText
 
 KITS = "Equip/*.kit"
@@ -115,6 +115,19 @@ def settings():
                 Choice("none", "None", ""),
                 Choice("half", "Half", ""),
                 Choice("double", "Double", ""),
+            ],
+            confidence="experimental", touches="mod"),
+        Setting(
+            "npc_damage", "Enemy weapon damage", CHOICE, "stock",
+            group="Enemies", requires={"npc_weapons": True},
+            help="How hard the enemy's copies hit. The engine builds kill "
+                 "energy from the weapon's own coefficients, so this is the "
+                 "enemy half of 'How hard weapons hit' on the Weapons page.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x1.5", "Harder", ""),
+                Choice("x2", "Lethal", "Doubled."),
+                Choice("x0.6", "Softer", ""),
             ],
             confidence="experimental", touches="mod"),
         Setting(
@@ -189,6 +202,11 @@ def edits(values, base_mod_dir):
                         minimum=0, absent="skip",
                         note="enemy accuracy: %s %s" % (pace.lower(),
                                                         stance.lower())))
+        punch = NPC_DAMAGE.get(v["npc_damage"])
+        if punch:
+            for tag in KILL_COEFFS:
+                out.append(XmlText(rel, path=tag, scale=punch, absent="skip",
+                                   note="enemy damage: " + tag))
         kick = NPC_RECOIL.get(v["npc_recoil"])
         if kick is not None:
             out.append(XmlText(rel, path="Recoil", scale=kick, minimum=0,
@@ -201,3 +219,83 @@ def edits(values, base_mod_dir):
                                offset=v["npc_mags"], minimum=1, maximum=99,
                                note="enemy magazines"))
     return out
+
+
+# ---------------------------------------------------------------------------
+# body armour, which does nothing in the base campaign
+# ---------------------------------------------------------------------------
+#
+# `Equip\CmbtModl.xml` holds one factor per body part, used as a DIVISOR of
+# the shot's kill energy. Four of its entries are the armoured-chest factors,
+# one per armour level, and **base Ghost Recon's copy does not have them**:
+# its file carries 8 elements where both expansions carry 12, identical but
+# for `BallisticArmoredChestFactor0..3` at 0 / 150 / 350 / 750.
+#
+# The loader zeroes every factor before reading the file, so an absent factor
+# is a factor of zero -- and `killChance = 1 - (factor / energy)` with a zero
+# factor is a certain kill. Every armour level therefore behaves exactly like
+# no armour at all, which makes this profile's own "enemy body armour" option
+# a measurable no-op on the base campaign. It works in the expansions, which
+# ship the numbers.
+#
+# The fix is to ship them. The values are not invented: they are copied from
+# the expansions' own files, authored by the same developer at the same
+# `VersionNumber`. The tool generates the whole file rather than editing it,
+# because a span editor cannot insert an element -- and the one thing that
+# must not happen is a factor going MISSING, since the loader would read that
+# as zero and make the body part instantly fatal.
+
+ARMOUR_FACTORS = (("BallisticArmoredChestFactor0", "0.000000"),
+                  ("BallisticArmoredChestFactor1", "150.000000"),
+                  ("BallisticArmoredChestFactor2", "350.000000"),
+                  ("BallisticArmoredChestFactor3", "750.000000"))
+
+#: the element the four are written after, matching the expansions' order
+ARMOUR_AFTER = "BallisticChestFactor"
+
+COMBAT_MODEL = "Equip/CmbtModl.xml"
+
+
+def armour_setting():
+    return Setting(
+        "armour_works", "Make body armour work", BOOL, False, group="Enemies",
+        help="Ghost Recon's base campaign ships a combat model with no "
+             "armoured-chest factors in it -- 8 entries where both expansions "
+             "have 12. The loader treats a missing factor as zero, and a zero "
+             "factor means a certain kill, so every armour level behaves like "
+             "no armour and the body-armour option above changes nothing on "
+             "the base campaign. This adds the four numbers, copied verbatim "
+             "from the expansions' own files.",
+        caution="It makes armoured enemies harder to kill, which is the "
+                "point, but it is a change to how the base campaign has "
+                "always played. The expansions are unaffected -- they already "
+                "have these values.",
+        confidence="experimental", touches="mod")
+
+
+def armour_edits(values, base_mod_dir):
+    """Rewrite `CmbtModl.xml` with the armour factors the base game omits."""
+    if not values.get("armour_works"):
+        return []
+    path = os.path.join(base_mod_dir, COMBAT_MODEL.replace("/", os.sep))
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return []
+    text = raw.decode("latin-1")
+    if ARMOUR_FACTORS[0][0] in text:
+        return []                       # already there; nothing to do
+    lines = text.splitlines(True)
+    out = []
+    for line in lines:
+        out.append(line)
+        if "<%s>" % ARMOUR_AFTER in line:
+            # copy the anchor's own indentation and line ending, so the file
+            # stays in the shape the game shipped it in
+            lead = line[:len(line) - len(line.lstrip())]
+            end = line[len(line.rstrip("\r\n")):] or "\r\n"
+            for name, value in ARMOUR_FACTORS:
+                out.append("%s<%s>%s</%s>%s" % (lead, name, value, name, end))
+    return [FileCopy(COMBAT_MODEL, data="".join(out).encode("latin-1"),
+                     note="armoured-chest factors the base game omits")]

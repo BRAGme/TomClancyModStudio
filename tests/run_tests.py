@@ -1796,6 +1796,121 @@ def test_rs3_ammo_character(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_rse_damage(dets):
+    r"""Weapon damage, and the armour factors base Ghost Recon leaves out.
+
+    Damage is built from the weapon's own kill energy, `K1*v + K2*v*v`, and
+    the hit-location factor divides into it. Energy is LINEAR in the two K's,
+    so scaling both by one factor scales energy by exactly that and leaves
+    every ballistic curve's shape alone -- which is why the velocity trio is
+    not touched. The test asserts that rather than describing it.
+
+    The armour half is a shipped omission: base Ghost Recon's combat model
+    has 8 entries where both expansions have 12, and the missing four are the
+    armoured-chest factors. A missing factor reads as zero and a zero factor
+    is a certain kill, so armour does nothing on the base campaign.
+    """
+    import re
+    print("\n[Red Storm: weapon damage and the missing armour factors]")
+
+    def elements(raw):
+        return dict(re.findall(r"<(\w+)>([^<]*)</\1>", raw.decode("latin-1")))
+
+    for det in dets:
+        profile = det.profile
+        if profile.id not in ("ghost_recon", "soaf"):
+            continue
+        stock_mod = os.path.join(det.path,
+                                 profile.layout.base_mod.replace("/", os.sep))
+        equip = os.path.join(stock_mod, "Equip")
+        guns = [f for f in os.listdir(equip) if f.lower().endswith(".gun")]
+        both = 0
+        for g in guns:
+            with open(os.path.join(equip, g), encoding="latin-1",
+                      errors="replace") as fh:
+                text = fh.read()
+            if all(("<%s>" % k) in text for k in _rse_kill_coeffs()):
+                both += 1
+        check("%s: all %d weapons carry both kill coefficients"
+              % (profile.short, both), both == len(guns))
+
+        tmp = tempfile.mkdtemp(prefix="tcpc-dmg-")
+        try:
+            root = os.path.join(tmp, "g")
+            for base, _d, names in os.walk(stock_mod):
+                for n in names:
+                    if not n.lower().endswith((".kit", ".gun", ".atr", ".xml",
+                                               ".mis", ".gtf")):
+                        continue
+                    src = os.path.join(base, n)
+                    dst = os.path.join(root, os.path.relpath(src, det.path))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+            exe = os.path.join(root, profile.layout.exe.replace("/", os.sep))
+            os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+            with open(exe, "wb") as fh:
+                fh.write(b"stub")
+
+            values = dict(profile.defaults())
+            values["weapon_damage"] = "x2"
+            result = engine.apply(root, profile, profile.effective(values))
+            check("%s: the damage option applies" % profile.short, result.ok,
+                  "; ".join(result.warnings[:2]))
+            mod = engine.mod_dir(root, profile)
+            probe = sorted(guns)[0]
+
+            def read(path, tag):
+                with open(path, encoding="latin-1", errors="replace") as fh:
+                    m = re.search(r"<%s>\s*([-\d.eE]+)\s*</%s>" % (tag, tag),
+                                  fh.read())
+                return float(m.group(1)) if m else None
+
+            a = os.path.join(equip, probe)
+            b = os.path.join(mod, "Equip", probe)
+            doubled = all(
+                abs(read(b, k) - 2 * read(a, k)) < 1e-6 for k in _rse_kill_coeffs())
+            untouched = all(read(b, v) == read(a, v) for v in
+                            ("VelocityCoefficient0", "VelocityCoefficient1",
+                             "VelocityCoefficient2"))
+            check("%s: both kill coefficients doubled on %s"
+                  % (profile.short, probe), doubled)
+            check("%s: and the velocity coefficients were left alone"
+                  % profile.short, untouched)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    # -- the armour omission, Ghost Recon only ---------------------------
+    det = next((d for d in dets if d.profile.id == "ghost_recon"), None)
+    if det is None:
+        return
+    from tcpc.games import _gr_npc
+    base_mod = os.path.join(det.path,
+                            det.profile.layout.base_mod.replace("/", os.sep))
+    with open(os.path.join(base_mod, "Equip", "CmbtModl.xml"), "rb") as fh:
+        stock = elements(fh.read())
+    check("Ghost Recon: the base combat model has %d entries and no armour "
+          "factors" % len(stock),
+          len(stock) == 8 and not any("Armored" in k for k in stock))
+
+    expansion = os.path.join(det.path, "Mods", "Mp1", "Equip", "CmbtModl.xml")
+    if os.path.isfile(expansion):
+        with open(expansion, "rb") as fh:
+            theirs = elements(fh.read())
+        made = _gr_npc.armour_edits({"armour_works": True}, base_mod)
+        check("Ghost Recon: an expansion ships 12 entries, so the numbers are "
+              "not invented", len(theirs) == 12)
+        check("Ghost Recon: the generated model matches the expansion's "
+              "values exactly",
+              made and elements(made[0].data) == theirs)
+    check("Ghost Recon: and it is not emitted unless asked",
+          not _gr_npc.armour_edits({"armour_works": False}, base_mod))
+
+
+def _rse_kill_coeffs():
+    from tcpc.games._rse import KILL_COEFFS
+    return KILL_COEFFS
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1845,6 +1960,7 @@ def main():
         test_soaf_npc_split(dets)
         test_lockdown_sides(dets)
         test_mission_ai(dets)
+        test_rse_damage(dets)
         test_graw_sides(dets)
         test_mod_guard(dets)
     else:

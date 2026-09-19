@@ -60,8 +60,8 @@ option really is moving both sides at once.
 import os
 import re
 
-from ._rse import (ITEM_RX, NPC_ACCURACY, NPC_RECOIL, NPC_SUFFIX, PACES,
-                   STANCES, npc_name)
+from ._rse import (ITEM_RX, KILL_COEFFS, NPC_ACCURACY, NPC_DAMAGE,
+                   NPC_RECOIL, NPC_SUFFIX, PACES, STANCES, npc_name)
 from ..model import BOOL, CHOICE, Choice, FileCopy, INT, Setting, XmlAttr, XmlText
 
 MERC = "Kits/mercenaries"
@@ -205,6 +205,19 @@ def settings():
             ],
             confidence="experimental", touches="mod"),
         Setting(
+            "npc_damage", "Enemy weapon damage", CHOICE, "stock",
+            group="Enemies", requires={"npc_weapons": True},
+            help="How hard the enemy's copies hit. The engine builds kill "
+                 "energy from the weapon's own coefficients, so this is the "
+                 "enemy half of 'How hard weapons hit' on the Weapons page.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x1.5", "Harder", ""),
+                Choice("x2", "Lethal", "Doubled."),
+                Choice("x0.6", "Softer", ""),
+            ],
+            confidence="experimental", touches="mod"),
+        Setting(
             "npc_mags", "Extra magazines for the enemy", INT, 0,
             group="Enemies", minimum=0, maximum=20, unit=" extra",
             requires={"npc_weapons": True},
@@ -264,6 +277,11 @@ def edits(values, base_mod_dir):
                         minimum=0, absent="skip",
                         note="enemy accuracy: %s %s" % (pace.lower(),
                                                         stance.lower())))
+        punch = NPC_DAMAGE.get(v["npc_damage"])
+        if punch:
+            for tag in KILL_COEFFS:
+                out.append(XmlText(rel, path=tag, scale=punch, absent="skip",
+                                   note="enemy damage: " + tag))
         kick = NPC_RECOIL.get(v["npc_recoil"])
         if kick is not None:
             out.append(XmlText(rel, path="Recoil", scale=kick, minimum=0,

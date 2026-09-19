@@ -34,7 +34,8 @@ LAYOUT = Layout(
     data_dir="Data",
 )
 
-SETTINGS = _rse.shared_settings("ghost_recon") + _gr_npc.settings()
+SETTINGS = (_rse.shared_settings("ghost_recon") + _gr_npc.settings()
+            + [_gr_npc.armour_setting()])
 
 
 def build_edits(values, root=None):
@@ -48,6 +49,10 @@ def build_edits(values, root=None):
             if edit.select == _gr_npc.GUNS and not edit.scope:
                 edit.scope = "not:*%s.gun" % _gr_npc.NPC_SUFFIX
         out += _gr_npc.edits(
+            values, os.path.join(str(root),
+                                 LAYOUT.base_mod.replace("/", os.sep)))
+    if root:
+        out += _gr_npc.armour_edits(
             values, os.path.join(str(root),
                                  LAYOUT.base_mod.replace("/", os.sep)))
     return out
