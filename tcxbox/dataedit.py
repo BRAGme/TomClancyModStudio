@@ -34,6 +34,10 @@ from . import rseguns, transforms
 
 MANIFEST = "data-edits.json"
 
+#: A file at least this big is named in the log on its own, because packing it
+#: is where the seconds go. A .LIN runs to megabytes; a config file is a few KB.
+_CHATTY_BYTES = 256 * 1024
+
 
 class DataEditError(Exception):
     pass
@@ -352,14 +356,22 @@ def apply_data(root, edits, store, progress=None):
                 counts[edit.op] = counts.get(edit.op, 0) + n
             pending[key] = new
 
+    # Say what is in flight BEFORE starting on it. Packing happens inside
+    # `root.write`, and on a big .LIN that takes long enough that a log which
+    # only speaks afterwards is indistinguishable from a hang -- which is
+    # exactly how it was read on the PS2 build.
     written = 0
-    for key, plain in sorted(pending.items()):
+    queued = sorted(pending.items())
+    if queued:
+        say("  %d file%s to check and rebuild"
+            % (len(queued), "" if len(queued) == 1 else "s"))
+    for n, (key, plain) in enumerate(queued, 1):
         if plain == root.read(key):
             continue
+        if len(plain) >= _CHATTY_BYTES or n % 25 == 0 or n == len(queued):
+            say("  packing %d/%d  %s" % (n, len(queued), key))
         root.write(key, plain)
         written += 1
-        if written % 100 == 0:
-            say("  %d of %d files rewritten" % (written, len(pending)))
 
     # Put back anything we touched on a previous run that no longer matches an
     # edit. Without this, turning an option off would leave its files changed.

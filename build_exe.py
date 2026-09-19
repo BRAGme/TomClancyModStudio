@@ -31,7 +31,7 @@ NAME = "XboxModStudio"
 
 HIDDEN = [
     "cli", "gui", "gui.app", "gui.theme", "gui.widgets", "gui.controls",
-    "gui.presets", "gui.skins", "gui.presence", "gui.discorddialog",
+    "gui.presets", "gui.dialog", "gui.skins", "gui.presence", "gui.discorddialog",
     "tcxbox", "tcxbox.model", "tcxbox.engine", "tcxbox.detect",
     "tcxbox.gamedir", "tcxbox.globfile", "tcxbox.umd", "tcxbox.xbe",
     "tcxbox.xiso",

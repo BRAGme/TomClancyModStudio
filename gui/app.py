@@ -31,7 +31,7 @@ import sys
 import threading
 import tkinter as tk
 import traceback
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -40,7 +40,7 @@ from tcxbox.detect import identify, look, preview_detection  # noqa: E402
 from tcxbox.games import PROFILES  # noqa: E402
 from tcxbox.model import BOOL, INT  # noqa: E402
 
-from . import discorddialog, presence, skins, theme  # noqa: E402
+from . import dialog, discorddialog, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
 from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
                       SettingCard, nav_style)  # noqa: E402
@@ -779,7 +779,7 @@ class App(tk.Tk):
         if self.busy:
             return False
         if not (self.detection and self.detection.ok):
-            messagebox.showinfo(APP_NAME,
+            dialog.info(self, APP_NAME,
                                 "Load a supported game first.")
             return False
         return True
@@ -806,7 +806,7 @@ class App(tk.Tk):
         try:
             pl = engine.plan(path, profile, vals)
         except engine.EngineError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            dialog.error(self, APP_NAME, str(exc))
             self._say(str(exc), "bad")
             return
 
@@ -825,7 +825,7 @@ class App(tk.Tk):
         if self.detection.kind == "iso":
             lines.insert(-2, "This writes into the disc image itself. Every "
                              "file stays where it is; nothing is rebuilt.")
-        if not messagebox.askokcancel(APP_NAME, "\n".join(lines)):
+        if not dialog.ask(self, APP_NAME, "\n".join(lines)):
             return
 
         self._say("Patching…")
@@ -834,7 +834,7 @@ class App(tk.Tk):
             self.busy = False
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
             else:
                 ok = not result["broken"]
                 self._say("Rewrote %d file(s); %d read back cleanly."
@@ -848,7 +848,7 @@ class App(tk.Tk):
                     self._say("   %s: %d value(s) changed" % (op, n))
                 self._say("Backup: %s" % result["backup"])
                 if not ok:
-                    messagebox.showerror(APP_NAME,
+                    dialog.error(self, APP_NAME,
                                          "%d file(s) could not be read back "
                                          "afterwards." % result["broken"])
             self.detection = look(path)[0]
@@ -861,7 +861,7 @@ class App(tk.Tk):
     def _revert(self):
         if not self._guard():
             return
-        if not messagebox.askokcancel(
+        if not dialog.ask(self, 
                 APP_NAME, "Put %s back exactly as it shipped?\n\nClose the "
                           "xemu first."
                           % os.path.basename(self.detection.path)):
@@ -872,7 +872,7 @@ class App(tk.Tk):
             self.busy = False
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
             else:
                 self._say("Restored %d file(s) to the bytes they shipped "
                           "with." % result["files"], "good")
