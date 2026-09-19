@@ -28,6 +28,7 @@ Two facts shape nearly every option here:
   sliders rather than one number with a sign.
 """
 
+from . import _lockdown_extra
 from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT, Layout,
                      Setting, XmlAttr)
 
@@ -267,7 +268,7 @@ SETTINGS = [
         help="Another of the shipped developer readouts. Useful when lining "
              "up a camera or a texture replacement.",
         confidence="experimental", touches="config"),
-]
+] + _lockdown_extra.settings()
 
 
 def _factor(values, key, table):
@@ -306,11 +307,6 @@ def build_edits(values):
             value=v["ai_team_accuracy"], stock="29",
             note="enemy squad accuracy"))
 
-    if not v["enemy_forced_miss"]:
-        out.append(XmlAttr(
-            "data/mission/badguys.acm", path="Combat", attr="ForcedMiss",
-            value="1", stock="-100",
-            note="enemies no longer miss on purpose"))
 
     # -- Rainbow ---------------------------------------------------------
     if v["rainbow_hitpoints"] == "coop":
@@ -413,6 +409,7 @@ def build_edits(values):
             out.append(XmlAttr("data/options.xml", path="Preferences/debug",
                                attr=attr, value="true", stock="false",
                                note=attr))
+    out.extend(_lockdown_extra.edits(v, v["enemy_forced_miss"]))
     return out
 
 
