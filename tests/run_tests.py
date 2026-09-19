@@ -3994,10 +3994,24 @@ def run_ai_cover(args):
     check("stock writes nothing to the disc",
           not [e for e in profile.build_data(profile.effective({}))
                if e.op == "ai_cover"])
+    # Withdrawn 2026-09-19: it hangs the initial load. Asking for a set must
+    # now reach the disc with NOTHING, the same as every other withdrawal --
+    # a disabled option that still wrote would be the worst of both.
     e = [e for e in profile.build_data(
              profile.effective({"ai_cover": "heavy"})) if e.op == "ai_cover"]
-    check("choosing a set emits one edit against the script package",
-          len(e) == 1 and "COMMON" in e[0].select)
+    check("a withdrawn set reaches the disc with nothing", not e, str(e))
+    check("and the option says so rather than just going quiet",
+          profile.setting("ai_cover").enabled is False
+          and "hangs the initial load"
+          in profile.setting("ai_cover").disabled_reason)
+
+    # The module itself stays exercised. The cause is not found yet, so the
+    # code has to keep working for whoever picks it up -- a withdrawal that
+    # let the edit rot would have to be written twice.
+    _sets = sorted(rseaicover.SETS)
+    check("every set the module offers is still well formed",
+          _sets and all(len(rseaicover.SETS[k]) == len(rseaicover.STOCK)
+                        for k in _sets), str(_sets))
 
     if not args.rs3data:
         return
