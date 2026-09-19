@@ -329,6 +329,21 @@ class Ini:
         self.lines.insert(at, line)
         self.ends.insert(at, self.newline)
 
+    def rename_section(self, old, new) -> str:
+        """Rewrite a section header, keeping everything under it in place.
+
+        Only needed for a shipped typo: Vegas names the Raging Bull's damage
+        type `R6DmgTypePistoRagingBull` where the class in `R6Game.uppc` is
+        `R6DmgTypePistolRagingBull`, so that whole section is read by nothing.
+        """
+        want = str(old).strip().lower()
+        for i, line in enumerate(self.lines):
+            m = SECTION_RX.match(line)
+            if m and m.group("name").strip().lower() == want:
+                self.lines[i] = line[:m.start("name")] + new                     + line[m.end("name"):]
+                return "changed"
+        return "absent"
+
     def remove(self, section, key) -> int:
         """Delete every assignment of `key`. Returns how many went."""
         hits = self._key_lines(section, key)

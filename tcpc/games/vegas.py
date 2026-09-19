@@ -30,8 +30,7 @@ ammunition and rules, not competence -- so this profile does not pretend to
 offer a difficulty slider it cannot deliver.
 """
 
-from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT,
-                     IniEdit, Layout, Setting)
+from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT, IniEdit, IniLines, Layout, Setting)
 
 LAYOUT = Layout(
     signature=[
@@ -45,6 +44,20 @@ LAYOUT = Layout(
 )
 
 GAME = "KellerGame/Config/PC/KellerGame.ini"
+GADGETS = "KellerGame/Config/PC/KellerGadgetsConfig.ini"
+DAMAGE_TYPES = "KellerGame/Config/PC/KellerDamageTypesConfig.ini"
+
+#: Three gadgets ship complete -- icon, rules, the lot -- and unselectable.
+#: The other twelve in the same file are all `m_bSelectable=true`.
+LOCKED_GADGETS = ("R6Game.R6GadgetGasMask", "R6Game.R6GasMaskSF10",
+                  "R6Game.R6MedKit")
+
+#: A shipped typo. The damage-type section for the Raging Bull is spelled
+#: `PistoRagingBull`; the class in `R6Game.uppc` is `PistolRagingBull`, and
+#: the misspelling appears in no package at all -- so that whole section is
+#: read by nothing and the weapon has no damage-type configuration.
+BULL_TYPO = "R6Game.R6DmgTypePistoRagingBull"
+BULL_REAL = "R6Game.R6DmgTypePistolRagingBull"
 SERVER = "KellerGame/Config/PC/KellerServerOptions.ini"
 WEAPONS = "KellerGame/Config/PC/KellerWeaponsConfig.ini"
 DAMAGE = "KellerGame/Config/PC/KellerDamageTypesConfig.ini"
@@ -250,6 +263,40 @@ SETTINGS = [
         group="Rules", minimum=100, maximum=10000, unit=" units",
         help="The radius other players hear you speak within.",
         confidence="experimental", touches="config"),
+    Setting(
+        "unlock_gadgets", "Offer the three locked gadgets", BOOL, False,
+        group="Rules",
+        help="The gas mask, the SF10 gas mask and the medic kit ship complete "
+             "-- icon, rules, carry limits -- and marked unselectable, while "
+             "the other twelve gadgets in the same file are selectable. This "
+             "offers them in the loadout.",
+        caution="Shipped finished but switched off, which usually means they "
+                "were cut for a reason. Nothing here has been watched in a "
+                "running game.",
+        confidence="experimental", touches="config"),
+    Setting(
+        "gunfire_radius", "How far gunfire carries to the AI", CHOICE, "stock",
+        group="Rules",
+        help="The radius a shot alerts AI within. Thirty-four of the "
+             "thirty-five weapons ship at 5000 and one at 1500, so this is "
+             "effectively one number for the whole game and it is what "
+             "decides whether a firefight in one room pulls the next one.",
+        choices=[
+            Choice("stock", "Stock", "5000."),
+            Choice("x0.5", "Quieter", "Half."),
+            Choice("x0.25", "Much quieter", "A quarter -- rooms fight alone."),
+            Choice("x2", "Louder", ""),
+        ],
+        confidence="experimental", touches="config"),
+    Setting(
+        "fix_ragingbull", "Fix the Raging Bull's damage type", BOOL, False,
+        group="Rules",
+        help="Vegas spells that revolver's damage-type section "
+             "PistoRagingBull; the class it is meant to configure is "
+             "PistolRagingBull, and the misspelling appears in no game "
+             "package at all. The section has therefore been read by nothing "
+             "since release. This corrects the spelling.",
+        confidence="experimental", touches="config"),
 ]
 
 
@@ -364,6 +411,20 @@ def build_edits(values):
         out.append(IniEdit(GAME, section="R6Game.R6VoiceChatManagerInterface",
                            key="m_fVoiceRadius", value=v["voice_radius"],
                            stock="1500", note="voice radius"))
+    if v["unlock_gadgets"]:
+        for section in LOCKED_GADGETS:
+            out.append(IniEdit(GADGETS, section=section, key="m_bSelectable",
+                               value="true", stock="false",
+                               note="offer " + section.rsplit(".", 1)[-1]))
+    radius = {"x0.5": 0.5, "x0.25": 0.25, "x2": 2.0}.get(v["gunfire_radius"])
+    if radius:
+        out.append(IniEdit(WEAPONS, section="*", key="m_fFireSoundRadius",
+                           scale=radius, minimum=1, absent="skip",
+                           note="gunfire alert radius"))
+    if v["fix_ragingbull"]:
+        out.append(IniLines(DAMAGE_TYPES, section=BULL_TYPO,
+                            rename=BULL_REAL,
+                            note="Raging Bull damage-type section name"))
     return out
 
 

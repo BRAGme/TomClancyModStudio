@@ -208,9 +208,18 @@ def apply_ini(doc: "inifile.Ini", edits, rel, out: Result):
     for e in _expand_sections(doc, edits):
         current = (doc.get_field(e.section, e.key, e.field) if e.field
                    else doc.get(e.section, e.key))
-        value, err = _resolve_value(e, current)
         what = "[%s] %s%s" % (e.section or "-", e.key,
                               ("." + e.field) if e.field else "")
+        # A key that is simply not in this section, on an edit that says to
+        # skip those, is not a problem and must not be reported as one.
+        # `section="*"` expands across every section in the file -- Vegas has
+        # 35 weapon sections and an `[Internal]` one -- so without this an
+        # ordinary option warns once per section that does not carry the key,
+        # and real warnings get lost in the noise.
+        if current is None and e.absent == "skip":
+            out.changes.append(Change(rel, what, "", "", "absent"))
+            continue
+        value, err = _resolve_value(e, current)
         if err:
             out.warnings.append("%s: %s %s" % (rel, what, err))
             out.changes.append(Change(rel, what, str(current), "", "absent"))
@@ -233,7 +242,11 @@ def apply_ini(doc: "inifile.Ini", edits, rel, out: Result):
 def apply_ini_lines(doc: "inifile.Ini", edits, rel, out: Result):
     """Add, drop and swap elements of a repeated-key list."""
     for e in edits:
-        what = "[%s] %s" % (e.section or "-", e.key)
+        what = "[%s] %s" % (e.section or "-", e.key or "(section)")
+        if e.rename:
+            status = doc.rename_section(e.section, e.rename)
+            out.changes.append(Change(rel, what, e.section, e.rename, status))
+            continue
         before = doc.get_all(e.section, e.key)
         n = 0
         for old, new in e.swap.items():

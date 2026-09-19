@@ -259,6 +259,8 @@ class IniLines(Edit):
     drop: list = field(default_factory=list)
     #: {old: new}, whole values rewritten where they sit
     swap: dict = field(default_factory=dict)
+    #: rename the SECTION itself, for a shipped typo in a section header.
+    rename: str = ""
     #: {old: new} applied as a literal substring INSIDE each value, for a
     #: struct element where only one field is wrong and the rest differ from
     #: line to line -- so there is no whole value to match on.

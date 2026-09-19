@@ -169,6 +169,16 @@ PRESETS = {
 
     # -----------------------------------------------------------------
     "graw": [
+        ("Sharpshooter - your weapon steady, the AI's not", {
+            "weapon_side": "player",
+            "weapon_spread": "tight",
+            "weapon_recoil": "none",
+        }),
+        ("Outgunned - the AI shoots straighter than you", {
+            "weapon_side": "ai",
+            "weapon_spread": "tight",
+            "enemy_skill": "sharp",
+        }),
         ("Marksman - steady and precise", {
             "weapon_spread": "tight",
             "weapon_recoil": "x0.5",
@@ -209,6 +219,10 @@ PRESETS = {
 
     # -----------------------------------------------------------------
     "vegas": [
+        ("Room by room — gunfire does not carry", {
+            "gunfire_radius": "x0.25",
+            "difficulty": "GAMEDIFFICULTY_ELITE",
+        }),
         ("Hardcore — one life, no help", {
             "difficulty": "GAMEDIFFICULTY_ELITE",
             "hunt_respawn": False,
