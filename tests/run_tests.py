@@ -1493,6 +1493,101 @@ def test_lockdown_sides(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_mission_ai(dets):
+    r"""Enemy behaviour scripted in the missions, and the bug that hid it.
+
+    `apply_xml` used to decide whether an attribute was present by asking the
+    FIRST matching element. Ghost Recon's `m07_river.mis` has seventeen
+    `<Alertness>` steps of which three declare no `State`, and one of those
+    three is first -- so the edit was reported absent and fourteen elements
+    went unwritten, silently, in two of the twenty-nine missions. The check
+    below would have caught it: it counts across the whole campaign rather
+    than trusting one file.
+    """
+    import re
+    print("\n[Red Storm: enemy behaviour in the mission plans]")
+    for det in dets:
+        profile = det.profile
+        if profile.id not in ("ghost_recon", "soaf"):
+            continue
+        stock_mod = os.path.join(det.path,
+                                 profile.layout.base_mod.replace("/", os.sep))
+        missions = os.path.join(stock_mod, "Mission")
+        if not os.path.isdir(missions):
+            continue
+
+        def states(folder):
+            got, blank = {}, 0
+            for n in os.listdir(folder):
+                if not n.lower().endswith(".mis"):
+                    continue
+                with open(os.path.join(folder, n), encoding="latin-1",
+                          errors="replace") as fh:
+                    for tag in re.findall(r"<Alertness\b[^>]*>", fh.read()):
+                        m = re.search(r'State\s*=\s*"(\d+)"', tag)
+                        if m:
+                            got[m.group(1)] = got.get(m.group(1), 0) + 1
+                        else:
+                            blank += 1
+            return got, blank
+
+        before, blank = states(missions)
+        check("%s: the campaign declares %d alertness states (%d steps "
+              "declare none)" % (profile.short, sum(before.values()), blank),
+              sum(before.values()) > 20 and set(before) == {"1", "2"},
+              str(before))
+
+        tmp = tempfile.mkdtemp(prefix="tcpc-ai-")
+        try:
+            root = os.path.join(tmp, "g")
+            for base, _d, names in os.walk(stock_mod):
+                for n in names:
+                    if not n.lower().endswith((".kit", ".gun", ".atr", ".xml",
+                                               ".mis", ".gtf")):
+                        continue
+                    src = os.path.join(base, n)
+                    dst = os.path.join(root, os.path.relpath(src, det.path))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+            exe = os.path.join(root, profile.layout.exe.replace("/", os.sep))
+            os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+            with open(exe, "wb") as fh:
+                fh.write(b"stub")
+
+            values = dict(profile.defaults())
+            values["enemy_alertness"] = "alert"
+            if profile.setting("enemy_grenades"):
+                values.update(enemy_grenades=False, enemy_speed="x1.5")
+            result = engine.apply(root, profile, profile.effective(values))
+            check("%s: the behaviour options apply with no warnings"
+                  % profile.short, result.ok and not result.warnings,
+                  "; ".join(result.warnings[:2]))
+
+            after, after_blank = states(os.path.join(engine.mod_dir(root, profile),
+                                                     "Mission"))
+            check("%s: EVERY declared state became alert, in all missions "
+                  "(%s -> %s)" % (profile.short, before, after),
+                  after.get("1", 0) == 0
+                  and after.get("2") == sum(before.values()))
+            check("%s: the steps that declare no state were left alone"
+                  % profile.short, after_blank == blank)
+
+            if profile.setting("enemy_grenades"):
+                mod = engine.mod_dir(root, profile)
+                avail = set()
+                for n in os.listdir(os.path.join(mod, "Mission")):
+                    if not n.lower().endswith(".mis"):
+                        continue
+                    with open(os.path.join(mod, "Mission", n),
+                              encoding="latin-1", errors="replace") as fh:
+                        avail |= set(re.findall(
+                            r'<Grenades\b[^>]*Available\s*=\s*"(\d+)"', fh.read()))
+                check("%s: enemy grenades really switched off" % profile.short,
+                      avail == {"0"}, str(sorted(avail)))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1540,6 +1635,7 @@ def main():
         test_npc_split(dets)
         test_soaf_npc_split(dets)
         test_lockdown_sides(dets)
+        test_mission_ai(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

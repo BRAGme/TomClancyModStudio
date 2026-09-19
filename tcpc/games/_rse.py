@@ -47,6 +47,13 @@ MP_ACTORS = "Actor/opposing_force_*.atr"
 GUNS = "Equip/*.gun"
 COMBAT_MODEL = "Equip/CmbtModl.xml"
 
+#: Enemy behaviour is scripted per TEAM in the mission plans, not on the
+#: actors. Measured across every mission in both games: all 208 Ghost Recon
+#: and 65 Sum of All Fears alertness steps -- and every ROE, speed and grenade
+#: step with them -- sit under a team with no `Allied="1"` ancestor. Not one
+#: belongs to a friendly team, so these can be written globally.
+MISSIONS = "Mission/*.mis"
+
 #: Where each game keeps the kits the PLAYER draws from, which is not the same
 #: folder in the two of them and is not the same folder as the enemy's in
 #: either. Ghost Recon puts the player's under `Kits\<class>\` and the
@@ -64,7 +71,7 @@ SKILL_MIN, SKILL_MAX = 1, 7
 ARMOUR_MIN, ARMOUR_MAX = 0, 3
 
 
-def shared_settings():
+def shared_settings(game_id="ghost_recon"):
     """The options both games can offer, in the order they should appear."""
     return [
         # -- Enemies -----------------------------------------------------
@@ -110,6 +117,45 @@ def shared_settings():
             ],
             confidence="experimental", touches="mod"),
 
+        Setting(
+            "enemy_alertness", "How alert enemies start", CHOICE, "stock",
+            group="Enemies",
+            help="Every enemy team's plan carries an alertness state. State 2 "
+                 "is alert and state 1 is not -- settled from the missions "
+                 "themselves rather than guessed: across the campaign only 1 "
+                 "of the 63 plans holding state 1 has an alarm-sounding name, "
+                 "against 38 of the 98 holding state 2, including one called "
+                 "'Camp Warns Caves'. Every one of these plans belongs to an "
+                 "enemy team; not one belongs to a friendly one.",
+            choices=[
+                Choice("stock", "Stock", "As the missions were authored."),
+                Choice("alert", "Everyone alert",
+                       "No one is caught unaware. Stealth stops paying."),
+                Choice("unaware", "Everyone unaware",
+                       "Even the teams scripted to be expecting you."),
+            ],
+            confidence="experimental", touches="mod"),
+        # -- (Ghost Recon only) ------------------------------------
+    ] + ([] if game_id != "ghost_recon" else [
+        Setting(
+            "enemy_grenades", "Enemies throw grenades", BOOL, True,
+            group="Enemies",
+            help="Grenades are switched on per enemy team in the mission "
+                 "plans, and every one of the 80 that mention them switches "
+                 "them ON. This turns them off.",
+            confidence="experimental", touches="mod"),
+        Setting(
+            "enemy_speed", "How fast enemies move", CHOICE, "stock",
+            group="Enemies",
+            help="The movement rate on an enemy team's plan, stock 1.6 to 8 "
+                 "with most at 2. Only affects teams whose plan sets one.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x1.5", "Faster", ""),
+                Choice("x0.6", "Slower", ""),
+            ],
+            confidence="experimental", touches="mod"),
+    ]) + [
         # -- Lethality ---------------------------------------------------
         Setting(
             "lethality", "How lethal a hit is", CHOICE, "stock",
@@ -229,6 +275,24 @@ def shared_edits(values, game_id):
                 out.append(XmlText(glob, path="ArmorLevel", offset=1,
                                    minimum=ARMOUR_MIN, maximum=ARMOUR_MAX,
                                    note="enemy armour", scope=ENEMY_ONLY))
+
+    # -- enemy behaviour, scripted per team in the missions ---------------
+    alert = {"alert": {"1": "2"}, "unaware": {"2": "1"}}.get(v["enemy_alertness"])
+    if alert:
+        # A remap rather than a plain value, on purpose: 47 of the alertness
+        # steps declare no State at all, and those mean "whatever the team's
+        # default is". Writing a State onto them would be inventing behaviour
+        # that was never measured. Only declared states are flipped.
+        out.append(XmlAttr(MISSIONS, path="Alertness", attr="State",
+                           remap=alert, note="enemy alertness"))
+    if game_id == "ghost_recon":
+        if not v["enemy_grenades"]:
+            out.append(XmlAttr(MISSIONS, path="Grenades", attr="Available",
+                               value="0", stock="1", note="enemy grenades"))
+        pace = {"x1.5": 1.5, "x0.6": 0.6}.get(v["enemy_speed"])
+        if pace:
+            out.append(XmlAttr(MISSIONS, path="Speed", attr="Rate",
+                               scale=pace, minimum=0.1, note="enemy speed"))
 
     # -- lethality --------------------------------------------------------
     lethal = {"lethal": 0.5, "brutal": 0.25, "spongy": 2.0}.get(v["lethality"])

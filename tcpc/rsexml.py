@@ -195,11 +195,31 @@ class Doc:
     # -- reading -----------------------------------------------------------
 
     def get_attr(self, path, attr, default=None):
+        """The attribute's value on the FIRST matching element.
+
+        See `any_attr` for why the first is not always the right question.
+        """
         node = self.first(path)
         if node is None:
             return default
         hit = _attr_ci(node, attr)
         return hit[0] if hit else default
+
+    def any_attr(self, path, attr, default=None):
+        """The value on the first matching element that HAS the attribute.
+
+        Not the same question as `get_attr`, and the difference is not
+        academic. Ghost Recon's `m07_river.mis` holds seventeen `<Alertness>`
+        elements of which three declare no `State` at all -- and one of those
+        three comes first. Asking only the first element whether the attribute
+        exists said "no" and skipped an edit that had fourteen elements to
+        write.
+        """
+        for node in self.find(path):
+            hit = _attr_ci(node, attr)
+            if hit:
+                return hit[0]
+        return default
 
     def get_text(self, path, default=None):
         node = self.first(path)

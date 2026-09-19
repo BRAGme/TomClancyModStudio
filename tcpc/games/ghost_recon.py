@@ -34,7 +34,7 @@ LAYOUT = Layout(
     data_dir="Data",
 )
 
-SETTINGS = _rse.shared_settings() + _gr_npc.settings()
+SETTINGS = _rse.shared_settings("ghost_recon") + _gr_npc.settings()
 
 
 def build_edits(values, root=None):

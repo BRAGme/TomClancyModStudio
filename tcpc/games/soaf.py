@@ -70,7 +70,7 @@ EXTRA = [
         confidence="experimental", touches="mod"),
 ]
 
-SETTINGS = _rse.shared_settings() + _soaf_npc.settings() + EXTRA
+SETTINGS = _rse.shared_settings("soaf") + _soaf_npc.settings() + EXTRA
 
 #: The eleven difficulty tags do NOT all move the same way, which is why this
 #: is a table of explicit values rather than a multiplier:

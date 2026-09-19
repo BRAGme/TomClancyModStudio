@@ -260,7 +260,10 @@ def apply_ini_lines(doc: "inifile.Ini", edits, rel, out: Result):
 def apply_xml(doc: "rsexml.Doc", edits, rel, out: Result):
     for e in edits:
         is_attr = isinstance(e, XmlAttr)
-        current = (doc.get_attr(e.path, e.attr) if is_attr
+        # `any_attr`, not `get_attr`: an edit is only "absent" when NOT ONE
+        # matching element carries the attribute. Deciding that from the first
+        # match alone silently skipped edits with a dozen elements to write.
+        current = (doc.any_attr(e.path, e.attr) if is_attr
                    else doc.get_text(e.path))
         what = "%s%s" % (e.path, ("@" + e.attr) if is_attr else "")
         if current is None:
