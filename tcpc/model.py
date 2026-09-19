@@ -47,6 +47,7 @@ of the edit, and there are two:
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -376,6 +377,25 @@ class GameProfile:
 
     def defaults(self) -> dict:
         return {s.key: s.default for s in self.settings}
+
+    def edits_for(self, values, root=None) -> list:
+        """`build_edits`, told which installation it is building for.
+
+        Almost every profile's edits depend only on the settings, and those
+        keep the one-argument form. Ghost Recon's enemy-weapon split is the
+        exception: WHICH guns to copy is read out of the installation's own
+        kit files, because a list written down in the profile goes stale
+        against whatever mods are actually installed. A profile that needs
+        that declares a second parameter and gets the root.
+        """
+        fn = self.build_edits
+        if fn is None:
+            return []
+        try:
+            wants = len(inspect.signature(fn).parameters)
+        except (TypeError, ValueError):            # pragma: no cover
+            wants = 1
+        return fn(values, root) if wants >= 2 else fn(values)
 
     def groups(self) -> list:
         seen = []

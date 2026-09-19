@@ -123,9 +123,12 @@ rather than quietly inert:
 * **Vegas "Default difficulty"** sets which tier you start on. It does not
   change what a tier *means*, because that lives in cooked packages this tool
   does not edit.
-* **Ghost Recon "Weapon accuracy"** moves both sides, because both sides read
-  the same weapon files. Separating them needs the `_npc.gun` technique — see
-  `docs/FORMATS.md`.
+* **Ghost Recon "Weapon accuracy"** moves both sides by default, because both
+  sides read the same weapon files. Turning on **"Give the enemy its own
+  weapons"** separates them: the enemy's 27 kits are shadowed to point at
+  `<weapon>_npc.gun` copies, and this option then applies to the player's set
+  alone. One seam remains — `m1911 only.kit` is carried by both a few friendly
+  NPCs and by enemies, so those friendlies get the enemy's pistol.
 * **Lockdown "Wounds spoil your aim"** switches on six values that ship at
   zero. Nothing in the data proves the engine still reads them.
 * **Raven Shield "Friendly fire"** is multiplayer only. There is no

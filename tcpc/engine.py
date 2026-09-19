@@ -432,15 +432,25 @@ def plan(root, profile, edits) -> dict:
         base = source_root(root, profile)
         names = walk_rel(base) if base and os.path.isdir(base) else []
         content_root = base
+    # Paths this edit set is about to CREATE. They are not on disk yet, so
+    # they cannot be found by expanding a glob -- but edits aimed at them are
+    # exactly how a created file gets its content. Ghost Recon's enemy-weapon
+    # split copies `ak47.gun` to `ak47_npc.gun` and then retunes the copy;
+    # without this the copy is written out stock and the option looks applied
+    # while doing nothing.
+    coming = {e.select.replace("\\", "/") for e in edits
+              if isinstance(e, FileCopy) and not _is_glob(e.select)}
     out = {}
     for e in edits:
         hits = expand(names, e.select)
-        if not hits and isinstance(e, FileCopy) and not _is_glob(e.select):
+        if not hits and not _is_glob(e.select):
+            rel = e.select.replace("\\", "/")
             # A `FileCopy` naming one exact path that is not there yet is not a
             # miss -- it is the point. This is how an in-place profile ships a
             # file the game never had. A GLOB that matches nothing is still a
             # miss, because there is no single path to invent.
-            hits = [e.select.replace("\\", "/")]
+            if isinstance(e, FileCopy) or rel in coming:
+                hits = [rel]
         for rel in hits:
             if not in_scope(rel, e.scope, content_root):
                 continue
@@ -609,7 +619,7 @@ def apply(root, profile, values, dry_run=False, progress=None) -> Result:
     """Write `values` into the install. Idempotent by construction."""
     root = os.path.abspath(str(root))
     values = profile.effective(values)
-    edits = profile.build_edits(values) if profile.build_edits else []
+    edits = profile.edits_for(values, root)
     out = Result()
 
     if profile.combination_warnings:
@@ -632,7 +642,25 @@ def apply(root, profile, values, dry_run=False, progress=None) -> Result:
     return out
 
 
-def _edit_bytes(raw, rel, edits, out: Result):
+def copy_source(edit, base):
+    """Where a `FileCopy`'s `source` actually is, or None.
+
+    A profile cannot know the absolute path of an installation, so `source` is
+    relative to whatever the edits are being read FROM -- the stock mod folder
+    for a mod-delivery game, the install root otherwise. An absolute path is
+    still honoured for a file the tool ships itself.
+    """
+    if not edit.source:
+        return None
+    if os.path.isabs(edit.source):
+        return edit.source if os.path.isfile(edit.source) else None
+    if not base:
+        return None
+    path = os.path.join(base, edit.source.replace("/", os.sep))
+    return path if os.path.isfile(path) else None
+
+
+def _edit_bytes(raw, rel, edits, out: Result, base=None):
     """As `_edit_file`, but for content that came out of an archive.
 
     Written through a temporary file rather than by giving the parsers a bytes
@@ -644,7 +672,7 @@ def _edit_bytes(raw, rel, edits, out: Result):
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(raw)
-        return _edit_file(tmp, rel, edits, out)
+        return _edit_file(tmp, rel, edits, out, base)
     finally:
         try:
             os.remove(tmp)
@@ -652,7 +680,7 @@ def _edit_bytes(raw, rel, edits, out: Result):
             pass
 
 
-def _edit_file(src_bytes_path, rel, edits, out: Result):
+def _edit_file(src_bytes_path, rel, edits, out: Result, base=None):
     """Load, edit and return the new bytes for one file."""
     ini_edits = [e for e in edits if isinstance(e, IniEdit)]
     line_edits = [e for e in edits if isinstance(e, IniLines)]
@@ -662,9 +690,24 @@ def _edit_file(src_bytes_path, rel, edits, out: Result):
     if copies:
         last = copies[-1]
         if last.data is not None:
-            return last.data
-        with open(last.source, "rb") as fh:
-            return fh.read()
+            raw = last.data
+        else:
+            found = copy_source(last, base)
+            if found is None:
+                raise ApplyError("%s: nothing to copy from (%r)"
+                                 % (rel, last.source))
+            with open(found, "rb") as fh:
+                raw = fh.read()
+        rest = [e for e in edits if not isinstance(e, FileCopy)]
+        if not rest:
+            return raw
+        # A copy is a STARTING POINT as well as a whole file. Ghost Recon's
+        # enemy-weapon split needs `ak47_npc.gun` to be `ak47.gun` with
+        # different numbers in it, and expressing that as "copy, then edit"
+        # keeps the numbers in the profile where every other option's are.
+        out.changes.append(Change(rel, "copied from", last.source, rel,
+                                  "changed"))
+        return _edit_bytes(raw, rel, rest, out, base)
     if len([x for x in (ini_edits + line_edits, xml_edits, pkg_edits) if x]) > 1:
         raise ApplyError("%s has more than one kind of edit aimed at it" % rel)
     if pkg_edits:
@@ -726,13 +769,13 @@ def _apply_inplace(root, profile, grouped, out, dry_run, progress):
             progress(i, len(grouped), rel)
         abs_path = os.path.join(root, rel.replace("/", os.sep))
         fresh = not os.path.isfile(abs_path)
-        if fresh and not _supplies_whole_file(edits):
+        if fresh and not _supplies_whole_file(edits, root):
             out.warnings.append("%s is not in this installation." % rel)
             continue
         if not dry_run and not fresh:
             stash(root, rel)
         try:
-            data = _edit_file(abs_path, rel, edits, out)
+            data = _edit_file(abs_path, rel, edits, out, root)
         except (inifile.IniError, rsexml.RseXmlError, OSError) as exc:
             out.ok = False
             out.warnings.append("%s: %s" % (rel, exc))
@@ -755,7 +798,7 @@ def _apply_inplace(root, profile, grouped, out, dry_run, progress):
         # back and the first copy is the only trustworthy one.
 
 
-def _supplies_whole_file(edits) -> bool:
+def _supplies_whole_file(edits, base=None) -> bool:
     """Can these edits produce a file that is not there yet?
 
     Only a `FileCopy` can: every other edit kind changes something in content
@@ -765,7 +808,7 @@ def _supplies_whole_file(edits) -> bool:
     """
     for e in edits:
         if isinstance(e, FileCopy) and (e.data is not None
-                                        or (e.source and os.path.isfile(e.source))):
+                                        or copy_source(e, base) is not None):
             return True
     return False
 
@@ -788,10 +831,14 @@ def _apply_mod(root, profile, grouped, out, dry_run, progress):
             progress(i, len(grouped), rel)
         src = os.path.join(src_root, rel.replace("/", os.sep))
         if not os.path.isfile(src):
-            out.warnings.append("%s is not in the stock mod." % rel)
-            continue
+            # A generated mod may SHIP a file the stock mod never had -- Ghost
+            # Recon's enemy-weapon split adds `<gun>_npc.gun` beside the
+            # originals -- but only when an edit actually supplies content.
+            if not _supplies_whole_file(edits, src_root):
+                out.warnings.append("%s is not in the stock mod." % rel)
+                continue
         try:
-            data = _edit_file(src, rel, edits, out)
+            data = _edit_file(src, rel, edits, out, src_root)
         except (rsexml.RseXmlError, OSError) as exc:
             out.ok = False
             out.warnings.append("%s: %s" % (rel, exc))

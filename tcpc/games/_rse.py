@@ -136,8 +136,9 @@ def shared_settings():
                  "inverted here to read the way you would expect: 'tighter' "
                  "makes the numbers smaller.",
             caution="These files are shared between you and the enemies, so "
-                    "this moves both sides. The way to separate them is the "
-                    "one the PS2Accuracy mod uses -- see the notes page.",
+                    "by default this moves both sides. In Ghost Recon, "
+                    "turning on 'Give the enemy its own weapons' separates "
+                    "them and makes this option the player's alone.",
             choices=[
                 Choice("stock", "Stock", ""),
                 Choice("tight", "Tighter", "Halved dispersion."),

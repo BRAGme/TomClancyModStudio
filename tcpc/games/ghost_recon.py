@@ -17,7 +17,9 @@ silent no-op. That is why the difficulty page here works through the actors
 instead.
 """
 
-from . import _rse
+import os
+
+from . import _rse, _gr_npc
 from ..model import GameProfile, Layout, MOD
 
 LAYOUT = Layout(
@@ -32,11 +34,23 @@ LAYOUT = Layout(
     data_dir="Data",
 )
 
-SETTINGS = _rse.shared_settings()
+SETTINGS = _rse.shared_settings() + _gr_npc.settings()
 
 
-def build_edits(values):
-    return _rse.shared_edits(values, "ghost_recon")
+def build_edits(values, root=None):
+    out = _rse.shared_edits(values, "ghost_recon")
+    if values.get("npc_weapons") and root:
+        # Once the enemy carries its own copies, the Weapons page above is
+        # the PLAYER's set -- so it must stop reaching the copies. Without
+        # this the split would be undone by the very next edit: `Equip/*.gun`
+        # matches `ak47_npc.gun` perfectly well.
+        for edit in out:
+            if edit.select == _gr_npc.GUNS and not edit.scope:
+                edit.scope = "not:*%s.gun" % _gr_npc.SUFFIX
+        out += _gr_npc.edits(
+            values, os.path.join(str(root),
+                                 LAYOUT.base_mod.replace("/", os.sep)))
+    return out
 
 
 def combination_warnings(values):
@@ -44,9 +58,11 @@ def combination_warnings(values):
     if values["enemy_skill"] == "elite" and values["enemy_armour"] == "max":
         out.append("Every enemy at skill 7 and armour 3 at once is well past "
                    "anything the campaign was balanced for.")
-    if values["lethality"] == "brutal" and values["weapon_accuracy"] == "tight":
+    if (values["lethality"] == "brutal" and values["weapon_accuracy"] == "tight"
+            and not values.get("npc_weapons")):
         out.append("Quarter-lethality with halved dispersion cuts both ways: "
-                   "enemies use the same weapon files you do.")
+                   "enemies use the same weapon files you do. Turn on 'Give "
+                   "the enemy its own weapons' to separate them.")
     return out
 
 
@@ -71,13 +87,19 @@ game's 759 actors are present on Easy, 654 on Normal, all 759 on Hard. It is a
 real lever and a per-actor one, so it needs a mission editor rather than a
 slider, and it is not in this version.
 
-Separating your accuracy from the enemies'. Both sides read the same Equip\*.gun
-files, so the accuracy option here moves both. The way to separate them is the
-one the PS2Accuracy mod in this installation already uses: add a second set of
-guns named <weapon>_npc.gun with different accuracy numbers, then shadow the
-Equip\*.kit files -- which are the enemy kits, the player's being under
-Kits\<class>\ -- to point at them. That technique is understood and is the
-obvious next feature; it is not built yet.
+Separating your accuracy from the enemies'. This IS built now -- "Give the
+enemy its own weapons" on the Enemies page. Both sides read the same
+Equip\*.gun, so with it off the weapon options move both; with it on, the
+enemy's kits are shadowed to point at <weapon>_npc.gun copies and the Weapons
+page becomes the player's set alone. Which guns to copy is read out of the
+installation's own Equip\*.kit files at build time rather than listed in the
+profile, because a written-down list goes stale against whatever mods are
+installed -- PS2Accuracy, for instance, carries 31 _npc guns of which 19 have
+no base gun in the retail campaign at all. See _gr_npc.py.
+
+One seam is honest and unavoidable: m1911 only.kit is carried by both a few
+friendly NPCs and by enemies, so those friendlies get the enemy's pistol.
+Every other kit separates cleanly.
 
 Nothing in this profile has been watched working in a running game.
 """

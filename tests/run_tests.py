@@ -1202,6 +1202,107 @@ def test_graw_direction(dets):
             check("%s: and it really emits nothing" % profile.short, not live)
 
 
+def test_npc_split(dets):
+    r"""Ghost Recon's enemy-weapon split actually separates the two sides.
+
+    The assertion that matters is about a SHARED gun. Eight of the thirteen
+    guns enemy kits name are enemy-only, so a split that quietly did nothing
+    would still look right on those. Five -- at4, dragunov, m16, rpk74, sa80
+    -- are carried by both sides, and those are the whole reason the feature
+    exists. The test tightens the player's weapons and loosens the enemy's in
+    the same apply, then checks a shared gun came out different on each side.
+    """
+    import re
+    det = next((d for d in dets if d.profile.id == "ghost_recon"), None)
+    if det is None:
+        return
+    print("\n[Ghost Recon: the enemy gets its own weapons]")
+    profile = det.profile
+    from tcpc.games import _gr_npc
+
+    stock_mod = os.path.join(det.path,
+                             profile.layout.base_mod.replace("/", os.sep))
+    kits = _gr_npc.enemy_kits(stock_mod)
+    check("Ghost Recon: %d enemy kits found, naming %d guns"
+          % (len(kits), len({g for gs in kits.values() for g in gs})),
+          len(kits) > 20 and kits)
+    check("Ghost Recon: the co-op and adversarial spawn kits are included",
+          all(any(n in k.lower() for k in kits)
+              for n in ("opposing_force_0", "default.kit")),
+          str(sorted(k.rsplit("/", 1)[-1] for k in kits)[:4]))
+    check("Ghost Recon: the two allied-exclusive kits are excluded",
+          not any(k.rsplit("/", 1)[-1].lower() in _gr_npc.ALLIED_ONLY_KITS
+                  for k in kits))
+
+    def read(path, tag):
+        with open(path, encoding="latin-1", errors="replace") as fh:
+            m = re.search(r"<%s>\s*([\d.]+)\s*</%s>" % (tag, tag), fh.read())
+        return float(m.group(1)) if m else None
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-npc-")
+    try:
+        root = os.path.join(tmp, "gr")
+        for base, _d, names in os.walk(stock_mod):
+            for n in names:
+                if not n.lower().endswith((".kit", ".gun", ".atr", ".xml",
+                                           ".mis")):
+                    continue
+                src = os.path.join(base, n)
+                rel = os.path.relpath(src, det.path)
+                dst = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+        exe = os.path.join(root, profile.layout.exe.replace("/", os.sep))
+        os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+        with open(exe, "wb") as fh:
+            fh.write(b"stub")
+
+        values = dict(profile.defaults())
+        values.update(npc_weapons=True, npc_accuracy="loose", npc_recoil="double",
+                      weapon_accuracy="tight", recoil="none", npc_mags=4)
+        result = engine.apply(root, profile, profile.effective(values))
+        check("Ghost Recon: the split applies with no warnings",
+              result.ok and not result.warnings,
+              "; ".join(result.warnings[:2]))
+
+        mod = engine.mod_dir(root, profile)
+        equip = os.path.join(mod, "Equip")
+        copies = [f for f in os.listdir(equip) if f.endswith("_npc.gun")]
+        check("Ghost Recon: %d enemy weapon copies written" % len(copies),
+              len(copies) >= 10)
+
+        # the case the feature exists for: a gun BOTH sides carry
+        tag = "StationaryStandAccuracy"
+        shared = "m16.gun"
+        stock = read(os.path.join(stock_mod, "Equip", shared), tag)
+        player = read(os.path.join(equip, shared), tag)
+        enemy = read(os.path.join(equip, _gr_npc.npc_name(shared)), tag)
+        check("Ghost Recon: %s is a gun both sides carry, and the two sides "
+              "now differ (stock %s -> player %s, enemy %s)"
+              % (shared, stock, player, enemy),
+              None not in (stock, player, enemy)
+              and player < stock < enemy)
+
+        # the enemy's kit really points at the copy
+        kit = os.path.join(equip, "ak47 only.kit")
+        if os.path.isfile(kit):
+            with open(kit, encoding="latin-1") as fh:
+                text = fh.read()
+            check("Ghost Recon: the enemy's kit names the copy",
+                  "ak47_npc.gun" in text)
+            check("Ghost Recon: and carries the extra magazines",
+                  re.search(r"<MagazineCount>\s*6\s*</MagazineCount>", text))
+
+        # nothing the player draws from was written into the mod
+        player_kits = os.path.join(mod, "Kits")
+        check("Ghost Recon: not one of the player's own kits was touched",
+              not os.path.isdir(player_kits)
+              or not any(f.lower().endswith(".kit")
+                         for _b, _d, ns in os.walk(player_kits) for f in ns))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1246,6 +1347,7 @@ def main():
         test_rs3_modes(dets)
         test_sides(dets)
         test_graw_direction(dets)
+        test_npc_split(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")
