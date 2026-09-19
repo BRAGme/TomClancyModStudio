@@ -104,6 +104,7 @@ class App(tk.Tk):
         self._header_img = None
         self._title_text = ("Choose a game", "")
         self._msgs = queue.Queue()
+        self._pumping = False
         self._recent = []
         self._last_size = (0, 0)
         #: None until Discord presence is switched on; see gui/presence.py
@@ -328,16 +329,61 @@ class App(tk.Tk):
         self.log.configure(state="disabled")
 
     def _pump(self):
-        while True:
+        """Drain the worker queue on the UI thread.
+
+        Every message is handled inside its own guard and the next tick is
+        armed in a `finally`. That is not defensiveness for its own sake: the
+        loop re-armed itself only on the last line once, so a single raise in
+        a completion callback stopped the pump for good. The window stayed up
+        at zero CPU with the log frozen mid-job, the buttons latched off and
+        no dialog -- indistinguishable from the patcher hanging, when in fact
+        the work had finished. A failure here is now a line in the log that
+        names the exception, and the window stays usable.
+
+        A message is allowed to open a modal sheet, and sizing a sheet calls
+        `update`, which runs pending `after` jobs -- this one among them. So
+        without the re-entrancy guard the pump drains a SECOND completion
+        while the first one's dialog is still being built, stacking modal
+        sheets each blocked in its own `wait_window`. The grab belongs to the
+        innermost, the outer ones cannot be dismissed, and the window sits at
+        zero CPU behind sheets that may not even be visible yet. Re-entering
+        is never useful: the outer drain continues the moment it returns.
+        """
+        if self._pumping:
+            return                      # re-entered from a nested `update`
+        self._pumping = True
+        try:
+            while True:
+                try:
+                    kind, payload = self._msgs.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    if kind == "log":
+                        self._say(*payload)
+                    elif kind == "done":
+                        payload()
+                except Exception:                     # noqa: BLE001
+                    self._recover(kind)
+        finally:
+            self._pumping = False
+            self.after(120, self._pump)
+
+    def _recover(self, kind):
+        """Report a failed queue message and give the window back."""
+        detail = traceback.format_exc()
+        for line in detail.rstrip().splitlines():
             try:
-                kind, payload = self._msgs.get_nowait()
-            except queue.Empty:
-                break
-            if kind == "log":
-                self._say(*payload)
-            elif kind == "done":
-                payload()
-        self.after(120, self._pump)
+                self._say(line, "bad")
+            except Exception:                         # noqa: BLE001
+                break                                 # the log itself is gone
+        if kind == "done":
+            # The job is over either way; do not leave the buttons latched.
+            self.busy = False
+            try:
+                self._set_buttons(True)
+            except Exception:                         # noqa: BLE001
+                pass
 
     def _post(self, text, tag=None):
         self._msgs.put(("log", (text, tag)))
@@ -790,12 +836,28 @@ class App(tk.Tk):
             b.set_enabled(False)
 
         def worker():
+            # `posted` rather than try/except alone: the window is left
+            # waiting on this one message, so the ONE thing that must never
+            # happen is the thread ending without it. `except Exception`
+            # misses MemoryError's rarer siblings and misses a failure in the
+            # put itself, and either one strands the buttons off with no
+            # dialog and nothing in the log to say why.
+            posted = False
             try:
                 result = fn()
                 self._msgs.put(("done", lambda: done(result, None)))
+                posted = True
             except Exception as exc:              # noqa: BLE001
                 tb = traceback.format_exc()
                 self._msgs.put(("done", lambda: done(None, (exc, tb))))
+                posted = True
+            finally:
+                if not posted:
+                    tb = traceback.format_exc()
+                    err = RuntimeError("the job stopped before it finished, "
+                                       "and the disc may be half-written -- "
+                                       "use Put back to restore it")
+                    self._msgs.put(("done", lambda: done(None, (err, tb))))
         threading.Thread(target=worker, daemon=True).start()
 
     def _apply(self):
