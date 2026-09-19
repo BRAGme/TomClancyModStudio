@@ -42,7 +42,7 @@ PRESET_HINT = "Choose a preset…"
 #: can ask about a downloaded executable is "is this the new one" -- and with
 #: a fixed name and a fixed version there is no way to answer it. The window
 #: title and the first log line both carry it.
-VERSION = "2.0"
+VERSION = "2.1"
 NOTES_TAB = "About this game"
 
 
@@ -215,7 +215,6 @@ class App(tk.Tk):
         self.preset_var = tk.StringVar(value="")
         self.preset_box = ttk.Combobox(self.bar, textvariable=self.preset_var,
                                        width=34, state="readonly", values=[])
-        self.preset_box.pack(side="left", pady=theme.px(6))
         self.preset_box.bind("<<ComboboxSelected>>", self._apply_preset)
 
         self.apply_btn = ActionButton(self.bar, "Apply", self._apply,
@@ -227,9 +226,21 @@ class App(tk.Tk):
         for b in (self.apply_btn, self.dry_btn, self.revert_btn):
             b.pack(side="right", padx=(theme.px(10), 0))
             b.set_enabled(False)
-        # Packed last so it sits at the LEFT of the right-hand group. Never
-        # disabled -- it configures the tool rather than touching the game.
+        # Packed last of the buttons so it sits at the LEFT of the right-hand
+        # group. Never disabled -- it configures the tool rather than touching
+        # the game.
         self.discord_btn.pack(side="right", padx=(theme.px(10), 0))
+
+        # The preset box is packed AFTER the buttons, and this is the whole
+        # fix for a bug that clipped the Discord button on four of the seven
+        # skins. Tk's packer hands out the cavity in call order, so a box
+        # packed first with a fixed character width takes its slice before the
+        # buttons are measured -- and a character is wider in the letterspaced
+        # faces Ghost Recon, both Advanced Warfighters and Sum of All Fears
+        # use, so "Discord" lost its D. Packed last it takes only what is
+        # left, and `expand` lets it use all of that when there is room.
+        self.preset_box.pack(side="left", pady=theme.px(6), fill="x",
+                             expand=True)
 
         self.logwrap = Chrome(self.stage, kind="panel", pad=theme.px(8),
                               autofit=False)
