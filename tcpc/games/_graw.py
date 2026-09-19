@@ -144,6 +144,25 @@ def shared_settings():
                        "Enemies and your own squad."),
             ],
             confidence="experimental", touches="data"),
+        Setting(
+            "weapon_damage", "Weapon damage", CHOICE, "stock",
+            group="Weapons",
+            help="A per-weapon damage multiplier. It is one scale across the "
+                 "whole game: a pistol and most rifles sit at 1 to 2.5, the "
+                 "Barrett at 10, and the mounted .50 cals and the BMP's "
+                 "autocannon at 11 to 15. Twenty-one of Advanced Warfighter's "
+                 "weapon files declare it and thirty-two of the sequel's, so "
+                 "a weapon that does not is left alone.",
+            caution="Obeys 'Who the weapon options apply to' above, so it can "
+                    "be aimed at the AI without changing the gun in your "
+                    "hands -- or the other way round.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x0.5", "Softer", "Halved."),
+                Choice("x1.5", "Harder", ""),
+                Choice("x2", "Lethal", "Doubled."),
+            ],
+            confidence="experimental", touches="data"),
     ]
 
 
@@ -211,4 +230,9 @@ def shared_edits(values):
             out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=%s]" % name),
                                attr="value", scale=rof, minimum=0.01,
                                note="rate of fire"))
+    dmg = {"x0.5": 0.5, "x1.5": 1.5, "x2": 2.0}.get(v["weapon_damage"])
+    if dmg:
+        out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=damage]"),
+                           attr="value", scale=dmg, minimum=0.01,
+                           note="weapon damage"))
     return out

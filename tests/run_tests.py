@@ -1658,7 +1658,8 @@ def test_graw_sides(dets):
                 for junk in ("Data", "data", ".tcpc-backup"):
                     shutil.rmtree(os.path.join(root, junk), ignore_errors=True)
                 values = dict(p.defaults())
-                values.update(weapon_side=side, weapon_spread="tight")
+                values.update(weapon_side=side, weapon_spread="tight",
+                              weapon_damage="x2")
                 result = engine.apply(root, p, p.effective(values))
                 now = sides()
                 changed = now[moves] != (stock_player, stock_ai)[moves]
@@ -1667,6 +1668,25 @@ def test_graw_sides(dets):
                       % (p.short, side, stock_player, now),
                       result.ok and changed and unchanged,
                       "; ".join(result.warnings[:2]))
+
+                # damage is the newest option on that scope and has its own
+                # value range (1-2.5 for carried arms, 10-15 for the mounted
+                # guns), so it is checked rather than assumed to follow.
+                def dmg(sel):
+                    loose = os.path.join(root, probe.replace("/", os.sep))
+                    raw = (open(loose, "rb").read() if os.path.isfile(loose)
+                           else entries[probe])
+                    node, _i = xmlbin.loads(raw)
+                    return [n.get("value") for n in xmlbin.select(node, sel)]
+                mine = dmg("unit[name!=*_3rd]/stats/var[name=damage]")
+                theirs = dmg("unit[name=*_3rd]/stats/var[name=damage]")
+                if mine and theirs:
+                    check("%s: and weapon damage split with it (yours %s, "
+                          "theirs %s)" % (p.short, mine, theirs),
+                          (mine != theirs)
+                          and (float(mine[0]) > float(theirs[0])
+                               if side == "player" else
+                               float(theirs[0]) > float(mine[0])))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

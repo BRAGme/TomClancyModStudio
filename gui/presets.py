@@ -186,7 +186,12 @@ PRESETS = {
         ("Outgunned - the AI shoots straighter than you", {
             "weapon_side": "ai",
             "weapon_spread": "tight",
+            "weapon_damage": "x1.5",
             "enemy_skill": "sharp",
+        }),
+        ("Everyone is fragile", {
+            "weapon_damage": "x2",
+            "enemy_health": "x0.5",
         }),
         ("Marksman - steady and precise", {
             "weapon_spread": "tight",
