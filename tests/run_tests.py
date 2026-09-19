@@ -116,6 +116,7 @@ def main():
         run_op_contract(args)
         run_pump()
         run_grown_lin(args)
+        run_fit_in_place(args)
         run_ai_cover(args)
         run_team_kits(args)
         run_gear_icons(args)
@@ -3127,6 +3128,120 @@ def run_enemy_toughness(args):
                   % (gid, val),
                   plain == val and armour >= plain,
                   "%d / %d" % (plain, armour))
+
+
+def run_fit_in_place(args):
+    r"""A one-byte overshoot must not cost a relocation.
+
+    This pins the failure that took a disc out of service. A loadout change
+    rewrites a weapon name in every map's INI, and a longer name makes the
+    file one to twenty bytes longer -- on a file of ten and a half kilobytes.
+    Each of those used to relocate, and these archives have exactly one 64 KB
+    pad: measured on a stock disc, ONE operative gaining ONE gadget put
+    sixteen files over their slot and asked for 147 KB. The first few moved,
+    the pad filled, and the rest failed with "no free run left".
+
+    So the file sheds bytes no INI reader looks at and stays where it is. What
+    must never happen is that shedding them changes what the file SAYS, which
+    is most of what is asserted here.
+    """
+    from tcps2 import dataedit
+    from tcps2.iso import Iso
+    from tcps2.vokes import Region, Vokes, open_archives
+    from tcps2.games import BY_ID
+
+    print(chr(10) + "[an edit that grows a text file by a few bytes]")
+
+    fit = dataedit._fit_plain
+    eol = "\r\n"
+    body = ("[Weapons]" + eol + "m_Item1=frag   " + eol + eol
+            + "; which gadget the operative carries" + eol
+            + "m_Item2=flash" + eol + eol + "m_Primary=mp5a4" + eol)
+    src = body.encode()
+
+    check("a file that already fits is handed back untouched",
+          fit(src, len(src)) == src)
+    check("and one that cannot possibly fit is handed back too, to relocate",
+          fit(src, 4) == src or len(fit(src, 4)) < len(src))
+
+    # every room size, all the way down: the settings must survive intact
+    KEYS = (b"m_Item1=frag", b"m_Item2=flash", b"m_Primary=mp5a4",
+            b"[Weapons]")
+    worst = len(src)
+    for room in range(8, len(src) + 1):
+        got = fit(src, room)
+        if len(got) > len(src):
+            check("shrinking never lengthens a file", False, "room %d" % room)
+            break
+        lost = [k for k in KEYS if k not in got]
+        if lost:
+            check("every setting survives every room size", False,
+                  "room %d lost %s" % (room, lost))
+            break
+        worst = min(worst, len(got))
+    else:
+        check("every setting survives every room size", True)
+        check("shrinking never lengthens a file", True)
+    check("and it can give up a useful number of bytes",
+          worst <= len(src) - 20, "best was %d of %d" % (worst, len(src)))
+
+    # order of rudeness: whitespace first, comments last
+    one = fit(src, len(src) - 1)
+    check("a one-byte ask takes whitespace and leaves the comment alone",
+          b"; which gadget" in one and b"m_Item1=frag" + eol.encode() in one)
+
+    # -- and the whole thing, against the disc ---------------------------
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    profile = BY_ID["r6_3_slus20883"]
+
+    class Shadow(Region):
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    import tempfile
+    vals = profile.effective(dict(profile.defaults(),
+                                  **{"price_item1": "smoke"}))
+    edits = profile.build_data(vals)
+    work = tempfile.mkdtemp(prefix="tcms-fit-")
+    real_archives = dataedit._archives
+    try:
+        with Iso(iso_path) as iso:
+            shadows = {}
+            for real in open_archives(iso, profile.archive_pattern):
+                arc = Vokes(Shadow(real.r))
+                shadows[arc.r.name.upper()] = arc
+            dataedit._archives = lambda _i, _p: shadows
+
+            before = max(b[1] for b in shadows["VOKES0.IMG"].free_blocks())
+            try:
+                dataedit.apply_data(iso, profile, edits, dataedit.Store(work))
+                threw = None
+            except Exception as exc:                  # noqa: BLE001
+                threw = exc
+            check("one gadget change applies without running out of room",
+                  threw is None, "%s: %s" % (type(threw).__name__, threw)
+                  if threw else "")
+            if threw is not None:
+                return
+            after = max(b[1] for b in shadows["VOKES0.IMG"].free_blocks())
+            check("and it does not eat the archive's one long free run",
+                  after == before,
+                  "largest run %d -> %d" % (before, after))
+    finally:
+        dataedit._archives = real_archives
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def run_grown_lin(args):

@@ -258,6 +258,67 @@ def _unpack(original, path=""):
     return "plain", original
 
 
+def _fit_plain(data, room):
+    """Shed inert bytes from a text file until it fits `room`.
+
+    Why this exists. A loadout change rewrites a weapon name in every map's
+    INI, and a longer name makes the file longer -- by ONE to about twenty
+    bytes, on a file of ten and a half kilobytes. That tiny overshoot used to
+    mean relocation, and relocation is what these archives cannot afford:
+    measured on a stock disc, one operative gaining one gadget puts sixteen
+    files over their slot and asks for 147 KB of contiguous room, against a
+    single 64 KB pad. The first few move, the pad fills, and the next file
+    fails with "no free run left" -- which is exactly what a disc that had
+    been patched a few times did.
+
+    So the file stays where it is and gives up bytes that no INI reader looks
+    at, in increasing order of rudeness: whitespace before a line ending, then
+    blank lines, then whole-line comments, and only as many as it takes. A
+    file that still does not fit is handed back unchanged and relocates as
+    before -- this makes the common case free, it does not remove the fallback.
+
+    The backup store keeps the untouched bytes, so none of this is one-way.
+    """
+    if len(data) <= room:
+        return data
+    eol = b"\r\n" if b"\r\n" in data else b"\n"
+    tail = data.endswith(eol)
+    lines = data.split(eol)
+    if tail and lines and not lines[-1]:
+        lines.pop()
+
+    def build(ls):
+        out = eol.join(ls)
+        return out + eol if tail else out
+
+    # 1. trailing whitespace: invisible, and no reader can miss it
+    lines = [ln.rstrip(b" \t") for ln in lines]
+    if len(build(lines)) <= room:
+        return build(lines)
+
+    # 2. blank lines, from the bottom up, so the head of the file -- which is
+    #    what anyone opening it actually reads -- keeps its shape longest
+    for i in range(len(lines) - 1, -1, -1):
+        if len(build(lines)) <= room:
+            break
+        if not lines[i].strip():
+            del lines[i]
+    if len(build(lines)) <= room:
+        return build(lines)
+
+    # 3. whole-line comments, same order. Never a trailing comment on a line
+    #    that also holds a setting: that is a value's own line and cutting it
+    #    is how a parser ends up reading something different.
+    for i in range(len(lines) - 1, -1, -1):
+        if len(build(lines)) <= room:
+            break
+        head = lines[i].lstrip()
+        if head.startswith(b";") or head.startswith(b"#"):
+            del lines[i]
+    out = build(lines)
+    return out if len(out) < len(data) else data
+
+
 def _repack(kind, original, plain):
     if kind == "lin":
         # `substitute` is still the better path when the payload happens to be
@@ -558,7 +619,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
     # looked identical to a hang -- which is exactly how it was read. So say
     # what is in flight BEFORE starting on it, not after finishing: a line
     # that appears once the slow part is over is no use to anyone watching.
-    built, put_back = [], 0
+    built, put_back, fitted = [], 0, 0
     total = len(pending)
     if total:
         say("  %d file%s to rebuild" % (total, "" if total == 1 else "s"))
@@ -589,9 +650,60 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
         # its slot has to relocate it, and a single byte is enough; passing home
         # through means the next edit that fits puts it back, instead of leaving
         # it wherever the first overflow landed.
-        built.append((len(packed), arc, ent, packed,
-                      (original[1], len(original[0])) if original else None))
+        home = (original[1], len(original[0])) if original else None
+        if kind == "plain":
+            # Spend a few inert bytes rather than move -- see `_fit_plain`.
+            # There is one 64 KB pad in these archives and a single loadout
+            # change asks for twice it, so relocating on a one-byte overshoot
+            # is what runs a disc out of room.
+            #
+            # HOME is tried before the looser figure, and the order is the
+            # whole point. A file already exiled to the pad has the rest of
+            # the pad behind it, so `room_for` calls it comfortable and
+            # nothing shrinks it -- it would sit there for ever, holding the
+            # one run big enough to matter. Aiming at its original slot
+            # instead brings it back and hands that run over, so a disc that
+            # has been patched into fragments repairs itself.
+            for target in ([home[1]] if home else []) + [arc.room_for(ent, home)]:
+                if len(packed) <= target:
+                    break
+                shorter = _fit_plain(packed, target)
+                if len(shorter) <= target:
+                    fitted += 1
+                    packed = shorter
+                    break
+        built.append((len(packed), arc, ent, packed, home))
     built.sort(key=lambda r: -r[0])
+
+    # Homecoming, before a single byte is allocated.
+    #
+    # An edit that outgrew its slot moved the file to the one 64 KB pad these
+    # archives have, and the allocator then handed the slot it vacated to the
+    # NEXT file that outgrew its own. Do that a few times and the exiles are
+    # interlocked -- each sitting in another's slot -- so every single attempt
+    # to go home fails on "someone else lives there now", the pad stays full,
+    # and the next edit that needs a long run has nowhere to go. That is a
+    # disc that has been patched a few times, and it is how this one arrived:
+    # 64 KB largest free run when it shipped, 10 KB by the time it broke.
+    #
+    # One move frees one slot, which may be exactly what another file was
+    # waiting for, so this repeats until a pass changes nothing. Each move is
+    # the same guarded operation as before -- it still refuses an occupied or
+    # undersized slot -- so the worst case is that nothing moves. Bounded by
+    # the number of files, because every pass that continues has moved one.
+    going = [r for r in built if r[4] and r[2].offset != r[4][0]]
+    homecoming = 0
+    for _round in range(len(going) + 1):
+        moved = 0
+        for _size, arc, ent, packed, home in going:
+            if ent.offset != home[0] and arc.send_home(ent, packed, home):
+                moved += 1
+        homecoming += moved
+        if not moved:
+            break
+    if homecoming:
+        say("  %d file%s moved back to the slot it shipped in"
+            % (homecoming, "" if homecoming == 1 else "s"))
 
     written = 0
     for size, arc, ent, packed, home in built:
@@ -603,6 +715,9 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
         if written % 10 == 0:
             say("  %d of %d data files rewritten" % (written, len(built)))
     beat(total, total)
+    if fitted:
+        say("  %d file%s shortened to stay in place rather than relocate"
+            % (fitted, "" if fitted == 1 else "s"))
     if built:
         say("Rewrote %d data file%s" % (written, "" if written == 1 else "s"))
     return {"files": written - put_back, "restored": restored + put_back,

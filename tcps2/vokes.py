@@ -234,6 +234,34 @@ class Vokes:
                 return False
         return True
 
+    def send_home(self, e, data, home):
+        """Try to put one relocated file back. True if it moved.
+
+        Public because the caller has something this class does not: the list
+        of every file about to be written, and therefore the ability to try
+        them all again after one of them moves. A single attempt is not
+        enough on a disc that has been patched a few times -- the exiles end
+        up interlocked, each one sitting in another's slot, and every
+        individual attempt fails on "someone else lives there now" even
+        though the whole set could unwind.
+        """
+        return self._go_home(e, data, home)
+
+    def room_for(self, e, home=None):
+        """How long a file may be and still not have to move.
+
+        Its own slot, plus any blank run behind it, plus whatever alignment
+        gave it -- and its original slot too, when it has been relocated by an
+        earlier edit and could go back. This is the number an edit has to hit
+        to leave the archive's layout alone, which on these discs matters more
+        than it looks: there is one 64 KB pad and nothing else big enough, so a
+        handful of relocations exhaust it and every later one fails outright.
+        """
+        room = e.size + self._tail_room(e) + self._align_slack(e)
+        if home:
+            room = max(room, home[1])
+        return room
+
     def allocate(self, size, exclude=None, near=None):
         """Offset of a 16-byte-aligned, provably empty run of `size` bytes.
 
