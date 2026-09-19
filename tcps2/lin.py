@@ -42,6 +42,7 @@ package, and matching that is worth a tenth of a second.
 
 from __future__ import annotations
 
+import os
 import struct
 import zlib
 
@@ -238,6 +239,14 @@ def _deflate_exact(plain: bytes, budget: int):
                             return out
                     except zlib.error:
                         pass
+
+    if os.environ.get("TCMS_LEGACY_PACK"):
+        # Bisect switch. The build before this one could not steer zopfli onto
+        # an exact length, so these chunks fell through to `_deflate_within`
+        # and were zero-padded. Setting this reproduces those bytes exactly,
+        # which is the only way to ask the console whether the difference
+        # matters -- Python's inflate accepts both, so it cannot answer.
+        return None
 
     # Some chunks on these discs are packed tighter than zlib can match, so the
     # sweep above never even gets under the slot and zopfli is the only thing
