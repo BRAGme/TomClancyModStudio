@@ -386,6 +386,14 @@ worth repeating: a Steam file verification restores the stock packages without
 saying so, and a server running stock packages may reject a client whose do not
 match. Revert puts every byte back.
 
+Those options cover Gold's two official expansions as well as the base game --
+Athena Sword and Iron Wrath keep their weapons, ammunition and menu bars in
+packages of their own, so the 31 expansion weapons and the three expansion
+ammunition pairs are retuned alongside the rest. Any OTHER mod in Mods\ is
+deliberately left alone, which matters here: with ForceStartMod=SupplyDrop set,
+the guns SupplyDrop adds keep their own figures, and options tuned against
+stock weapons will not describe them.
+
 Nothing in this profile has been watched working in a running game.
 """
 

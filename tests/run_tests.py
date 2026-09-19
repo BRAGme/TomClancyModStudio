@@ -1776,6 +1776,7 @@ def test_rs3_expansions(dets):
         return
     print("\n[Raven Shield: the Gold expansions]")
     profile = det.profile
+    from tcpc.games import _rs3_ammo
 
     OFFICIAL = ("Mods/AthenaSword/System/ASWeapons.u",
                 "Mods/AthenaSword/System/ASDescription.u",
@@ -1792,16 +1793,24 @@ def test_rs3_expansions(dets):
     check("Raven Shield: all %d expansion packages are named by the edits"
           % len(OFFICIAL), not missing, str(missing))
 
-    # -- and nothing else under Mods\ ------------------------------------
+    # -- and nothing INSIDE anybody else's mod folder --------------------
+    # Files written directly into `Mods\` are ours: the cut-mode option ships
+    # `Mods\Defend.game` and three more, which is how OpenRVS lists a mode.
+    # What must never be touched is the CONTENT of a folder somebody else
+    # installed, so the check is on the folder, not on the prefix.
+    MINE = ("athenasword", "ironwrath")
     stray = sorted(f for f in selects
-                   if f.lower().startswith("mods/") and f not in OFFICIAL)
-    check("Raven Shield: no third-party mod is selected",
+                   if f.lower().startswith("mods/") and "/" in f[5:]
+                   and f.split("/")[1].lower() not in MINE)
+    check("Raven Shield: nothing inside a third-party mod folder is selected",
           not stray, str(stray[:4]))
-    others = [d for d in os.listdir(os.path.join(det.path, "Mods"))
-              if d.lower() not in ("athenasword", "ironwrath")]
-    check("Raven Shield: %d other mod folder(s) are installed to be spared "
-          "(%s)" % (len(others), ", ".join(sorted(others)) or "none"),
-          True)
+    others = sorted(d for d in os.listdir(os.path.join(det.path, "Mods"))
+                    if os.path.isdir(os.path.join(det.path, "Mods", d))
+                    and d.lower() not in MINE)
+    check("Raven Shield: %d third-party mod folder(s) installed here are "
+          "left alone (%s)" % (len(others), ", ".join(others) or "none"),
+          not any(f.lower().startswith("mods/" + d.lower() + "/")
+                  for d in others for f in selects), str(others))
 
     tmp = tempfile.mkdtemp(prefix="tcpc-gold-")
     try:
@@ -1829,8 +1838,19 @@ def test_rs3_expansions(dets):
         check("Raven Shield: no expansion package changed length",
               not grew, str(grew))
 
-        # the three expansion ammunition pairs really moved
-        moved = []
+        # -- and the three expansion ammunition pairs really moved --------
+        # A SECOND apply, with only this one option off default. The max set
+        # above also turns `ammo_damage` up, which scales `m_iEnergy` as well,
+        # so the arithmetic to check against would be the product of two
+        # options rather than the one being tested. An in-place apply rebuilds
+        # from pristine, so running it twice is safe -- and exercises that.
+        only = dict(profile.defaults())
+        only["ammo_character"] = "realistic"
+        second = engine.apply(root, profile, profile.effective(only))
+        check("Raven Shield: a second apply rebuilds from pristine", second.ok,
+              "; ".join(second.warnings[:2]))
+        jhp = _rs3_ammo.CHARACTER["realistic"]["jhp"]
+        moved, wrong = [], []
         for rel, cls in (("Mods/AthenaSword/System/ASWeapons.u",
                           "ammo9x39mmSP6NormalJHP"),
                          ("Mods/IronWrath/System/MP2Weapons.u",
@@ -1841,13 +1861,17 @@ def test_rs3_expansions(dets):
                 os.path.join(det.path, rel.replace("/", os.sep)))
             now = upackage.Package.load(
                 os.path.join(root, rel.replace("/", os.sep)))
-            want = int(was.get(cls, "m_iEnergy")
-                       * _rs3_ammo.CHARACTER["realistic"]["jhp"]["energy"])
-            if now.get(cls, "m_iEnergy") == want \
-                    and abs(now.get(cls, "m_fKillStunTransfer") - 0.60) < 1e-6:
+            want = int(was.get(cls, "m_iEnergy") * jhp["energy"])
+            got = now.get(cls, "m_iEnergy")
+            if got == want and abs(now.get(cls, "m_fKillStunTransfer")
+                                   - jhp["stun"]) < 1e-6:
                 moved.append(cls)
+            else:
+                wrong.append("%s %s->%s want %s" % (cls, was.get(cls, "m_iEnergy"),
+                                                    got, want))
         check("Raven Shield: the %d expansion hollow-point classes are "
-              "retuned" % len(moved), len(moved) == 3, str(moved))
+              "retuned" % len(moved), len(moved) == 3, str(wrong))
+
 
         mismatched = [c for c in result.changes if c.status == "stock-mismatch"]
         check("Raven Shield: every expansion edit found the stock value it "
