@@ -134,14 +134,28 @@ class Sheet(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW",
                       self._cancel if cancel else self._ok)
 
-        self._size(panel)
-        self._centre(master)
+        # The reveal is in a `finally`, and it has to stay there. If sizing
+        # throws, an un-revealed sheet is a window at alpha 0 that the caller
+        # is already blocked on in `wait_window` -- invisible, undismissable,
+        # and indistinguishable from the application hanging. That happened:
+        # a real error dialog never appeared and the apply looked stuck.
         try:
-            self.attributes("-alpha", 1.0)      # shown, already in place
-        except tk.TclError:
-            pass
-        self.grab_set()
-        self.ok_btn.focus_set()
+            self._size(panel)
+            self._centre(master)
+        finally:
+            self._reveal()
+        # Belt and braces, in case something later re-hides it.
+        self.after(1200, self._reveal)
+
+    def _reveal(self):
+        """Make the sheet visible and usable. Safe to call more than once."""
+        for step in (lambda: self.attributes("-alpha", 1.0),
+                     self.deiconify, self.lift, self.grab_set,
+                     self.ok_btn.focus_set):
+            try:
+                step()
+            except tk.TclError:
+                pass                     # a dead window, or no compositing
 
     # -- chrome ----------------------------------------------------------
     def _mark(self, parent, kind):
