@@ -32,7 +32,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ProgressBar,
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "5.8"
+VERSION = "5.9"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -397,6 +397,36 @@ class App(tk.Tk):
         finally:
             self._pumping = False
             self.after(120, self._pump)
+
+    def report_callback_exception(self, exc, val, tb):
+        r"""Put a Tk callback fault in the log, where somebody can see it.
+
+        Tk catches an exception raised inside a callback -- a button command,
+        a binding, an `after` job -- and hands it here. The default writes a
+        traceback to `sys.stderr` and carries on.
+
+        **This application is built `--windowed`, so it has no stderr.** The
+        traceback goes nowhere at all: no console, no file, nothing in this
+        window. The button appears not to have worked and the log says
+        nothing, which is the least debuggable failure a tool can have, and it
+        is invisible in exactly the build that everybody actually runs.
+
+        The queue path was given this treatment already (`_recover`, `_fail`)
+        after a fault there hung the window. This is the other half: the same
+        report, for the callbacks Tk invokes directly.
+
+        The log is what people send when something goes wrong on their own
+        disc, so the whole traceback goes in and not just its last line.
+        """
+        text = "".join(traceback.format_exception(exc, val, tb))
+        try:
+            self._say("Something in the interface failed:", "bad")
+            for line in text.rstrip().splitlines():
+                self._say("  " + line, "bad")
+        except Exception:                             # noqa: BLE001
+            # The log is part of the window; if the window is what broke,
+            # fall back to Tk's own behaviour rather than losing the fault.
+            super().report_callback_exception(exc, val, tb)
 
     def _recover(self, kind):
         """Report a failed queue message and give the window back."""
