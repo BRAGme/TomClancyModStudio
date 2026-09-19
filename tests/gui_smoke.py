@@ -151,6 +151,63 @@ def check_shelf(app, games):
     return failures
 
 
+def check_dropdown(app):
+    r"""The pickers must survive being looked at.
+
+    The skinned list is a frame placed in the window, and the first build
+    dismissed it from a `<Configure>` binding -- which Tk fires while laying
+    the window out, so it shut in the same breath it opened. In a screenshot
+    that is indistinguishable from a control that was never clicked, so it is
+    asserted here instead: open it, pump the event loop the way a real session
+    does, and require it to still be there.
+    """
+    from gui import theme
+
+    print("\n=== the pickers")
+    failures = 0
+    for name, box in (("game", app.game_box), ("preset", app.preset_box)):
+        box._open()
+        app.update()                      # the event that used to close it
+        if box._popup is None:
+            print("  FAILED: the %s list closed itself on a redraw" % name)
+            failures += 1
+            continue
+        rows = [t for t in box._canvas.find_all()
+                if box._canvas.type(t) == "text"]
+        drawn = [box._canvas.itemcget(t, "text") for t in rows]
+        if drawn != box._values:
+            print("  FAILED: the %s list paints %d row(s) for %d value(s)"
+                  % (name, len(drawn), len(box._values)))
+            failures += 1
+        # wide enough for its own longest entry
+        if box._popup.winfo_width() < box._content_width() - 1:
+            print("  FAILED: the %s list clips its longest entry" % name)
+            failures += 1
+        # the marker bar and highlight are the window's, not Tk's
+        fills = {box._canvas.itemcget(t, "fill") for t in box._canvas.find_all()
+                 if box._canvas.type(t) == "rectangle"}
+        if theme.P.tab not in fills:
+            print("  FAILED: the %s list is missing the selected marker" % name)
+            failures += 1
+        box._on_key(type("E", (), {"keysym": "Down", "char": ""})())
+        box._on_key(type("E", (), {"keysym": "Escape", "char": ""})())
+        if box._popup is not None:
+            print("  FAILED: the %s list ignored Escape" % name)
+            failures += 1
+    # the preset box is on the last row: its list has to open upwards
+    app.preset_box._open()
+    app.update()
+    up = app.preset_box._popup
+    if up is None or up.winfo_y() >= (app.preset_box.winfo_rooty()
+                                      - app.winfo_rooty()):
+        print("  FAILED: the preset list opens downwards, off the window")
+        failures += 1
+    app.preset_box._close()
+    if not failures:
+        print("  both open, paint in the skin's colours, and close on Escape")
+    return failures
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     shots = None
@@ -179,6 +236,7 @@ def main(argv=None):
     failures = 0
     if not preview:
         failures += check_shelf(app, find_games())
+        failures += check_dropdown(app)
     for name, where in targets:
         print("\n=== %s" % name)
         try:

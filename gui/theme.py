@@ -180,24 +180,12 @@ def _apply(st: ttk.Style):
 
     st.configure("TEntry", fieldbackground=P.panel, foreground=P.text,
                  insertcolor=P.text, borderwidth=0, padding=px(7))
-    st.configure("TCombobox", fieldbackground=P.panel, background=P.panel2,
-                 foreground=P.text, arrowcolor=P.dim, borderwidth=0,
-                 padding=px(5))
-    st.map("TCombobox", fieldbackground=[("readonly", P.panel)],
-           foreground=[("disabled", P.faint)])
-
-    # A combobox's DROP-DOWN is not a ttk widget -- it is a plain Tk listbox in
-    # a toplevel, and `Style.configure` does not reach it. It stays stock white
-    # unless it is told otherwise through the option database, which is what
-    # this is.
-    if _root is not None:
-        for option, value in (("background", P.panel),
-                              ("foreground", P.text),
-                              ("selectBackground", P.sel_fill),
-                              ("selectForeground", P.sel_text),
-                              ("borderWidth", 0),
-                              ("highlightThickness", 0)):
-            _root.option_add("*TCombobox*Listbox.%s" % option, value)
+    # There is no TCombobox styling here on purpose. A combobox's DROP-DOWN is
+    # not a ttk widget -- it is a plain Tk listbox in its own toplevel, and
+    # neither `Style.configure` nor the option database reaches far enough into
+    # it: the picker still opened as a flat panel with a teal selection bar on
+    # every skin. `gui.dropdown` paints its own list instead, and nothing in
+    # the application creates a combobox any more.
 
     st.configure("Vertical.TScrollbar", background=P.panel2, troughcolor=P.bg,
                  borderwidth=0, arrowcolor=P.dim)

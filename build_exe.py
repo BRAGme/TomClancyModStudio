@@ -39,43 +39,32 @@ NAME = "Tom Clancys PC ModStudio"
 #: the script PyInstaller is pointed at
 ENTRY = "ModStudio.py"
 
-HIDDEN = [
-    "gui.dialog",
+def _package_modules(*packages):
+    """Every module in our own packages, named for PyInstaller.
+
+    This used to be a hand-written list, and by version 2.2 it had gone stale
+    by six modules. They shipped anyway -- PyInstaller's own analysis follows
+    a plain `import` perfectly well -- but a list that has to be remembered is
+    a list that will be wrong on the day it matters, which is the day a module
+    is reached dynamically. So it is walked instead.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = []
+    for pkg in packages:
+        out.append(pkg)
+        for root, _dirs, files in os.walk(os.path.join(here, *pkg.split("."))):
+            rel = os.path.relpath(root, here).replace(os.sep, ".")
+            for f in sorted(files):
+                if f.endswith(".py"):
+                    name = rel if f == "__init__.py" else "%s.%s" % (rel, f[:-3])
+                    if name not in out:
+                        out.append(name)
+    return out
+
+
+HIDDEN = _package_modules("gui", "tcpc") + [
     'cli',
-    'gui',
-    'gui.app',
-    'gui.theme',
-    'gui.widgets',
-    'gui.controls',
-    'gui.presets',
-    'gui.skins',
-    'gui.gearicons',
-    'gui.tooltip',
-    'gui.presence',
-    'gui.discorddialog',
     'webbrowser',
-    'tcpc.art',
-    'tcpc.engine',
-    'tcpc.inifile',
-    'tcpc.install',
-    'tcpc.model',
-    'tcpc.rsb',
-    'tcpc.rsexml',
-    'tcpc.bundle',
-    'tcpc.xmlbin',
-    'tcpc.upackage',
-    'tcpc.games',
-    'tcpc.games._graw',
-    'tcpc.games._graw_enemies',
-    'tcpc.games._rs3_weapons',
-    'tcpc.games._rse',
-    'tcpc.games.ghost_recon',
-    'tcpc.games.graw',
-    'tcpc.games.graw2',
-    'tcpc.games.lockdown',
-    'tcpc.games.ravenshield',
-    'tcpc.games.soaf',
-    'tcpc.games.vegas',
     'PIL.Image',
     'PIL.ImageTk',
     'PIL.ImageDraw',

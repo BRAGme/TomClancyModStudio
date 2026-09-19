@@ -22,7 +22,7 @@ import sys
 import threading
 import tkinter as tk
 import traceback
-from tkinter import filedialog, ttk
+from tkinter import filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,7 +31,7 @@ from tcpc.games import PROFILES  # noqa: E402
 from tcpc.install import identify, look, preview_detection  # noqa: E402
 from tcpc.model import BOOL, INT, MOD, OVERLAY  # noqa: E402
 
-from . import dialog, discorddialog, presence, skins, theme  # noqa: E402
+from . import dialog, discorddialog, dropdown, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
 from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
                       SettingCard, nav_style)  # noqa: E402
@@ -42,7 +42,7 @@ PRESET_HINT = "Choose a preset…"
 #: can ask about a downloaded executable is "is this the new one" -- and with
 #: a fixed name and a fixed version there is no way to answer it. The window
 #: title and the first log line both carry it.
-VERSION = "2.1"
+VERSION = "2.2"
 NOTES_TAB = "About this game"
 
 
@@ -188,8 +188,8 @@ class App(tk.Tk):
                                   bg=p.panel, fg=p.dim, font=theme.F("body", 9))
         self.shelf_lbl.pack(side="left", padx=(theme.px(6), theme.px(12)))
         self.game_var = tk.StringVar()
-        self.game_box = ttk.Combobox(pick, textvariable=self.game_var,
-                                     state="readonly", values=[])
+        self.game_box = dropdown.Dropdown(pick, textvariable=self.game_var,
+                                          values=[])
         self.game_box.pack(side="left", fill="x", expand=True,
                            padx=(0, theme.px(4)), pady=theme.px(2))
         self.game_box.bind("<<ComboboxSelected>>", self._pick_game)
@@ -213,8 +213,8 @@ class App(tk.Tk):
                                    font=theme.F("body", 9))
         self.preset_lbl.pack(side="left", padx=(theme.px(4), theme.px(10)))
         self.preset_var = tk.StringVar(value="")
-        self.preset_box = ttk.Combobox(self.bar, textvariable=self.preset_var,
-                                       width=34, state="readonly", values=[])
+        self.preset_box = dropdown.Dropdown(self.bar, textvariable=self.preset_var,
+                                            width=34, values=[])
         self.preset_box.bind("<<ComboboxSelected>>", self._apply_preset)
 
         self.apply_btn = ActionButton(self.bar, "Apply", self._apply,
