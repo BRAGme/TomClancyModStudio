@@ -63,6 +63,15 @@ than guess at them, `defaults()` raises and every caller above it declines to
 touch the class: a property that cannot be located exactly is one this module
 will not write.
 
+## A `b` prefix does not mean a bool
+
+Raven Shield's weapon caps are named `bSingle`, `bCMag`, `bSilencer` and so on,
+and all of them are **int32** holding 0 or 1. There are 113 genuinely
+bool-typed properties in these packages as well (`m_bIsSilenced` on 46 classes
+is the common one), so both really occur and the name settles nothing. That is
+why `find_property` CHECKS `kind` rather than searching by it: asking for the
+wrong type returns nothing instead of returning the wrong bytes.
+
 ## Values live inside structs
 
 The accuracy numbers are not top-level properties. They sit in

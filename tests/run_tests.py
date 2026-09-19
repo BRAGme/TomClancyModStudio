@@ -784,6 +784,47 @@ def test_packages(dets):
     check("Raven Shield: a refused class is not written to",
           pkgs["R6Weapons.u"].set("R6Weapons", "m_iEnergy", 1) is False)
 
+    # -- types: a `b` prefix settles nothing ------------------------------
+    caps = ("bSingle", "bThreeRound", "bFullAuto", "bCMag", "bSilencer",
+            "bLight", "bMiniScope", "bHeatVision")
+    third = pkgs["R63rdWeapons.u"]
+    capped = [e.name for e in third.classes() if e.size > 0
+              and any(third.find_property(e.name, "m_stWeaponCaps." + c)
+                      for c in caps)]
+    wrong = [(n, c) for n in capped for c in caps
+             if third.find_property(n, "m_stWeaponCaps." + c)
+             and third.find_property(n, "m_stWeaponCaps." + c).kind != "int"]
+    check("Raven Shield: the %d classes with weapon caps hold them as INTS, "
+          "not bools" % len(capped), capped and not wrong, str(wrong[:3]))
+    check("Raven Shield: asking for a cap as a bool returns nothing",
+          capped and third.find_property(capped[0], "m_stWeaponCaps.bSingle",
+                                         "bool") is None)
+    bools = [(e.name, prop) for pkg in pkgs.values()
+             for e in pkg.classes() if e.size > 0
+             for path, prop in _safe_defaults(pkg, e.name).items()
+             if path == prop.path and prop.kind == "bool"]
+    check("Raven Shield: %d genuinely bool-typed properties do exist"
+          % len(bools), len(bools) > 50)
+
+    # a bool write must touch exactly one byte -- its own tag -- and be exactly
+    # reversible, because the value lives in bit 7 of a byte that also encodes
+    # the type.
+    name, prop = bools[0]
+    owner = next(p for p in pkgs.values()
+                 if p.find_property(name, prop.path) is not None)
+    before = owner.to_bytes()
+    was = owner.get(name, prop.path)
+    owner.set(name, prop.path, not was)
+    after = owner.to_bytes()
+    moved = [i for i in range(len(before)) if before[i] != after[i]]
+    check("Raven Shield: flipping %s.%s changes exactly its own tag byte"
+          % (name, prop.path),
+          len(before) == len(after) and moved == [prop.offset]
+          and owner.get(name, prop.path) is (not was), str(moved[:4]))
+    owner.set(name, prop.path, was)
+    check("Raven Shield: flipping it back restores the original bytes",
+          owner.to_bytes() == before)
+
     # -- and now an actual apply, on a sandbox copy ------------------------
     tmp = tempfile.mkdtemp(prefix="tcpc-upkg-")
     try:
@@ -882,6 +923,13 @@ def test_packages(dets):
                   for f, p in after.items()))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _safe_defaults(pkg, name):
+    try:
+        return pkg.defaults(name)
+    except upackage.PackageError:
+        return {}
 
 
 class _N:

@@ -638,6 +638,14 @@ Two details that will each let a wrong reader look correct:
 * **The array index is not a compact index.** It is one byte under 128, two when
   the top bits are `10`, four when they are `11`. It agrees with a compact index
   for indices under 64 — exactly the range that hides the bug.
+* **A `b`-prefixed name is not necessarily a bool.** Raven Shield's weapon caps
+  are spelled `bSingle`, `bThreeRound`, `bFullAuto`, `bCMag`, `bSilencer`,
+  `bLight`, `bMiniScope`, `bHeatVision` and every one of them is an **int32**
+  (`info=0x22`, four bytes) holding 0 or 1, on the 57 classes that author them.
+  Asking for them as `kind="bool"` gets nothing back. Counted across all four
+  packages there are 113 genuinely bool-typed properties — `m_bIsSilenced` on
+  46 classes is the common one — so both types are really present and the name
+  tells you nothing about which you have.
 
 ### Values live inside structs, and inside arrays
 
