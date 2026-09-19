@@ -37,15 +37,21 @@ def main(argv):
     found = unique
 
     from gui.app import App                     # noqa: E402  (needs a display)
+    from tests.callbackwatch import CallbackWatch            # noqa: E402
 
     app = App()
+    # A fault inside a Tk callback only prints; without this the run would
+    # carry on and still report success. See tests/callbackwatch.py.
+    watch = CallbackWatch(app)
     app.geometry("1160x860")
     failures = []
     for det in found:
+        watch.where = det.profile.short
         try:
             app._load_folder(det.path)
             app.update()
             for group in list(app.nav_items):
+                watch.where = "%s / %s" % (det.profile.short, group)
                 app._show_group(group)
                 app.update()
             print("  %-18s %2d pages, %2d cards on %s"
@@ -54,7 +60,9 @@ def main(argv):
         except Exception as exc:                 # noqa: BLE001
             failures.append((det.profile.short, exc, traceback.format_exc()))
             print("  %-18s FAILED: %s" % (det.profile.short, exc))
+    watch.where = "shutdown"
     app.destroy()
+    failures.extend(watch.as_tuples())
 
     if failures:
         for _short, _exc, tb in failures:
