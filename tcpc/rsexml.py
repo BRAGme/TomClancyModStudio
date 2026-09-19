@@ -38,6 +38,7 @@ above the one it cares about. A bare name matches at any depth.
 from __future__ import annotations
 
 import os
+import fnmatch
 import re
 
 ENCODINGS = ("utf-8-sig", "cp1252")
@@ -169,24 +170,66 @@ class Doc:
     def find(self, path) -> list:
         """Every node whose path ends with `path`, case-insensitively.
 
-        The last segment may carry a predicate, `tag[attr=value]`, which is
-        what makes Advanced Warfighter addressable at all. Its weapon files do
-        not name their fields with elements; they are a flat list of
+        ANY segment may carry a predicate, `tag[attr=value]`, which is what
+        makes Advanced Warfighter addressable at all. Its weapon files do not
+        name their fields with elements; they are a flat list of
         ``<var name="spread_normal" value="1.87"/>``, so "the normal spread"
-        is not an element path -- it is the element whose `name` attribute says
-        so. `weapon_data/var[name=spread_normal]` picks that one out.
+        is not an element path -- it is the element whose `name` attribute
+        says so. `weapon_data/var[name=spread_normal]` picks that one out.
+
+        A predicate on an EARLIER segment is what lets one side of a game be
+        addressed without the other. Advanced Warfighter declares every weapon
+        twice in the same file -- `scar_light` for the human and
+        `scar_light_3rd` for everything the AI carries -- so the player's
+        spread and the AI's are two elements with the same name, in the same
+        file, told apart only by which `<unit>` they sit inside.
+        `unit[name=*_3rd]/var[name=spread_normal]` is that question.
+
+        A predicate value may use `*` as a wildcard, which is the only way to
+        say "every AI weapon" without listing all twenty-one of them.
         """
         want = [p for p in str(path).replace("\\", "/").split("/") if p]
         if not want:
             return []
-        want[-1], key, value = _predicate(want[-1])
-        tail = "/".join(w.lower() for w in want)
-        hits = [n for n in self.nodes
+        parsed = [_predicate(w) for w in want]
+        tail = "/".join(tag.lower() for tag, _k, _v in parsed)
+        hits = [(i, n) for i, n in enumerate(self.nodes)
                 if n.path.lower() == tail or n.path.lower().endswith("/" + tail)]
-        if key is None:
-            return hits
-        return [n for n in hits
-                if (_attr_ci(n, key) or ("",))[0].lower() == value.lower()]
+        if all(k is None for _t, k, _v in parsed):
+            return [n for _i, n in hits]
+        out = []
+        for index, node in hits:
+            chain = self._ancestors(index, len(parsed) - 1) + [node]
+            if len(chain) != len(parsed):
+                continue
+            if all(_matches(c, k, v) for c, (_t, k, v) in zip(chain, parsed)):
+                out.append(node)
+        return out
+
+    def _ancestors(self, index, count):
+        """The `count` enclosing elements of `self.nodes[index]`, outermost
+        first.
+
+        Node order is document order and `path` carries the depth, so the
+        parent of a node is the nearest PRECEDING node whose path is its
+        path minus the last segment. Siblings share a path string, which is
+        why this walks backwards from the node rather than searching by path.
+        """
+        if count <= 0:
+            return []
+        node = self.nodes[index]
+        parts = node.path.split("/")
+        out = []
+        depth = len(parts) - 1
+        i = index - 1
+        while i >= 0 and len(out) < count and depth >= 1:
+            want = "/".join(parts[:depth])
+            if self.nodes[i].path == want:
+                out.append(self.nodes[i])
+                depth -= 1
+            i -= 1
+        out.reverse()
+        return out
 
     def first(self, path):
         hits = self.find(path)
@@ -395,15 +438,39 @@ class Doc:
         self._nodes = None
 
 
-PREDICATE_RX = re.compile(r"^(?P<tag>[^\[]+)\[(?P<key>[^=\]]+)=(?P<value>[^\]]*)\]$")
+PREDICATE_RX = re.compile(
+    r"^(?P<tag>[^\[]+)\[(?P<key>[^=!\]]+)(?P<op>!?=)(?P<value>[^\]]*)\]$")
+
+
+def _matches(node, key, value):
+    """Whether `node` satisfies one predicate. `value` may contain `*`.
+
+    A key prefixed `!` is a negation, which `_predicate` encodes that way so
+    the parsed triple stays a triple.
+    """
+    if key is None:
+        return True
+    negate = key.startswith("!")
+    got = (_attr_ci(node, key[1:] if negate else key) or ("",))[0].lower()
+    hit = fnmatch.fnmatchcase(got, value.lower())
+    return not hit if negate else hit
 
 
 def _predicate(segment):
-    """Split `tag[attr=value]` into its three parts, or pass a plain tag."""
+    """Split `tag[attr=value]` into its parts, or pass a plain tag.
+
+    `!=` negates, and a value may use `*` as a wildcard. Both exist for one
+    job: Advanced Warfighter declares each weapon twice in a file, once for
+    the human and once (suffixed `_3rd`) for every AI, so "the player's
+    weapons" is `unit[name!=*_3rd]` and there is no other way to say it.
+    """
     m = PREDICATE_RX.match(segment.strip())
     if not m:
         return segment, None, None
-    return m.group("tag"), m.group("key"), m.group("value")
+    key = m.group("key")
+    if m.group("op") == "!=":
+        key = "!" + key
+    return m.group("tag"), key, m.group("value")
 
 
 def _attr_ci(node, attr):

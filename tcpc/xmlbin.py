@@ -226,30 +226,52 @@ def select(root, path):
     are edits to a binary the game loads, and a selector that silently means
     something else is worse than one that fails.
     """
+    import fnmatch
+
     from .rsexml import _predicate
     parts = [p for p in str(path).replace("\\", "/").split("/") if p]
     if not parts:
         return []
-    tag, key, value = _predicate(parts[-1])
-    want = [p.lower() for p in parts[:-1]] + [tag.lower()]
+    parsed = [_predicate(p) for p in parts]
+    want = [tag.lower() for tag, _k, _v in parsed]
     out = []
-    for nd, trail in _walk(root, []):
+    for nd, trail, nodes in _walk(root, [], []):
         if nd.kind != ELEMENT:
             continue
         chain = [t.lower() for t in trail] + [nd.name.lower()]
         if chain[-len(want):] != want:
             continue
-        if key is not None:
-            got = nd.get(key)
-            if got is None or got.lower() != value.lower():
+        # A predicate on an EARLIER segment is how one side of the game is
+        # addressed without the other: Advanced Warfighter declares every
+        # weapon twice in the same file, `scar_light` for the human and
+        # `scar_light_3rd` for everything an AI carries, so the two spreads
+        # are the same element name in the same file and only the enclosing
+        # `<unit>` tells them apart.
+        line = (nodes + [nd])[-len(parsed):]
+        ok = True
+        for node, (_tag, key, value) in zip(line, parsed):
+            if key is None:
                 continue
-        out.append(nd)
+            negate = key.startswith("!")
+            got = node.get(key[1:] if negate else key)
+            hit = got is not None and fnmatch.fnmatchcase(got.lower(),
+                                                          value.lower())
+            if hit == negate:
+                ok = False
+                break
+        if ok:
+            out.append(nd)
     return out
 
 
-def _walk(nd, trail):
-    yield nd, trail
+def _walk(nd, trail, nodes):
+    """Yields (node, names of its ancestors, the ancestor NODES themselves).
+
+    The nodes are carried as well as their names because a predicate on an
+    earlier path segment has to read that ancestor's attributes.
+    """
+    yield nd, trail, nodes
     if nd.kind == ELEMENT:
         for kid in nd.kids:
-            for pair in _walk(kid, trail + [nd.name]):
-                yield pair
+            for triple in _walk(kid, trail + [nd.name], nodes + [nd]):
+                yield triple

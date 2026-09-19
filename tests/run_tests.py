@@ -1588,6 +1588,89 @@ def test_mission_ai(dets):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_graw_sides(dets):
+    r"""Advanced Warfighter ships its own player/AI split; prove we use it.
+
+    Every weapon is declared TWICE in the same file -- `scar_heavy` and
+    `scar_heavy_3rd` -- each with a complete `weapon_data` stats block, and
+    the inventory extension appends `_3rd` for any unit that is not
+    `player_controlled`. Shipped values are identical, which is why nobody
+    noticed. The test is that a one-sided option moves exactly one of the two.
+    """
+    from tcpc.bundle import BundleSet
+    from tcpc import xmlbin
+    print("\n[Advanced Warfighter: the player/AI split it already ships]")
+    for det in dets:
+        p = det.profile
+        if p.delivery != "overlay":
+            continue
+        tmp = tempfile.mkdtemp(prefix="tcpc-side-")
+        try:
+            root = os.path.join(tmp, p.id)
+            for sig in p.layout.signature:
+                dest = os.path.join(root, sig.replace("/", os.sep))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if not sig.endswith(".bundle"):
+                    with open(dest, "wb") as fh:
+                        fh.write(b"stub")
+            entries, probe = {}, None
+            with BundleSet(os.path.join(det.path,
+                                        p.layout.bundles_dir)) as bs:
+                for rel in bs.find("data/units/weapons/*.xml"):
+                    entries[rel] = bs.read(rel)
+                    twin = engine.compiled_twin(p, rel)
+                    if twin and twin in bs:
+                        entries[twin] = bs.read(twin)
+                        node, _inc = xmlbin.loads(entries[twin])
+                        names = [u.get("name") for u in
+                                 xmlbin.select(node, "unit")]
+                        if (probe is None
+                                and any(n and n.endswith("_3rd") for n in names)
+                                and xmlbin.select(
+                                    node, "unit[name!=*_3rd]/stats/"
+                                          "var[name=spread_normal]")):
+                            probe = twin
+            write_bundle(os.path.join(root, "Bundles", "quick.bundle"), entries)
+            exe = os.path.join(root, p.layout.exe.replace("/", os.sep))
+            os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+            with open(exe, "wb") as fh:
+                fh.write(b"stub")
+            if not check("%s: a weapon declaring both sides was found"
+                         % p.short, probe is not None):
+                continue
+
+            def sides():
+                loose = os.path.join(root, probe.replace("/", os.sep))
+                raw = (open(loose, "rb").read() if os.path.isfile(loose)
+                       else entries[probe])
+                node, _inc = xmlbin.loads(raw)
+                pick = lambda sel: [n.get("value") for n in
+                                    xmlbin.select(node, sel)]
+                return (pick("unit[name!=*_3rd]/stats/var[name=spread_normal]"),
+                        pick("unit[name=*_3rd]/stats/var[name=spread_normal]"))
+
+            stock_player, stock_ai = sides()
+            check("%s: the two sides ship identical spread (%s vs %s)"
+                  % (p.short, stock_player, stock_ai),
+                  stock_player and stock_player == stock_ai)
+
+            for side, moves, holds in (("player", 0, 1), ("ai", 1, 0)):
+                for junk in ("Data", "data", ".tcpc-backup"):
+                    shutil.rmtree(os.path.join(root, junk), ignore_errors=True)
+                values = dict(p.defaults())
+                values.update(weapon_side=side, weapon_spread="tight")
+                result = engine.apply(root, p, p.effective(values))
+                now = sides()
+                changed = now[moves] != (stock_player, stock_ai)[moves]
+                unchanged = now[holds] == (stock_player, stock_ai)[holds]
+                check("%s: weapon_side=%s moves only that side (%s -> %s)"
+                      % (p.short, side, stock_player, now),
+                      result.ok and changed and unchanged,
+                      "; ".join(result.warnings[:2]))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1636,6 +1719,7 @@ def main():
         test_soaf_npc_split(dets)
         test_lockdown_sides(dets)
         test_mission_ai(dets)
+        test_graw_sides(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

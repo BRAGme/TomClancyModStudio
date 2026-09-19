@@ -125,40 +125,90 @@ def shared_settings():
                 Choice("slow", "Slower", "A third slower."),
             ],
             confidence="experimental", touches="data"),
+        Setting(
+            "weapon_side", "Who the weapon options apply to", CHOICE, "both",
+            group="Weapons",
+            help="Advanced Warfighter declares every weapon twice in the same "
+                 "file -- one copy for whoever is holding it and a second, "
+                 "suffixed _3rd, for everything the AI carries. The two ship "
+                 "with identical numbers, so the options below have always "
+                 "moved both. This picks a side.",
+            caution="The AI side is EVERY AI, which is the enemy AND your own "
+                    "squad -- the game splits on who is player-controlled, "
+                    "not on which team you are. It is a player/AI split, not "
+                    "a player/enemy one.",
+            choices=[
+                Choice("both", "Everyone", "As the options have always worked."),
+                Choice("player", "Only the weapon in your hands", ""),
+                Choice("ai", "Only weapons the AI carries",
+                       "Enemies and your own squad."),
+            ],
+            confidence="experimental", touches="data"),
     ]
+
+
+
+#: Advanced Warfighter ships its own player/AI split and nothing in this tool
+#: was using it. Every weapon is declared TWICE in the same file -- `scar_light`
+#: and `scar_light_3rd` -- each with a complete `weapon_data` stats block, and
+#: the shipped values are identical across all 22 GRAW 1 and 21 GRAW 2 pairs.
+#: The inventory extension picks between them: a unit that is not
+#: `player_controlled` gets the name with `_3rd` appended. Only 8 units in
+#: GRAW 1 and 12 in GRAW 2 carry `player_controlled="true"`, and all of them
+#: are the human's own body.
+#:
+#: So `_3rd` is EVERY AI -- the enemy AND your own squad. It is a player/AI
+#: split, not a player/enemy one, and the option says so rather than implying
+#: a separation the data does not make.
+#:
+#: The stats are at `unit/stats/var`, so reaching one side means a predicate on
+#: an ANCESTOR segment, which is why `rsexml.find` and `xmlbin.select` grew
+#: support for that.
+UNIT_PLAYER = "unit[name!=*_3rd]"
+UNIT_AI = "unit[name=*_3rd]"
+
+
+def _aimed(side, tail):
+    """The selector for one side of the split, or the flat one for both."""
+    if side == "player":
+        return UNIT_PLAYER + "/stats/" + tail
+    if side == "ai":
+        return UNIT_AI + "/stats/" + tail
+    return tail
 
 
 def shared_edits(values):
     out = []
     v = values
+    side = v.get("weapon_side", "both")
 
     spread = {"tight": 0.5, "laser": 0.1, "loose": 2.0}.get(v["weapon_spread"])
     if spread:
         for name in SPREAD:
-            out.append(XmlAttr(WEAPONS, path="var[name=%s]" % name,
+            out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=%s]" % name),
                                attr="value", scale=spread, minimum=0,
                                note="weapon spread"))
 
     kick = {"x0.5": 0.5, "none": 0.0, "x1.5": 1.5}.get(v["weapon_recoil"])
     if kick is not None:
         for name in RECOIL:
-            out.append(XmlAttr(WEAPONS, path="var[name=%s]" % name,
+            out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=%s]" % name),
                                attr="value", scale=kick, minimum=0,
                                note="recoil"))
 
     mags = {"x2": 2.0, "x0.5": 0.5}.get(v["magazines"])
     if mags:
-        out.append(XmlAttr(WEAPONS, path="var[name=clip_max]", attr="value",
+        out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=clip_max]"), attr="value",
                            scale=mags, minimum=1, note="magazine capacity"))
 
     if v["fire_modes"] == "all":
-        out.append(XmlAttr(WEAPONS, path="var[name=fire_modes]", attr="value",
+        out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=fire_modes]"), attr="value",
                            value="3", note="every fire mode"))
 
     rof = {"fast": 0.66, "slow": 1.5}.get(v["rate_of_fire"])
     if rof:
         for name in ("fire_rate_semi", "fire_rate_auto", "fire_rate_burst"):
-            out.append(XmlAttr(WEAPONS, path="var[name=%s]" % name,
+            out.append(XmlAttr(WEAPONS, path=_aimed(side, "var[name=%s]" % name),
                                attr="value", scale=rof, minimum=0.01,
                                note="rate of fire"))
     return out
