@@ -1729,34 +1729,42 @@ def test_rs3_ammo_character(dets):
           % (len(same_energy), len(pairs)),
           len(same_energy) == len(pairs) - 1,
           "%d differ, expected exactly 1" % (len(pairs) - len(same_energy)))
-    backwards = [j for _f, j in pairs
-                 if (stock.get(j, "m_iPenetrationFactor") or 0)
-                 > (stock.get(BASE := "R6Bullet", "m_iPenetrationFactor") or 0)]
-    check("Raven Shield: and hollow points out-pierce ball on all %d, which is "
-          "the wrong way round" % len(backwards), len(backwards) == len(pairs))
+    # m_iPenetrationFactor is a DIVISOR: a round's budget is roughly
+    # energy / factor. The hollow point's 4 against ball's inherited 1 means
+    # BALL gets four times the budget and goes through doors the hollow point
+    # bounces off. That is correct, not backwards -- an earlier version of
+    # this suite asserted the opposite and the option built on it was harmful.
+    # Asserted here so nobody "fixes" it again.
+    base = stock.get("R6Bullet", "m_iPenetrationFactor")
+    divisors = [j for _f, j in pairs
+                if (stock.get(j, "m_iPenetrationFactor") or 0) > (base or 0)]
+    check("Raven Shield: hollow points carry a higher penetration DIVISOR on "
+          "all %d, so ball out-penetrates them %gx"
+          % (len(divisors),
+             (stock.get(pairs[0][1], "m_iPenetrationFactor") or 1) / (base or 1)),
+          len(divisors) == len(pairs))
+    typed = [f for f, _j in pairs
+             if stock.find_property(f, "m_szBulletType") is not None]
+    check("Raven Shield: and all %d ball rounds override the bullet type the "
+          "base class defaults to JHP" % len(typed), len(typed) == len(pairs))
 
     tmp = tempfile.mkdtemp(prefix="tcpc-ammo-")
     try:
         root = sandbox_for(det, tmp)
         values = dict(profile.defaults())
-        values.update(ammo_character="realistic", ammo_ball_pierces=True)
+        values.update(ammo_character="realistic")
         result = engine.apply(root, profile, profile.effective(values))
         check("Raven Shield: the ammunition option applies", result.ok,
               "; ".join(result.warnings[:2]))
 
         after = upackage.Package.load(os.path.join(root, "system",
                                                    "R6Weapons.u"))
-        base = after.get("R6Bullet", "m_iPenetrationFactor")
-        harder = softer = pierces = stops = 0
+        harder = softer = stops = 0
         for f, j in pairs:
             if after.get(j, "m_iEnergy") > stock.get(j, "m_iEnergy"):
                 harder += 1
             if after.get(f, "m_iEnergy") < stock.get(f, "m_iEnergy"):
                 softer += 1
-            # ball has no penetration of its own: it inherits the base
-            if after.find_property(f, "m_iPenetrationFactor") is None \
-                    and base > after.get(j, "m_iPenetrationFactor"):
-                pierces += 1
             if after.get(j, "m_fKillStunTransfer") \
                     > after.get(f, "m_fKillStunTransfer"):
                 stops += 1
@@ -1764,10 +1772,16 @@ def test_rs3_ammo_character(dets):
               "every ball round softer (%d/%d)"
               % (harder, len(pairs), softer, len(pairs)),
               harder == len(pairs) and softer == len(pairs))
-        check("Raven Shield: ball now out-pierces hollow point on all %d "
-              "(base %s against %s)"
-              % (pierces, base, after.get(pairs[0][1], "m_iPenetrationFactor")),
-              pierces == len(pairs))
+        # The point of this one. An earlier version of the option rewrote the
+        # penetration field in both directions and made ball ammunition WORSE
+        # at the one thing it is already best at. It must not be touched.
+        moved = [j for _f, j in pairs
+                 if after.get(j, "m_iPenetrationFactor")
+                 != stock.get(j, "m_iPenetrationFactor")]
+        check("Raven Shield: and not one penetration figure was touched",
+              not moved and after.get("R6Bullet", "m_iPenetrationFactor")
+              == stock.get("R6Bullet", "m_iPenetrationFactor"),
+              "%d moved" % len(moved))
         check("Raven Shield: hollow point staggers harder on all %d -- "
               "including the one pair that ships it backwards" % stops,
               stops == len(pairs))
@@ -1781,17 +1795,10 @@ def test_rs3_ammo_character(dets):
         check("Raven Shield: the package is unchanged in length (%d bytes)" % b,
               a == b)
 
-        # turning the base switch off must leave the shared value alone
-        engine.apply(root, profile, profile.effective(
-            dict(values, ammo_ball_pierces=False)))
-        again = upackage.Package.load(os.path.join(root, "system",
-                                                   "R6Weapons.u"))
-        check("Raven Shield: declining the base change leaves it at stock",
-              again.get("R6Bullet", "m_iPenetrationFactor")
-              == stock.get("R6Bullet", "m_iPenetrationFactor"))
-        check("Raven Shield: ...while the rounds stay differentiated",
-              again.get(pairs[0][1], "m_iEnergy")
-              > again.get(pairs[0][0], "m_iEnergy"))
+        check("Raven Shield: ball still declares itself FMJ afterwards, so it "
+              "still passes through a body",
+              all(after.find_property(f, "m_szBulletType") is not None
+                  for f, _j in pairs))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

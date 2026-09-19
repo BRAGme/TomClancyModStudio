@@ -1,103 +1,76 @@
-r"""Raven Shield: making ball and hollow-point ammunition mean different things.
+r"""Raven Shield: giving ball and hollow-point ammunition a damage contrast.
 
-## The complaint is correct, and the data says why
+## What actually separates the two rounds, and what does not
 
-Every weapon in the game offers FMJ or JHP. Across all 33 calibres that ship
-both, read straight out of `R6Weapons.u`:
+This module shipped once claiming the two rounds are barely different and
+that the penetration field runs backwards. **Both were wrong**, and the
+corrected picture is more interesting than the wrong one.
 
-| field | FMJ | JHP |
-|---|---|---|
-| `m_iEnergy` (damage) | **identical in 32 of the 33 pairs** | |
-| `m_fRange` | identical in 32 of 33 | |
-| `m_fRangeConversionConst` | identical in 32 of 33 | |
-| `m_fKillStunTransfer` | 0.25 | 0.5 |
-| `m_iPenetrationFactor` | not authored -> inherits **1** | **4** |
+Three mechanics already separate them, all shipped, all working:
 
-So **the damage figure is literally the same number** in every calibre but
-one -- `ammo545mm7N6Subsonic`, where the hollow point carries 12% more energy
-and 12% more range, and which is also the only pair whose range differs at
-all. Everywhere else the only thing separating the two rounds in ordinary
-play is how hard a kill staggers, plus one field that runs the wrong way.
+1. **`m_szBulletType`.** `R6Bullet` defaults to `"JHP"` and the 33 ball
+   classes override it to `"FMJ"`. A hollow point that hits a person is
+   deactivated on the spot; a ball round with energy left over keeps flying
+   and can hit the man behind him.
+2. **`m_iPenetrationFactor` is a DIVISOR**, not a rating. The budget a round
+   gets is roughly `min(energy - falloff, 5000) / m_iPenetrationFactor`, and
+   it passes a surface only if that budget beats the surface's own value. So
+   the ball round's inherited 1 buys **four times** the budget of a hollow
+   point's 4: ball goes through doors that hollow point bounces off. The data
+   was already right. Reading the field as "how well it pierces" is what was
+   backwards.
+3. **`m_fKillStunTransfer`**, 0.25 against 0.5 -- a hollow-point kill staggers
+   harder.
 
-Because a hollow point is the round that is *supposed* not to over-penetrate.
-Shipped, JHP pierces **four times** better than ball ammunition. Whichever way
-the field is read, the two rounds are not opposites -- they are the same round
-with one of them slightly better at everything.
+What genuinely does NOT differ is **damage and range**: `m_iEnergy` is the
+same number in 32 of the 33 calibres that ship both, and `m_fRange` likewise.
+The exception is `ammo545mm7N6Subsonic`, where the hollow point carries 12%
+more of both.
 
-One pair is inconsistent with the rest: `ammo762x54mmR` has its stun values
-the other way round (FMJ 0.5, JHP 0.25). Setting stun absolutely rather than
-scaling it corrects that as a side effect.
+So the honest job for an option here is not "make them different" -- they are
+-- but "give them a damage and range contrast as well", so the choice is felt
+in a firefight and not only when shooting at a door.
 
-## What this option does about it
+## What this ships
 
-Gives each round a job, so the choice before a mission is a real one:
-
-* **FMJ — ball.** Carries further, loses energy more slowly with distance, and
-  hits with less immediate shock. The round for long sight-lines.
-* **JHP — hollow point.** Much harder-hitting and far more staggering on an
-  unarmoured target, but stops in what it hits and bleeds energy quickly over
-  distance. The round for clearing rooms.
+* **FMJ -- ball.** Carries further and loses energy more slowly with distance,
+  for less damage per hit. Already the round that beats doors and that can
+  pass through one man into another.
+* **JHP -- hollow point.** More damage and much more stagger, for shorter
+  reach and faster falloff. Already the round that stops in what it hits.
 
 Every figure is scaled from that calibre's OWN stock value, so the balance
-between a .22 and a .50 is preserved and only the FMJ-versus-JHP relationship
-changes. Stun is the exception and is set absolutely, because it only ever
-holds 0.25 or 0.5 and one pair holds them backwards.
+between a .22 and a .50 is preserved. Stun is the exception and is set
+absolutely, because it only ever holds 0.25 or 0.5 and one pair --
+`ammo762x54mmR` -- ships them the wrong way round relative to the other 32.
 
-`m_fRangeConversionConst` is treated as how fast energy bleeds off with
-distance. That reading is not a guess: across the 68 ammunition classes that
-author both, it correlates with `m_fRange` at **-0.895** on a log scale -- the
-longest-reaching round in the game carries 0.0137 and the shortest 0.1231 --
-so a bigger constant goes with a shorter round.
+`m_fRangeConversionConst` is a quadratic energy-falloff term,
+`RangeConversion(d) = d*d*c + c`. It also gates surface penetration at
+distance, so a round given a faster falloff gets worse at doors further away,
+which is consistent with everything else about a hollow point.
 
-## The penetration figure, and why it is not the headline
+## What is deliberately NOT touched
 
-The obvious reading of `m_iPenetrationFactor` is "shoots through walls", and
-the obvious option is "ball ammunition pierces cover". **That is not what
-this ships, because the premise is doubted by someone who plays the game:
-bullet penetration through level geometry is not something Raven Shield does
-by default.**
+**`m_iPenetrationFactor`, in either direction.** An earlier version of this
+module dropped the hollow point's 4 to 1 and raised the shared base to 3 or 5,
+under the heading "ball ammunition pierces cover". Both edits were harmful:
+the first hands hollow points the ball round's door-breaking budget, and the
+second DIVIDES every ball round's budget by 3 to 5 -- a 5.56 ball round falls
+from 1442 to 480 and stops clearing a 500-point door. The field is already
+correct and is left alone.
 
-That does not make the field meaningless -- it plausibly governs
-over-penetration through a body, or how many surfaces a projectile survives --
-but it does mean an option promising "shoots through cover" would be selling
-an effect nobody has demonstrated. So the differentiation above rests on
-damage, stagger, range and falloff, which are unambiguous numbers on
-unambiguous fields, and the penetration swap is a SEPARATE switch that ships
-OFF and says what is unknown about it.
-
-## The one thing that cannot be done cleanly
-
-**FMJ classes do not author `m_iPenetrationFactor` at all**; they inherit it
-from `R6Bullet`, and this tool cannot add a property to a compiled class
-without moving every byte after it. So "ball ammunition pierces" has to be
-done by raising the shared base value.
-
-That base is inherited by 96 classes, and ten of them are not bullets --
-`R6Grenade`, `R6FragGrenade`, `R6FlashBang`, `R6SmokeGrenade`, the claymore,
-the breaching and remote charges. Nothing establishes whether a penetration
-factor does anything at all for a thrown explosive. It is therefore a separate
-switch rather than part of the main choice, and it says so.
-
-## What this does to the enemy, which is worth knowing
-
-Following `m_pBulletClass` with the package reader: of the 205 weapons that
-name a round, **136 name an FMJ class** and the rest name a calibre family.
-Not one names a JHP class. The AI has no loadout menu -- it fires whatever its
-weapon points at.
-
-So retuning FMJ retunes what the terrorists shoot, and retuning JHP does not.
-That is not a bug to route around; it is the shape of the thing. Making ball
-ammunition the cover-piercing round makes enemy fire better at coming through
-cover, and choosing hollow points for yourself is choosing a round no enemy in
-the game carries.
+**Nor is general wall penetration a thing to reach for.** The machinery
+exists -- `R6Bullet.HitWall` calls a native that returns an exit point -- but
+it is opt-in per material and a material's `m_iPenetration` of 0 means
+impenetrable. Only 110 of the base game's 8,412 materials set it, and 104 of
+those are doors; the rest are a fence, a wardrobe, a screen and three other
+thin props. No walls, no floors, no crates, and no config flag anywhere that
+turns it on generally.
 """
 
-from ..model import BOOL, CHOICE, Choice, PropEdit, Setting
+from ..model import CHOICE, Choice, PropEdit, Setting
 
 AMMO = "system/R6Weapons.u"
-
-#: the shared base every round without its own value falls back to
-BASE_BULLET = "R6Bullet"
 
 #: Each profile: how the round's own stock figures are moved. `stun` is an
 #: absolute because the field only ever holds 0.25 or 0.5, and one pair holds
@@ -106,12 +79,10 @@ CHARACTER = {
     "realistic": {
         "fmj": dict(energy=0.90, rng=1.15, falloff=0.85, stun=0.20),
         "jhp": dict(energy=1.30, rng=0.85, falloff=1.30, stun=0.60),
-        "base_pen": 3,
     },
     "extreme": {
         "fmj": dict(energy=0.80, rng=1.30, falloff=0.70, stun=0.15),
         "jhp": dict(energy=1.60, rng=0.70, falloff=1.60, stun=0.90),
-        "base_pen": 5,
     },
 }
 
@@ -121,23 +92,24 @@ def settings():
         Setting(
             "ammo_character", "What the two ammunition types do", CHOICE,
             "stock", group="Ammunition",
-            help="Raven Shield ships FMJ and JHP with the SAME damage figure "
-                 "-- identical in 32 of the 33 calibres that offer both -- "
-                 "and the same range. The only thing separating them in play "
-                 "is how hard a kill staggers. This gives each round a job: "
-                 "ball pierces more and reaches further, hollow point hits "
-                 "much harder up close and stops in what it hits.",
+            help="Ball and hollow point already differ in three ways the game "
+                 "never explains: ball goes through doors hollow point "
+                 "bounces off, ball can pass through one man and hit the one "
+                 "behind him, and a hollow-point kill staggers harder. What "
+                 "they do NOT differ in is damage or range -- those are the "
+                 "same number in 32 of the 33 calibres that offer both. This "
+                 "adds that contrast, so the choice is felt in a firefight "
+                 "and not only against a door.",
             caution="Every figure is scaled from that calibre's own stock "
                     "value, so the balance between a .22 and a .50 is kept. "
-                    "What the penetration figure actually governs -- how many "
-                    "surfaces a round passes through, and whether body armour "
-                    "is one of them -- is not established anywhere in the "
-                    "data, so 'pierces' is the field's name rather than a "
-                    "measured effect. Nothing here has been watched running.",
+                    "The penetration figure is deliberately left alone: it is "
+                    "already correct, and it is a DIVISOR, so raising it "
+                    "makes a round worse. Nothing here has been watched in a "
+                    "running game.",
             choices=[
                 Choice("stock", "Stock",
-                       "Same damage, same range; hollow points pierce four "
-                       "times better than ball."),
+                       "Same damage and range; the three differences above "
+                       "are all there is."),
                 Choice("realistic", "Give each round a job",
                        "Ball +15% range and slower falloff for -10% damage; "
                        "hollow point +30% damage and far more stagger for "
@@ -148,32 +120,11 @@ def settings():
                        "for -30% range."),
             ],
             confidence="applied", touches="data"),
-        Setting(
-            "ammo_ball_pierces", "Swap the penetration figure as well", BOOL,
-            False,
-            group="Ammunition", requires={"ammo_character":
-                                          ["realistic", "extreme"]},
-            help="Shipped, hollow points carry four times the penetration "
-                 "figure of ball ammunition, which is the wrong way round for "
-                 "the round designed not to over-penetrate. This raises the "
-                 "shared base so ball ammunition carries the higher figure "
-                 "instead.",
-            caution="Off by default, for a reason worth reading. Raven "
-                    "Shield does not appear to do bullet penetration through "
-                    "level geometry at all, so this may well change nothing "
-                    "you can see -- it is not the 'shoot through walls' "
-                    "switch it looks like. It also cannot be aimed precisely: "
-                    "FMJ rounds carry no penetration value of their own and a "
-                    "compiled class cannot be given a new property, so the "
-                    "shared base has to move, and 96 classes inherit it "
-                    "including ten grenades and charges.",
-            confidence="experimental", touches="data"),
     ]
 
 
 def edits(values):
-    v = values
-    spec = CHARACTER.get(v["ammo_character"])
+    spec = CHARACTER.get(values["ammo_character"])
     if not spec:
         return []
     out = []
@@ -194,15 +145,4 @@ def edits(values):
         out.append(PropEdit(AMMO, cls=cls, prop="m_fKillStunTransfer",
                             value=how["stun"],
                             note="%s stopping power" % side))
-
-    # Hollow points stop in what they hit. They are the only rounds that
-    # author a penetration value, so this one can be written directly.
-    out.append(PropEdit(AMMO, cls="*JHP", prop="m_iPenetrationFactor",
-                        value=1, note="hollow points do not over-penetrate"))
-
-    if v["ammo_ball_pierces"]:
-        out.append(PropEdit(AMMO, cls=BASE_BULLET,
-                            prop="m_iPenetrationFactor",
-                            value=spec["base_pen"], stock=1,
-                            note="ball ammunition pierces cover"))
     return out

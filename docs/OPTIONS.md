@@ -80,19 +80,23 @@ field of view, camera shake, weapon bob, squad spacing).
 
 ## Where the shipped data is simply wrong, and the tool says so
 
-* **Raven Shield's two ammunition types are barely different.** Across the 33
-  calibres that offer both, FMJ and JHP carry the **same damage figure** in 32
-  of them and the same range in 32 of them. The only thing separating the
-  rounds in ordinary play is how hard a kill staggers (0.25 against 0.5) — and
-  one field runs backwards: hollow points carry **four times** the penetration
-  figure of ball ammunition, when a hollow point is the round designed *not*
-  to over-penetrate. One pair, `ammo762x54mmR`, even ships its stagger values
-  the wrong way round relative to the other 32. "What the two ammunition types
-  do" gives each round a job instead — built on damage, stagger, range and
-  falloff, which are unambiguous. The penetration swap is a separate switch
-  that ships OFF: Raven Shield does not appear to do bullet penetration
-  through level geometry by default, so an option promising "shoots through
-  cover" would be selling an effect nobody has demonstrated.
+* **Raven Shield's two ammunition types differ in three ways the game never
+  explains — and in none of the ways you would guess.** `R6Bullet` defaults its
+  bullet type to `JHP` and the 33 ball classes override it to `FMJ`: a hollow
+  point that hits a person is deactivated on the spot, while a ball round with
+  energy left keeps flying and can hit the man behind. `m_iPenetrationFactor`
+  is a **divisor**, so ball's inherited 1 against hollow point's 4 gives ball
+  four times the budget — it goes through doors hollow point bounces off. And
+  a hollow-point kill staggers harder (0.5 against 0.25).
+
+  What they genuinely do NOT differ in is **damage and range**: the same number
+  in 32 of the 33 calibres. "What the two ammunition types do" adds that
+  contrast, and deliberately leaves penetration alone.
+
+  This documentation previously said the opposite — that the rounds were
+  undifferentiated and the penetration field ran backwards — and an option
+  built on that reading would have made ball ammunition worse at the one
+  thing it is already best at. Both are corrected.
 
 ## Options shipped visibly DISABLED, with the reason on the card
 

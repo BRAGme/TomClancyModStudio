@@ -42,7 +42,7 @@ PRESET_HINT = "Choose a preset…"
 #: can ask about a downloaded executable is "is this the new one" -- and with
 #: a fixed name and a fixed version there is no way to answer it. The window
 #: title and the first log line both carry it.
-VERSION = "1.9"
+VERSION = "2.0"
 NOTES_TAB = "About this game"
 
 
@@ -94,6 +94,16 @@ class App(tk.Tk):
         #: label -> path for whatever the picker is currently offering
         self._shelf = {}
         self._shelf_dir = ""
+        #: Every game folder this tool has ever identified on this machine,
+        #: newest first. Kept because a person's games are not all in one
+        #: place: a Steam library on one drive, a second library on another,
+        #: and the two Advanced Warfighter titles sitting loose at a drive
+        #: root because they were never Steam titles. Browsing to one folder
+        #: used to replace the picker's contents with whatever was beside it,
+        #: so reaching a game on another drive meant browsing again or
+        #: sweeping every drive again. These are remembered instead, and the
+        #: picker offers all of them however far apart they are.
+        self._known = []
         self.vars, self.cards, self.nav_items = {}, {}, {}
         self.active_group = None
         self.busy = False
@@ -393,24 +403,83 @@ class App(tk.Tk):
                                 "in a Steam library or at the top of a drive. "
                                 "Use Browse to point at one.")
             return
-        self._fill_shelf("", found)
+        for det in found:
+            self._remember_game(det.path)
+        self._offer_known()
         self._say("Found %d game%s." % (len(found), "" if len(found) == 1 else "s"),
                   "good")
         first = list(self._shelf)[0]
         self.game_var.set(first)
         self._load_install(self._shelf[first])
 
-    def _shelf_label(self, det):
+    def _remember_game(self, path):
+        """Keep a game folder in the picker's memory, newest first."""
+        key = os.path.normcase(os.path.abspath(str(path)))
+        self._known = [p for p in self._known
+                       if os.path.normcase(os.path.abspath(p)) != key]
+        self._known.insert(0, str(path))
+        self._known = self._known[:40]
+
+    def _offer_known(self, current=None):
+        """Put every remembered game into the picker, wherever it lives.
+
+        Folders that have gone are dropped rather than offered and then
+        failing: an external drive that is not plugged in this time should
+        quietly not be listed.
+
+        This deliberately identifies each folder rather than scanning its
+        parent. Scanning is what makes the difference between one library and
+        four visible, and it is also what makes a sweep slow -- `identify`
+        opens one folder, `look` opens every folder beside it.
+        """
+        alive, found = [], []
+        for path in self._known:
+            if not os.path.isdir(path):
+                continue
+            det = identify(path)
+            if det.ok:
+                alive.append(path)
+                found.append(det)
+        self._known = alive
+        if not found:
+            return False
+        self._fill_shelf("", found, current=current)
+        return True
+
+    def _shelf_label(self, det, keep=2, drive=False):
         """What one entry in the picker reads as -- the game, then where it is,
         because a machine can hold the same game twice and this one does."""
-        return "%s   ·   %s" % (det.profile.short,
-                                     _short_path(det.path))
+        where = _short_path(det.path, keep)
+        if drive:
+            head = os.path.splitdrive(os.path.abspath(det.path))[0]
+            if head:
+                where = "%s  %s" % (head, where)
+        return "%s   ·   %s" % (det.profile.short, where)
 
     def _fill_shelf(self, folder, found, current=None):
         self._shelf_dir = folder
         self._shelf = {}
-        for det in sorted(found, key=lambda d: (d.profile.short, d.path)):
-            self._shelf[self._shelf_label(det)] = det.path
+        dets = sorted(found, key=lambda d: (d.profile.short, d.path))
+        # The shortest tail that still tells every row apart. Two components
+        # is enough almost always -- `common\Ghost Recon` -- but a person with
+        # two Steam libraries on two drives has the same game at the same tail
+        # on both, and a picker with two identical rows is worse than a long
+        # one. So the whole picker lengthens together, which keeps the rows
+        # reading alike, and only as far as it has to.
+        # Two components is enough almost always -- `common\Ghost Recon`.
+        # When it is not, the reason is nearly always that the same game sits
+        # at the same tail in two Steam libraries on two different drives, and
+        # the compact way to say that is the drive letter, not four more path
+        # components. Only if the drive still does not separate them does the
+        # tail grow.
+        keep, drive = 2, False
+        for keep, drive in ((2, False), (2, True), (3, True), (4, True),
+                            (5, True)):
+            labels = [self._shelf_label(d, keep, drive) for d in dets]
+            if len(set(labels)) == len(labels):
+                break
+        for det in dets:
+            self._shelf[self._shelf_label(det, keep, drive)] = det.path
         names = list(self._shelf)
         widest = max((len(n) for n in names), default=30)
         self.game_box.configure(values=names, width=min(74, widest + 2))
@@ -418,11 +487,13 @@ class App(tk.Tk):
         if current:
             self._select_in_shelf(current)
 
-    def _select_in_shelf(self, path):
+    def _select_in_shelf(self, path) -> bool:
+        """Point the picker at `path`. False when it is not on offer."""
         for label, known in self._shelf.items():
             if os.path.normcase(known) == os.path.normcase(path):
                 self.game_var.set(label)
-                return
+                return True
+        return False
 
     def _pick_game(self, _event=None):
         path = self._shelf.get(self.game_var.get())
@@ -486,9 +557,21 @@ class App(tk.Tk):
         folder = os.path.dirname(det.path) if det.ok else path
         self.path_var.set(folder)
         if shelf:
-            self._fill_shelf(folder, shelf, current=det.path if det.ok else None)
+            # Browsing to a library used to REPLACE the picker with whatever
+            # was in that one folder, which is what made a second drive feel
+            # like a different session. Everything found is remembered and the
+            # picker then offers all of it at once.
+            for other in shelf:
+                self._remember_game(other.path)
+            if det.ok:
+                self._remember_game(det.path)
+            if not self._offer_known(current=det.path if det.ok else None):
+                self._fill_shelf(folder, shelf,
+                                 current=det.path if det.ok else None)
         elif det.ok:
-            self._select_in_shelf(det.path)
+            self._remember_game(det.path)
+            if not self._select_in_shelf(det.path):
+                self._offer_known(current=det.path)
         self.detection = det
 
         if not det.ok:
@@ -960,10 +1043,11 @@ class App(tk.Tk):
     def _remember(self, path):
         self._recent = [path] + [p for p in self._recent if p != path]
         self._recent = self._recent[:8]
+        self._remember_game(path)
         self._save_prefs()
 
     def _save_prefs(self):
-        data = {"recent": self._recent, "profiles": {}}
+        data = {"recent": self._recent, "games": self._known, "profiles": {}}
         try:
             with open(settings_path(), encoding="utf-8") as fh:
                 data["profiles"] = json.load(fh).get("profiles", {})
@@ -984,7 +1068,9 @@ class App(tk.Tk):
         except Exception:                         # noqa: BLE001
             return
         self._recent = data.get("recent", [])
+        self._known = [p for p in data.get("games", []) if isinstance(p, str)]
         self._saved_values = data.get("profiles", {})
+        self._offer_known()
         for p in self._recent:
             if os.path.isdir(p):
                 self.after(250, lambda q=p: (self.detection is None

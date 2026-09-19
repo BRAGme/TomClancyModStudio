@@ -105,6 +105,52 @@ def grab(app, path):
     return True
 
 
+def check_shelf(app, games):
+    r"""Games in different places must all stay on offer at once.
+
+    A person's games are not in one folder. On this machine they are in two
+    Steam libraries on two drives plus two Advanced Warfighter titles sitting
+    loose at a drive root, because those were never Steam titles. Browsing to
+    one used to replace the picker with whatever was beside it, so reaching a
+    game on another drive meant browsing again -- or sweeping every drive
+    again, every session.
+
+    So: load each one in turn and require the picker to keep growing rather
+    than swapping, and require every entry to still load afterwards.
+    """
+    print("\n=== the picker, across %d location(s)"
+          % len({os.path.dirname(d.path).lower() for d in games}))
+    failures = 0
+    counts = []
+    for det in games:
+        app._load_install(det.path)
+        app.update()
+        counts.append(len(app._shelf))
+    drives = sorted({os.path.splitdrive(os.path.abspath(p))[0].upper()
+                     for p in app._shelf.values()})
+    print("  picker grew %s -> holds %d game(s) across %s"
+          % (" -> ".join(str(c) for c in counts[:4]), len(app._shelf),
+             ", ".join(drives) or "one drive"))
+    if len(app._shelf) < len(games):
+        print("  FAILED: the picker lost entries as locations changed")
+        failures += 1
+    if len(set(app._shelf)) != len(app._shelf):
+        print("  FAILED: two entries read identically")
+        failures += 1
+    for label, path in list(app._shelf.items()):
+        app.game_var.set(label)
+        app._pick_game()
+        app.update()
+        det = app.detection
+        if not (det and det.ok
+                and os.path.normcase(det.path) == os.path.normcase(path)):
+            print("  FAILED to load from the picker: %s" % label)
+            failures += 1
+    if not failures:
+        print("  every entry loads without browsing again")
+    return failures
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     shots = None
@@ -131,6 +177,8 @@ def main(argv=None):
         return 1
 
     failures = 0
+    if not preview:
+        failures += check_shelf(app, find_games())
     for name, where in targets:
         print("\n=== %s" % name)
         try:
