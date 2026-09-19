@@ -88,7 +88,11 @@ field of view, camera shake, weapon bob, squad spacing).
   figure of ball ammunition, when a hollow point is the round designed *not*
   to over-penetrate. One pair, `ammo762x54mmR`, even ships its stagger values
   the wrong way round relative to the other 32. "What the two ammunition types
-  do" gives each round a job instead.
+  do" gives each round a job instead — built on damage, stagger, range and
+  falloff, which are unambiguous. The penetration swap is a separate switch
+  that ships OFF: Raven Shield does not appear to do bullet penetration
+  through level geometry by default, so an option promising "shoots through
+  cover" would be selling an effect nobody has demonstrated.
 
 ## Options shipped visibly DISABLED, with the reason on the card
 

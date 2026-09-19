@@ -32,9 +32,8 @@ scaling it corrects that as a side effect.
 
 Gives each round a job, so the choice before a mission is a real one:
 
-* **FMJ — ball.** Pierces more, carries further, loses energy more slowly with
-  distance, and hits with less immediate shock. The round for long sight-lines
-  and opposition that is behind something.
+* **FMJ — ball.** Carries further, loses energy more slowly with distance, and
+  hits with less immediate shock. The round for long sight-lines.
 * **JHP — hollow point.** Much harder-hitting and far more staggering on an
   unarmoured target, but stops in what it hits and bleeds energy quickly over
   distance. The round for clearing rooms.
@@ -49,6 +48,22 @@ distance. That reading is not a guess: across the 68 ammunition classes that
 author both, it correlates with `m_fRange` at **-0.895** on a log scale -- the
 longest-reaching round in the game carries 0.0137 and the shortest 0.1231 --
 so a bigger constant goes with a shorter round.
+
+## The penetration figure, and why it is not the headline
+
+The obvious reading of `m_iPenetrationFactor` is "shoots through walls", and
+the obvious option is "ball ammunition pierces cover". **That is not what
+this ships, because the premise is doubted by someone who plays the game:
+bullet penetration through level geometry is not something Raven Shield does
+by default.**
+
+That does not make the field meaningless -- it plausibly governs
+over-penetration through a body, or how many surfaces a projectile survives --
+but it does mean an option promising "shoots through cover" would be selling
+an effect nobody has demonstrated. So the differentiation above rests on
+damage, stagger, range and falloff, which are unambiguous numbers on
+unambiguous fields, and the penetration swap is a SEPARATE switch that ships
+OFF and says what is unknown about it.
 
 ## The one thing that cannot be done cleanly
 
@@ -134,21 +149,24 @@ def settings():
             ],
             confidence="applied", touches="data"),
         Setting(
-            "ammo_ball_pierces", "Ball ammunition pierces cover", BOOL, True,
+            "ammo_ball_pierces", "Swap the penetration figure as well", BOOL,
+            False,
             group="Ammunition", requires={"ammo_character":
                                           ["realistic", "extreme"]},
             help="Shipped, hollow points carry four times the penetration "
-                 "figure of ball ammunition, which is the wrong way round. "
-                 "The option above already drops hollow points to the base "
-                 "value; this raises the base so ball ammunition is the one "
-                 "that pierces.",
-            caution="FMJ rounds do not carry a penetration value of their own "
-                    "-- they inherit the shared one -- and a compiled class "
-                    "cannot be given a new property, so this has to move the "
-                    "base. Ninety-six classes inherit it, ten of which are "
-                    "grenades and charges rather than bullets. Nothing "
-                    "establishes whether penetration means anything for a "
-                    "thrown explosive. Turn this off to leave the base alone.",
+                 "figure of ball ammunition, which is the wrong way round for "
+                 "the round designed not to over-penetrate. This raises the "
+                 "shared base so ball ammunition carries the higher figure "
+                 "instead.",
+            caution="Off by default, for a reason worth reading. Raven "
+                    "Shield does not appear to do bullet penetration through "
+                    "level geometry at all, so this may well change nothing "
+                    "you can see -- it is not the 'shoot through walls' "
+                    "switch it looks like. It also cannot be aimed precisely: "
+                    "FMJ rounds carry no penetration value of their own and a "
+                    "compiled class cannot be given a new property, so the "
+                    "shared base has to move, and 96 classes inherit it "
+                    "including ten grenades and charges.",
             confidence="experimental", touches="data"),
     ]
 

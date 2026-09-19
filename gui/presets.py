@@ -48,11 +48,9 @@ PRESETS = {
         }),
         ("Ammunition actually matters", {
             "ammo_character": "realistic",
-            "ammo_ball_pierces": True,
         }),
         ("Pick your round or pay for it", {
             "ammo_character": "extreme",
-            "ammo_ball_pierces": True,
             "terro_helmets": "half",
         }),
         ("Everybody dies fast", {
