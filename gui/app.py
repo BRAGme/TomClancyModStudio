@@ -22,7 +22,7 @@ import sys
 import threading
 import tkinter as tk
 import traceback
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,7 +31,7 @@ from tcpc.games import PROFILES  # noqa: E402
 from tcpc.install import identify, look, preview_detection  # noqa: E402
 from tcpc.model import BOOL, INT, MOD, OVERLAY  # noqa: E402
 
-from . import discorddialog, presence, skins, theme  # noqa: E402
+from . import dialog, discorddialog, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
 from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
                       SettingCard, nav_style)  # noqa: E402
@@ -42,7 +42,7 @@ PRESET_HINT = "Choose a preset…"
 #: can ask about a downloaded executable is "is this the new one" -- and with
 #: a fixed name and a fixed version there is no way to answer it. The window
 #: title and the first log line both carry it.
-VERSION = "1.7"
+VERSION = "1.8"
 NOTES_TAB = "About this game"
 
 
@@ -388,7 +388,7 @@ class App(tk.Tk):
                     found.append(det)
         if not found:
             self._say("No supported games found in any Steam library.", "warn")
-            messagebox.showinfo(APP_NAME,
+            dialog.info(self, APP_NAME,
                                 "None of the seven supported games turned up "
                                 "in a Steam library or at the top of a drive. "
                                 "Use Browse to point at one.")
@@ -804,7 +804,7 @@ class App(tk.Tk):
         if self.busy:
             return False
         if not (self.detection and self.detection.ok):
-            messagebox.showinfo(APP_NAME, "Load a supported game folder first.")
+            dialog.info(self, APP_NAME, "Load a supported game folder first.")
             return False
         return True
 
@@ -840,7 +840,7 @@ class App(tk.Tk):
             self._set_buttons(True)
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
                 return
             real = [c for c in result.changes if c.status == "changed"]
             self._say("Preview: %d value(s) across %d file(s). Nothing written."
@@ -861,7 +861,7 @@ class App(tk.Tk):
         try:
             preview = engine.apply(path, profile, vals, dry_run=True)
         except Exception as exc:                  # noqa: BLE001
-            messagebox.showerror(APP_NAME, str(exc))
+            dialog.error(self, APP_NAME, str(exc))
             self._say(str(exc), "bad")
             return
 
@@ -896,7 +896,7 @@ class App(tk.Tk):
             if len(preview.warnings) > 12:
                 lines.append("• …and %d more." % (len(preview.warnings) - 12))
         lines += ["", "Close the game first."]
-        if not messagebox.askokcancel(APP_NAME, "\n".join(lines)):
+        if not dialog.ask(self, APP_NAME, "\n".join(lines)):
             return
 
         self._say("Applying…")
@@ -905,7 +905,7 @@ class App(tk.Tk):
             self.busy = False
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
             else:
                 done_real = [c for c in result.changes if c.status == "changed"]
                 self._say("Done: %d value(s) written across %d file(s), all "
@@ -915,7 +915,7 @@ class App(tk.Tk):
                 for w in result.warnings[:20]:
                     self._say("  ! " + w, "warn")
                 if not result.ok:
-                    messagebox.showerror(
+                    dialog.error(self, 
                         APP_NAME, "Some files could not be written. The log "
                                   "says which.")
             self.detection = identify(path)
@@ -938,14 +938,14 @@ class App(tk.Tk):
                     "back any it wrote over?" % profile.layout.overlay_dir)
         else:
             what = "Put every file this tool changed back exactly as it was?"
-        if not messagebox.askokcancel(APP_NAME, what + "\n\nClose the game first."):
+        if not dialog.ask(self, APP_NAME, what + "\n\nClose the game first."):
             return
 
         def done(result, err):
             self.busy = False
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
             else:
                 self._say("Restored %d file(s)." % result.files,
                           "good" if result.ok else "bad")

@@ -40,6 +40,7 @@ NAME = "Tom Clancys PC ModStudio"
 ENTRY = "ModStudio.py"
 
 HIDDEN = [
+    "gui.dialog",
     'cli',
     'gui',
     'gui.app',
