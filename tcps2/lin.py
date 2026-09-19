@@ -47,6 +47,25 @@ import zlib
 
 CHUNK_RAW = 16384
 
+#: Compression ratios `_deflate_exact` may ask zopfli for, cheapest first.
+#: Only the first is reached unless a chunk is packed too tight to fit at all.
+ZOPFLI_LADDER = (5, 15, 40)
+
+#: How many bytes `_deflate_exact` may shift into a literal block while
+#: hunting a length that lands on a multiple of five.
+#:
+#: This replaced a sweep of 56 zopfli iteration counts, which was slow AND
+#: frequently could not succeed at all: zopfli's output length plateaus, so
+#: consecutive counts return the SAME length and therefore the same residue.
+#: Measured on COMMON.LIN, one chunk gave 7521 bytes at every count from 5 to
+#: 16 -- residue 2, never 0, so no number of tries could ever have hit it.
+#: Moving a byte into a literal block shifts the total by about one instead,
+#: which sweeps the residues properly. The two chunks that need this in
+#: COMMON.LIN land at lead 13 and lead 6, taking the repack from 5.1 seconds
+#: to under half a second while still hitting the slot exactly.
+
+ZOPFLI_LEADS = 24
+
 
 class LinError(Exception):
     pass
@@ -222,23 +241,41 @@ def _deflate_exact(plain: bytes, budget: int):
 
     # Some chunks on these discs are packed tighter than zlib can match, so the
     # sweep above never even gets under the slot and zopfli is the only thing
-    # that fits. Its length is not steerable by strategy, but it does move with
-    # the iteration count, which is enough to find one whose shortfall is a
-    # multiple of five.
-    for iterations in range(5, 61):
-        packed = _zopfli(plain, iterations)
-        if packed is None:
-            break
-        slack = budget - len(packed)
-        if slack < 0 or slack % 5:
-            continue
-        out = packed[:2] + EMPTY_STORED * (slack // 5) + packed[2:]
-        if len(out) == budget:
-            try:
-                if zlib.decompress(out) == plain:
-                    return out
-            except zlib.error:
-                pass
+    # that fits. Its length is not steerable by strategy OR, usefully, by the
+    # iteration count -- that plateaus, see ZOPFLI_LEADS. So the residue is
+    # swept the same way as above instead, by moving bytes out of the
+    # compressed body and into a literal block in front of it.
+    for iterations in ZOPFLI_LADDER:
+        base = _zopfli(plain, iterations)
+        if base is None:
+            return None                    # zopfli is not installed at all
+        if budget - len(base) < 0:
+            continue                       # too tight even here; pack harder
+        for lead in range(0, ZOPFLI_LEADS):
+            packed = base if lead == 0 else _zopfli(plain[lead:], iterations)
+            if packed is None:
+                break
+            # Strip zopfli's zlib header and its adler32: what is wanted is
+            # the bare deflate blocks, so a literal block can go in front and
+            # the checksum at the end can cover the WHOLE plaintext.
+            body = packed[2:-4]
+            stored = b""
+            if lead:
+                stored = (b"\x00" + struct.pack("<HH", lead, lead ^ 0xFFFF)
+                          + plain[:lead])
+            slack = budget - (2 + len(stored) + len(body) + 4)
+            if slack < 0:
+                break                      # a longer lead only grows it
+            if slack % 5:
+                continue
+            out = (b"\x78\x9c" + EMPTY_STORED * (slack // 5)
+                   + stored + body + want)
+            if len(out) == budget:
+                try:
+                    if zlib.decompress(out) == plain:
+                        return out
+                except zlib.error:
+                    pass
     return None
 
 

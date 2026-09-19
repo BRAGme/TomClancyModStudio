@@ -114,6 +114,7 @@ def main():
         run_host_filesystem(args)
         run_host_root(args)
         run_op_contract(args)
+        run_pump()
         run_ai_cover(args)
         run_team_kits(args)
         run_gear_icons(args)
@@ -3125,6 +3126,101 @@ def run_enemy_toughness(args):
                   % (gid, val),
                   plain == val and armour >= plain,
                   "%d / %d" % (plain, armour))
+
+
+def run_pump():
+    """The window must survive a queue message that raises.
+
+    This pins a real lockup. The pump armed its next tick on its last line,
+    so one raise in a completion callback ended the loop for good: the window
+    stayed up at zero CPU, the log frozen mid-file, the buttons latched off
+    and no dialog -- the work had actually finished, and it looked like a
+    hang. The collaborators here are stubs, so this needs no display.
+    """
+    import queue as _queue
+    from gui.app import App
+
+    print(chr(10) + "[the GUI message pump]")
+
+    class Bar:
+        def __init__(self):
+            self.cleared = 0
+        def set(self, done, total):
+            self.seen = (done, total)
+        def clear(self):
+            self.cleared += 1
+
+    class Stub:
+        """Borrows the real methods; everything they touch is a stub."""
+        _pump = App._pump
+        _recover = App._recover
+
+        def __init__(self):
+            self._msgs = _queue.Queue()
+            self._pumping = False
+            self.progress = Bar()
+            self.busy = True
+            self.lines = []
+            self.armed = 0
+            self.enabled = None
+        def after(self, _ms, _fn):
+            self.armed += 1
+        def _say(self, text, tag=None):
+            self.lines.append(text)
+        def _set_buttons(self, on):
+            self.enabled = on
+
+    def boom():
+        raise ValueError("deliberate")
+
+    app = Stub()
+    app._msgs.put(("done", boom))
+    app._msgs.put(("log", ("after the raise", None)))
+    app._pump()
+
+    check("a raising callback does not stop the pump",
+          app.armed == 1)
+    check("and the messages behind it are still delivered",
+          "after the raise" in app.lines)
+    check("the failure names itself in the log rather than going quiet",
+          any("ValueError" in ln and "deliberate" in ln for ln in app.lines),
+          str(app.lines[-3:]))
+    check("a failed job gives the window back instead of latching it off",
+          app.busy is False and app.enabled is True)
+    check("and the progress bar is cleared either way",
+          app.progress.cleared >= 1)
+
+    # A healthy pass must still arm exactly once and touch nothing else.
+    app = Stub()
+    app._msgs.put(("progress", (3, 9)))
+    app._pump()
+    check("an ordinary tick still reaches the bar",
+          app.progress.seen == (3, 9) and app.armed == 1)
+    check("and an ordinary tick does not disturb the buttons",
+          app.enabled is None and app.busy is True)
+
+    # Sizing a modal sheet calls `update`, which runs pending `after` jobs --
+    # this pump among them. Draining a second completion from inside the
+    # first one's dialog stacks modal sheets that cannot be dismissed, so
+    # re-entry has to be refused outright.
+    app = Stub()
+    reached = []
+
+    def nested():
+        app._pump()                     # what `update` inside a sheet does
+        reached.append(app._msgs.qsize())
+
+    app._msgs.put(("done", nested))
+    app._msgs.put(("log", ("behind the sheet", None)))
+    app._pump()
+    check("a pump re-entered from a nested update refuses to drain",
+          reached == [1], str(reached))
+    check("and the outer drain still delivers what was behind it",
+          "behind the sheet" in app.lines)
+    check("re-entry does not arm a second tick either",
+          app.armed == 1)
+    check("and the flag is released once the outer drain is done",
+          app._pumping is False)
 
 
 def run_gear_icons(args):
