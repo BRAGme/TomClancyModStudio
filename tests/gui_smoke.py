@@ -208,6 +208,53 @@ def check_dropdown(app):
     return failures
 
 
+class CallbackWatch:
+    r"""Make a Tk callback fault fail the run instead of only printing it.
+
+    Tk catches an exception raised inside a callback -- a button command, a
+    binding, an `after` job -- and hands it to `Tk.report_callback_exception`,
+    whose default prints a traceback to stderr and carries on. The run
+    continues, this file's own counter never hears about it, and the last line
+    still says `0 failure(s)`.
+
+    That is not hypothetical. For most of one session this test printed a
+    traceback out of the GUI's message pump on every single run and reported
+    zero failures throughout, because the counter and the traceback were
+    independent -- and the person reading the output had started filtering the
+    repeated lines away as noise. They were the symptom of a real bug: the
+    pump re-armed itself only on its last line, so one raise in a completion
+    callback stopped it for good and hung the window.
+
+    A smoke test that prints a fault and then passes is worse than one that
+    never looked, because it supplies the reassurance without the checking. So
+    the faults are counted, and each is labelled with whatever was on screen
+    when it happened.
+    """
+
+    def __init__(self, app):
+        self.faults = []
+        self.where = "start-up"
+        app.report_callback_exception = self._report
+
+    def _report(self, exc, val, tb):
+        text = "".join(traceback.format_exception(exc, val, tb))
+        self.faults.append((self.where, text))
+        sys.stderr.write(text)          # still shown, exactly as before
+
+    def report(self):
+        """Print what was caught. Returns how many, to add to the failures."""
+        if not self.faults:
+            return 0
+        print("\n=== %d Tk callback fault(s)" % len(self.faults))
+        print("    These print and carry on, so before this they passed.")
+        for where, text in self.faults:
+            lines = text.rstrip().splitlines()
+            print("  %s" % where)
+            for line in lines:
+                print("    %s" % line)
+        return len(self.faults)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     shots = None
@@ -223,6 +270,7 @@ def main(argv=None):
 
     theme.set_dpi_aware()
     app = App()
+    watch = CallbackWatch(app)
     app.geometry("1280x900+40+40")
     app.update()
 
@@ -235,10 +283,13 @@ def main(argv=None):
 
     failures = 0
     if not preview:
+        watch.where = "the picker"
         failures += check_shelf(app, find_games())
+        watch.where = "the dropdowns"
         failures += check_dropdown(app)
     for name, where in targets:
         print("\n=== %s" % name)
+        watch.where = "%s: loading" % name
         try:
             app._load_install(where)
             app.update()
@@ -257,6 +308,7 @@ def main(argv=None):
                  app.emblem_src.size if app.emblem_src else None))
         pages = list(app.nav_items)
         for page in pages:
+            watch.where = "%s: %s" % (name, page)
             try:
                 app._show_group(page)
                 app.update()
@@ -277,6 +329,7 @@ def main(argv=None):
         # by a user clicking it
         from gui.presets import PRESETS
         for pname, _vals in PRESETS.get(app.profile.id, []):
+            watch.where = "%s: preset %s" % (name, pname)
             try:
                 app.preset_var.set(pname)
                 app._apply_preset()
@@ -286,7 +339,9 @@ def main(argv=None):
                 traceback.print_exc()
                 failures += 1
 
+    watch.where = "shutdown"
     app.destroy()
+    failures += watch.report()
     print("\n%d failure(s)." % failures)
     return 1 if failures else 0
 
