@@ -103,6 +103,20 @@ PRESETS = {
 
     # -----------------------------------------------------------------
     "soaf": [
+        ("Sharpshooter — your guns steady, theirs not", {
+            "npc_weapons": True,
+            "weapon_accuracy": "tight",
+            "recoil": "none",
+            "npc_accuracy": "loose",
+            "npc_recoil": "double",
+        }),
+        ("Outgunned — they shoot straighter than you", {
+            "npc_weapons": True,
+            "npc_accuracy": "tight",
+            "npc_mags": 3,
+            "enemy_skill": "sharp",
+            "weapon_accuracy": "loose",
+        }),
         ("Deadly on both sides", {
             "lethality": "brutal",
             "armour_value": "x1.7",

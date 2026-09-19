@@ -46,7 +46,7 @@ def build_edits(values, root=None):
         # matches `ak47_npc.gun` perfectly well.
         for edit in out:
             if edit.select == _gr_npc.GUNS and not edit.scope:
-                edit.scope = "not:*%s.gun" % _gr_npc.SUFFIX
+                edit.scope = "not:*%s.gun" % _gr_npc.NPC_SUFFIX
         out += _gr_npc.edits(
             values, os.path.join(str(root),
                                  LAYOUT.base_mod.replace("/", os.sep)))

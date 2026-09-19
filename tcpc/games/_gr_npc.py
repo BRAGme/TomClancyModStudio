@@ -60,6 +60,8 @@ from the folder picks those up.
 import os
 import re
 
+from ._rse import (ITEM_RX, NPC_ACCURACY, NPC_RECOIL, NPC_SUFFIX, PACES,
+                   STANCES, npc_name)
 from ..model import BOOL, CHOICE, Choice, FileCopy, INT, Setting, XmlText
 
 KITS = "Equip/*.kit"
@@ -73,12 +75,6 @@ ITEM = "ItemFileName"
 #: weapons. `m1911 only.kit` is deliberately NOT here: both sides use it.
 ALLIED_ONLY_KITS = ("m16 only.kit", "sa80 only.kit")
 
-#: appended to a gun's base name. Matches what `PS2Accuracy` uses, so the two
-#: cannot both be installed and disagree about what `ak47_npc.gun` means --
-#: whichever mod sits higher in the load order simply wins, as it should.
-SUFFIX = "_npc"
-
-_ITEM_RX = re.compile(r"<\s*ItemFileName\s*>\s*([^<]+?)\s*<", re.I)
 
 
 def settings():
@@ -151,25 +147,13 @@ def enemy_kits(base_mod_dir):
                 text = fh.read().decode("latin-1")
         except OSError:                              # pragma: no cover
             continue
-        guns = [g.strip() for g in _ITEM_RX.findall(text)
+        guns = [g.strip() for g in ITEM_RX.findall(text)
                 if g.strip().lower().endswith(".gun")]
         if guns:
             out["Equip/" + name] = guns
     return out
 
 
-def npc_name(gun):
-    stem, ext = os.path.splitext(gun)
-    return stem + SUFFIX + ext
-
-
-ACCURACY = {"tight": 0.66, "loose": 1.5, "wild": 2.0}
-RECOIL = {"none": 0.0, "half": 0.5, "double": 2.0}
-
-#: the twelve-entry accuracy matrix, spelled `<PaceStanceAccuracy>` in the
-#: file. Lower is tighter: an AK47 reads 24 standing still and 1200 running.
-PACES = ("Run", "Walk", "Shuffle", "Stationary")
-STANCES = ("Stand", "Crouch", "Prone")
 
 
 def edits(values, base_mod_dir):
@@ -196,7 +180,7 @@ def edits(values, base_mod_dir):
         out.append(FileCopy(rel, source="Equip/" + gun,
                             note="enemy copy of " + gun))
 
-        acc = ACCURACY.get(v["npc_accuracy"])
+        acc = NPC_ACCURACY.get(v["npc_accuracy"])
         if acc:
             for pace in PACES:
                 for stance in STANCES:
@@ -205,7 +189,7 @@ def edits(values, base_mod_dir):
                         minimum=0, absent="skip",
                         note="enemy accuracy: %s %s" % (pace.lower(),
                                                         stance.lower())))
-        kick = RECOIL.get(v["npc_recoil"])
+        kick = NPC_RECOIL.get(v["npc_recoil"])
         if kick is not None:
             out.append(XmlText(rel, path="Recoil", scale=kick, minimum=0,
                                absent="skip", note="enemy recoil"))

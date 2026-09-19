@@ -1303,6 +1303,113 @@ def test_npc_split(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_soaf_npc_split(dets):
+    r"""Sum of All Fears' split, which needs a mechanism Ghost Recon does not.
+
+    Ghost Recon separates the sides by folder. This game has no enemy kit
+    folder: 239 enemy placements wear `Kits\mercenaries\` kits and 176 wear
+    `multi_NN` loadouts out of `Kits\team\`, which is also where the player's
+    own loadouts live. So the borrowed ones are COPIED rather than shadowed
+    and the missions are rewritten to name the copies.
+
+    Two things therefore have to be true at once, and both are asserted: the
+    player's `Kits\team\` must come through completely untouched, and no
+    mission may be left naming a bare `multi_NN.kit` on an enemy.
+    """
+    import re
+    det = next((d for d in dets if d.profile.id == "soaf"), None)
+    if det is None:
+        return
+    print("\n[Sum of All Fears: the enemy gets its own weapons]")
+    profile = det.profile
+    from tcpc.games import _soaf_npc
+
+    stock_mod = os.path.join(det.path,
+                             profile.layout.base_mod.replace("/", os.sep))
+    shadow, borrowed = _soaf_npc.enemy_kits(stock_mod)
+    check("SOAF: %d enemy kits shadowed in place, %d borrowed loadouts copied"
+          % (len(shadow), len(borrowed)), len(shadow) > 20 and len(borrowed) > 5)
+    check("SOAF: every borrowed loadout is a team kit, every shadowed one is "
+          "a mercenaries kit",
+          all(k.startswith(_soaf_npc.TEAM) for k in borrowed)
+          and all(k.startswith(_soaf_npc.MERC) for k in shadow))
+
+    # the measurement the whole mechanism rests on
+    enemy_named = _soaf_npc.enemy_mission_kits(stock_mod)
+    allied = {"hrt_stealth.kit", "open_assault.kit", "cqb_assault.kit",
+              "no_gun.kit"}
+    check("SOAF: no allied-only kit is named by a non-allied actor",
+          not (enemy_named & allied), str(sorted(enemy_named & allied)))
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-soafnpc-")
+    try:
+        root = os.path.join(tmp, "soaf")
+        for base, _d, names in os.walk(stock_mod):
+            for n in names:
+                if not n.lower().endswith((".kit", ".gun", ".atr", ".xml",
+                                           ".mis", ".gtf")):
+                    continue
+                src = os.path.join(base, n)
+                dst = os.path.join(root, os.path.relpath(src, det.path))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+        exe = os.path.join(root, profile.layout.exe.replace("/", os.sep))
+        os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+        with open(exe, "wb") as fh:
+            fh.write(b"stub")
+
+        values = dict(profile.defaults())
+        values.update(npc_weapons=True, npc_accuracy="loose", npc_recoil="double",
+                      weapon_accuracy="tight", recoil="none", npc_mags=3)
+        result = engine.apply(root, profile, profile.effective(values))
+        check("SOAF: the split applies with no warnings",
+              result.ok and not result.warnings,
+              "; ".join(result.warnings[:2]))
+
+        mod = engine.mod_dir(root, profile)
+
+        def read(path, tag):
+            with open(path, encoding="latin-1", errors="replace") as fh:
+                m = re.search(r"<%s>\s*([\d.]+)\s*</%s>" % (tag, tag), fh.read())
+            return float(m.group(1)) if m else None
+
+        tag = "StationaryStandAccuracy"
+        for shared in ("m16.gun", "dragunov.gun"):
+            stock = read(os.path.join(stock_mod, "Equip", shared), tag)
+            player = read(os.path.join(mod, "Equip", shared), tag)
+            enemy = read(os.path.join(mod, "Equip",
+                                      _soaf_npc.npc_name(shared)), tag)
+            check("SOAF: %s is carried by both sides and they now differ "
+                  "(stock %s -> player %s, enemy %s)"
+                  % (shared, stock, player, enemy),
+                  None not in (stock, player, enemy) and player < stock < enemy)
+
+        # the player's loadout folder must be completely absent from the mod
+        team = os.path.join(mod, _soaf_npc.TEAM.replace("/", os.sep))
+        check("SOAF: not one of the player's team loadouts was written",
+              not os.path.isdir(team) or not os.listdir(team),
+              str(os.listdir(team)[:3] if os.path.isdir(team) else []))
+
+        # and no mission may still send an enemy to a borrowed loadout
+        missions = os.path.join(mod, "Mission")
+        named = set()
+        for n in os.listdir(missions) if os.path.isdir(missions) else []:
+            if not n.lower().endswith(".mis"):
+                continue
+            with open(os.path.join(missions, n), encoding="latin-1",
+                      errors="replace") as fh:
+                named |= set(re.findall(r'Kit\s*=\s*"([^"]+)"', fh.read()))
+        bare = sorted(k for k in named
+                      if k.lower().startswith("multi_")
+                      and not k.lower().endswith("_npc.kit"))
+        check("SOAF: every borrowed loadout reference was rewritten",
+              named and not bare, str(bare[:4]))
+        check("SOAF: the allied kits are still named unchanged",
+              allied & named, str(sorted(allied & named)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1348,6 +1455,7 @@ def main():
         test_sides(dets)
         test_graw_direction(dets)
         test_npc_split(dets)
+        test_soaf_npc_split(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

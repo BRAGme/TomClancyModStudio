@@ -23,6 +23,9 @@ The obvious-looking discriminator does not work. `<ClassName>` says
 Sum of All Fears has no `<ClassName>` at all.
 """
 
+import os
+import re
+
 from ..model import (BOOL, CHOICE, Choice, INT, Setting, XmlAttr, XmlText)
 
 #: Enemies: loose at the top of the Actor folder. `*` does not cross a
@@ -264,3 +267,36 @@ def shared_edits(values, game_id):
                            offset=v["spare_mags"], minimum=1, maximum=99,
                            note="spare magazines"))
     return out
+
+
+# ---------------------------------------------------------------------------
+# the enemy-weapon split: vocabulary both games share
+# ---------------------------------------------------------------------------
+#
+# Ghost Recon and Sum of All Fears use the same weapon-file vocabulary even
+# though they need different mechanisms to reach the enemy's kits (see
+# `_gr_npc.py` and `_soaf_npc.py`). These live here so neither of those two
+# modules has to import from the other.
+
+#: appended to a gun's base name to make the enemy's copy. Matches what the
+#: `PS2Accuracy` mod uses, so the two cannot both be installed and disagree
+#: about what `ak47_npc.gun` means -- whichever sits higher in the load order
+#: simply wins, as it should.
+NPC_SUFFIX = "_npc"
+
+#: how a kit names the thing it carries
+ITEM_RX = re.compile(r"<\s*ItemFileName\s*>\s*([^<]+?)\s*<", re.I)
+
+#: the twelve-entry accuracy matrix, spelled `<PaceStanceAccuracy>` in a
+#: `.gun`. LOWER is tighter: an AK47 reads 24 standing still and 1200 running.
+PACES = ("Run", "Walk", "Shuffle", "Stationary")
+STANCES = ("Stand", "Crouch", "Prone")
+
+NPC_ACCURACY = {"tight": 0.66, "loose": 1.5, "wild": 2.0}
+NPC_RECOIL = {"none": 0.0, "half": 0.5, "double": 2.0}
+
+
+def npc_name(name):
+    """`ak47.gun` -> `ak47_npc.gun`, `multi_08.kit` -> `multi_08_npc.kit`."""
+    stem, ext = os.path.splitext(name)
+    return stem + NPC_SUFFIX + ext

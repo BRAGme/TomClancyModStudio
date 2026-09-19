@@ -123,12 +123,25 @@ rather than quietly inert:
 * **Vegas "Default difficulty"** sets which tier you start on. It does not
   change what a tier *means*, because that lives in cooked packages this tool
   does not edit.
-* **Ghost Recon "Weapon accuracy"** moves both sides by default, because both
-  sides read the same weapon files. Turning on **"Give the enemy its own
-  weapons"** separates them: the enemy's 27 kits are shadowed to point at
-  `<weapon>_npc.gun` copies, and this option then applies to the player's set
-  alone. One seam remains — `m1911 only.kit` is carried by both a few friendly
-  NPCs and by enemies, so those friendlies get the enemy's pistol.
+* **"Weapon accuracy" moves both sides by default** in Ghost Recon and Sum of
+  All Fears, because both sides read the same weapon files. Turning on **"Give
+  the enemy its own weapons"** separates them, and the option then applies to
+  the player's set alone. The two games need different mechanisms:
+  * *Ghost Recon* separates by folder — the enemy's kits are loose in `Equip\`
+    and the player's under `Kits\`, no path in common — so its 27 enemy kits
+    are shadowed to point at `<weapon>_npc.gun` copies. Five of the thirteen
+    guns the enemy carries are shared with the player.
+  * *Sum of All Fears* has no enemy kit folder. 239 enemy placements wear
+    `Kits\mercenaries\` kits, which are shadowed; 176 wear `multi_NN`
+    loadouts out of the player's own `Kits	eam\`, which are **copied** and
+    the campaign missions rewritten to name the copies. Safe because not one
+    allied placement in 25 missions wears a borrowed loadout. **Nineteen** of
+    the twenty-two guns the enemy carries are shared with the player here, so
+    the split matters considerably more.
+  * One seam in each, and it is the same seam: a single kit carried by both a
+    few friendly NPCs and by enemies — `m1911 only.kit` in Ghost Recon,
+    `m9_only.kit` in Sum of All Fears — so those friendlies get the enemy's
+    pistol. Nothing in the file layout tells them apart.
 * **Lockdown "Wounds spoil your aim"** switches on six values that ship at
   zero. Nothing in the data proves the engine still reads them.
 * **Raven Shield "Friendly fire"** is multiplayer only. There is no

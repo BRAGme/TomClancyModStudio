@@ -13,7 +13,9 @@ shelf where "make Recruit easier" and "make Elite harder" are single numbers
 rather than a sweep over hundreds of actor files.
 """
 
-from . import _rse
+import os
+
+from . import _rse, _soaf_npc
 from ..model import (CHOICE, Choice, GameProfile, Layout, MOD, Setting,
                      XmlText)
 
@@ -68,7 +70,7 @@ EXTRA = [
         confidence="experimental", touches="mod"),
 ]
 
-SETTINGS = _rse.shared_settings() + EXTRA
+SETTINGS = _rse.shared_settings() + _soaf_npc.settings() + EXTRA
 
 #: The eleven difficulty tags do NOT all move the same way, which is why this
 #: is a table of explicit values rather than a multiplier:
@@ -112,9 +114,19 @@ CURVE = {
 ARMOUR_FACTORS = ["BallisticArmoredChestFactor%d" % i for i in range(4)]
 
 
-def build_edits(values):
+def build_edits(values, root=None):
     out = _rse.shared_edits(values, "soaf")
     v = values
+
+    if v.get("npc_weapons") and root:
+        # Once the enemy carries its own copies, the Weapons page above is the
+        # PLAYER's set, so it must stop reaching them: `Equip/*.gun` matches
+        # `m16_npc.gun` perfectly well.
+        for edit in out:
+            if edit.select == _soaf_npc.EQUIP_GUNS and not edit.scope:
+                edit.scope = "not:*%s.gun" % _soaf_npc.NPC_SUFFIX
+        out += _soaf_npc.edits(
+            v, os.path.join(str(root), LAYOUT.base_mod.replace("/", os.sep)))
 
     curve = CURVE.get(v["difficulty_curve"])
     if curve:
@@ -165,10 +177,26 @@ AimFactor MULTIPLIES a dispersion so above 1 is worse aim, and a DelayFactor
 multiplies a reaction time so above 1 is slower. Treating all three as one
 "difficulty" number makes the enemy sharper and slower at the same time.
 
-Enemies are told from your own squad by where the file sits: enemy actors are
-loose in Actor\, your team is in Actor\Team Members\. The enemies' names are
-tokens rather than names -- @SOLDIERNAME on 143 of them, @MILITIANAME on 67 --
-which is a second, independent way to tell the two apart.
+Enemies are NOT told from your own people by where the file sits, and assuming
+so was a bug this profile shipped. Your squad is in Actor\Team Members\, but
+49 of the 448 actors loose in Actor\ are friendly too -- eleven support teams
+and a hostage -- so every "tougher enemies" option was buffing them. An enemy
+here is an actor with NO <KitPath>: a kit path means it was equipped out of
+your own kit folders. The enemies' names being tokens rather than names --
+@SOLDIERNAME on 143 of them, @MILITIANAME on 67 -- is a second, independent
+way to tell the two apart.
+
+Separating your weapons from theirs. "Give the enemy its own weapons" on the
+Enemies page does it, and it needs a different mechanism from Ghost Recon's
+because this game keeps no enemy kit folder. 239 enemy placements wear
+Kits\mercenaries\ kits, which are shadowed in place; 176 wear multi_NN
+loadouts out of Kits	eam\, which is also where YOUR loadouts live -- so
+those are copied to Kits\mercenaries\multi_NN_npc.kit and the campaign
+missions are rewritten to name the copies. That rewrite is safe as a plain
+rename because, measured across all 25 missions, not one allied placement
+wears a borrowed loadout. It matters more here than in Ghost Recon: the two
+sides share nineteen of the twenty-two guns the enemy carries, against five
+there. See _soaf_npc.py.
 
 Nothing in this profile has been watched working in a running game.
 """
