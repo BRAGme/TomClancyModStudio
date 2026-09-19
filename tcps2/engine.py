@@ -282,7 +282,8 @@ def plan(iso_path, profile, values) -> Plan:
 # apply
 # ---------------------------------------------------------------------------
 
-def apply(iso_path, profile, values, progress=None, data_root=None) -> dict:
+def apply(iso_path, profile, values, progress=None, data_root=None,
+          tick=None) -> dict:
     """Patch a disc, or a disc plus a loose data root.
 
     `data_root` picks the second delivery mode. Word edits still go into the
@@ -345,11 +346,12 @@ def apply(iso_path, profile, values, progress=None, data_root=None) -> dict:
                 say("  in the loose archives, which may grow")
                 with hostroot.HostRoot(data_root, writable=True) as root:
                     report["data"] = dataedit.apply_data(
-                        root, profile, data, dstore, progress=progress)
+                        root, profile, data, dstore, progress=progress,
+                        tick=tick)
                 report["data_root"] = str(data_root)
             else:
-                report["data"] = dataedit.apply_data(iso, profile, data,
-                                                     dstore, progress=progress)
+                report["data"] = dataedit.apply_data(
+                    iso, profile, data, dstore, progress=progress, tick=tick)
 
     say("Verifying against the disc")
     with Iso(iso_path) as iso:

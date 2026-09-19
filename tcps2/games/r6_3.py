@@ -403,12 +403,12 @@ def _settings():
 def _build_settings():
     return [
         # ---- wave mode -------------------------------------------------
-        Setting("wave_enable", "Enable wave mode", BOOL, True, "Enemy Waves",
+        Setting("wave_enable", "Enable wave mode", BOOL, True, "Enemies",
                 help="Rainbow Six 3 already ships a terrorist deployment-zone "
                      "system that the campaign uses and Terrorist Hunt never "
                      "triggers. This switches it on and hands you its dials.",
                 confidence="verified"),
-        Setting("wave_gate", "Where waves feed", CHOICE, "always", "Enemy Waves",
+        Setting("wave_gate", "Where waves feed", CHOICE, "always", "Enemies",
                 choices=[
                     Choice("always", "Every zone, all the time",
                            "Loudest option. Every deployment zone runs from the "
@@ -425,18 +425,18 @@ def _build_settings():
                      "flag, and it clears that flag for the zone containing a "
                      "player. This picks which way the test runs.",
                 requires={"wave_enable": True}, confidence="verified"),
-        Setting("wave_total", "Enemies each zone owes", INT, 30, "Enemy Waves",
+        Setting("wave_total", "Enemies each zone owes", INT, 30, "Enemies",
                 minimum=1, maximum=250, unit="enemies",
                 help="Total a single deployment zone will release before it is "
                      "spent. A map with three zones triples this.",
                 requires={"wave_enable": True}, confidence="verified"),
-        Setting("wave_size", "Released per wave", INT, 1, "Enemy Waves",
+        Setting("wave_size", "Released per wave", INT, 1, "Enemies",
                 minimum=1, maximum=8, unit="enemies",
                 help="How many come out each time a wave fires. Capped by the "
                      "number of spawn points the zone can reach, so on most maps "
                      "anything above 2-4 does nothing.",
                 requires={"wave_enable": True}, confidence="verified"),
-        Setting("wave_trigger", "Alive before the next wave", INT, 2, "Enemy Waves",
+        Setting("wave_trigger", "Alive before the next wave", INT, 2, "Enemies",
                 minimum=0, maximum=12, unit="enemies",
                 help="THE VOLUME DIAL. A zone tops itself up until more than "
                      "this many of its enemies are alive, so steady state per "
@@ -444,7 +444,7 @@ def _build_settings():
                      "first, then the wave size, then the total.",
                 requires={"wave_enable": True}, confidence="verified"),
         Setting("wave_hunt", "Enemies hunt you from the start", BOOL, True,
-                "Enemy Waves",
+                "Enemies",
                 help="This is the switch for enemies who come looking for you "
                      "rather than waiting to see you. Every enemy a wave "
                      "releases starts already hunting, so they cross the map "
@@ -464,7 +464,7 @@ def _build_settings():
                         "engine has no such flag.",
                 requires={"wave_enable": True}, confidence="verified"),
         Setting("wave_mapwide", "Spawn across the whole map", BOOL, True,
-                "Enemy Waves", pnach_only=True,
+                "Enemies", pnach_only=True,
                 help="Stock, a wave can only use the two or three spawn points "
                      "sitting next to it, so every enemy walks out of one corner. "
                      "This redirects the picker at every deployment point in the "

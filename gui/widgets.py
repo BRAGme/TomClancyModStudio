@@ -501,3 +501,78 @@ class SettingCard(Chrome):
         for c in self._controls:
             if hasattr(c, "sync"):
                 c.sync()
+
+
+class ProgressBar(tk.Canvas):
+    """A thin skinned bar for the length of an apply.
+
+    Two modes, because the work has two halves and only one of them knows how
+    long it is. Decompressing and editing discovers which files an edit
+    matches as it goes, so that half sweeps; packing knows its own count, so
+    that half fills and shows a percentage. A bar that claimed a fraction it
+    could not know would be worse than no bar.
+    """
+
+    SWEEP_MS = 60
+
+    def __init__(self, master, height=None):
+        h = height or theme.px(7)
+        super().__init__(master, height=h, bg=theme.P.panel,
+                         highlightthickness=0, bd=0)
+        self.frac = None            # None idle, -1 sweeping, else 0..1
+        self._at = 0.0
+        self._job = None
+        self.bind("<Configure>", lambda _e: self._draw())
+
+    # -- state -----------------------------------------------------------
+    def set(self, done, total):
+        if total:
+            self.frac = min(1.0, max(0.0, done / float(total)))
+            self._stop()
+        elif self.frac != -1:
+            self.frac = -1
+            self._start()
+        self._draw()
+
+    def clear(self):
+        self.frac = None
+        self._stop()
+        self._draw()
+
+    def _start(self):
+        if self._job is None:
+            self._job = self.after(self.SWEEP_MS, self._step)
+
+    def _stop(self):
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except Exception:                         # noqa: BLE001
+                pass
+            self._job = None
+
+    def _step(self):
+        self._job = None
+        if self.frac != -1:
+            return
+        self._at = (self._at + 0.035) % 1.0
+        self._draw()
+        self._job = self.after(self.SWEEP_MS, self._step)
+
+    # -- paint -----------------------------------------------------------
+    def _draw(self):
+        p = theme.P
+        self.delete("all")
+        self.configure(bg=p.panel)
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 4 or self.frac is None:
+            return
+        self.create_rectangle(0, 0, w, h, fill=p.sel_fill, outline="")
+        if self.frac == -1:
+            run = max(theme.px(40), w // 6)
+            x = int(self._at * (w + run)) - run
+            self.create_rectangle(max(0, x), 0, min(w, x + run), h,
+                                  fill=p.accent, outline="")
+        else:
+            self.create_rectangle(0, 0, int(w * self.frac), h,
+                                  fill=p.accent, outline="")

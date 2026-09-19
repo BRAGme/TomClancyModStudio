@@ -27,8 +27,8 @@ from tcps2.model import BOOL, INT  # noqa: E402
 
 from . import dialog, discorddialog, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
-from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
-                      SettingCard, nav_style)  # noqa: E402
+from .widgets import (ActionButton, Chrome, NavItem, ProgressBar,
+                      ScrollArea, SettingCard, nav_style)  # noqa: E402
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
@@ -41,7 +41,7 @@ NOTES_TAB = "About this disc"
 # costs the wide marks nothing and gives the square ones room.
 HEADER = 148
 ACTION_H = 46
-LOG_H = 88
+LOG_H = 99
 GUTTER = 22
 
 #: Both field labels are given the same width in characters so the entry and
@@ -223,6 +223,8 @@ class App(tk.Tk):
                            font=theme.F("mono", 9), bd=0, highlightthickness=0,
                            padx=theme.px(8), pady=theme.px(2), wrap="word",
                            state="disabled")
+        self.progress = ProgressBar(self.logwrap.body)
+        self.progress.pack(fill="x", side="top", pady=(0, theme.px(4)))
         self.log.pack(fill="both", expand=True)
         self._log_tags()
         self._say("%s %s -- ready." % (APP_NAME, VERSION))
@@ -357,12 +359,21 @@ class App(tk.Tk):
                 break
             if kind == "log":
                 self._say(*payload)
+            elif kind == "progress":
+                self.progress.set(*payload)
             elif kind == "done":
+                # One place, so every job clears the bar -- apply, revert,
+                # export -- rather than each remembering to.
+                self.progress.clear()
                 payload()
         self.after(120, self._pump)
 
     def _post(self, text, tag=None):
         self._msgs.put(("log", (text, tag)))
+
+    def _tick(self, done, total):
+        """Progress from a worker thread. Queued, never drawn from here."""
+        self._msgs.put(("progress", (done, total)))
 
     # -- disc --------------------------------------------------------------
     def _browse(self):
@@ -862,8 +873,10 @@ class App(tk.Tk):
             self.detection = identify(path)
             self._set_buttons(True)
 
+        self.progress.set(0, None)
         self._run(lambda: engine.apply(path, profile, vals,
                                        data_root=self.data_root,
+                                       tick=self._tick,
                                        progress=lambda m: self._post("  " + m)),
                   done)
 

@@ -429,9 +429,16 @@ def plan_data(iso, profile, edits, store):
     return rows
 
 
-def apply_data(iso, profile, edits, store, progress=None, selector=None):
+def apply_data(iso, profile, edits, store, progress=None, selector=None,
+               tick=None):
     """Run every edit. Files are written largest first, because the one big
-    mission has to land in the 64 KB pad before smaller ones nibble at it."""
+    mission has to land in the 64 KB pad before smaller ones nibble at it.
+
+    `tick(done, total)` is for a progress bar. `total` is None during the
+    first half, because which files an edit matches is only known as the
+    match is made -- so the caller should show that half as indeterminate and
+    the second half, which knows its own length, as a real fraction.
+    """
     arcs = _archives(iso, profile)
     pending = {}          # (arcName, path) -> (arc, entry, plainBytes)
     counts = {}
@@ -440,6 +447,10 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
     def say(msg):
         if progress:
             progress(msg)
+
+    def beat(done, total=None):
+        if tick:
+            tick(done, total)
 
     for edit in edits:
         op = OPS.get(edit.op)
@@ -474,6 +485,9 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                     stored = store.original(arc_name, ent.path)
                     base = stored[0] if stored else original
                     _kind, plain = _unpack(base, ent.path)
+                if len(plain) >= _CHATTY_BYTES:
+                    say("  editing %s" % ent.path)
+                beat(len(pending) + 1)
                 if edit.op in _WANTS_CONTAINER:
                     stored = store.original(arc_name, ent.path)
                     container = stored[0] if stored else arc.read_entry(ent)
@@ -541,8 +555,10 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
         say("  %d file%s to rebuild" % (total, "" if total == 1 else "s"))
     for n, ((arc_name, path), (arc, ent, plain)) in enumerate(
             pending.items(), 1):
+        beat(n - 1, total)
         if len(plain) >= _CHATTY_BYTES or n % 25 == 0 or n == total:
-            say("  packing %d/%d  %s" % (n, total, path))
+            say("  packing %d/%d (%d%%)  %s"
+                % (n, total, (n - 1) * 100 // total, path))
         original = store.original(arc_name, path)
         source = original[0] if original else arc.read_entry(ent)
         kind, was = _unpack(source, path)
@@ -577,6 +593,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
         written += 1
         if written % 10 == 0:
             say("  %d of %d data files rewritten" % (written, len(built)))
+    beat(total, total)
     if built:
         say("Rewrote %d data file%s" % (written, "" if written == 1 else "s"))
     return {"files": written - put_back, "restored": restored + put_back,
