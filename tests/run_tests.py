@@ -3447,6 +3447,11 @@ def run_host_filesystem(args):
           "%r" % sorted(every & set(rsehost.WORDS)))
 
 
+#: filled from the disc when one is given, so the contract check below has
+#: real bytes to run an operation against rather than a synthetic buffer.
+_COVER_BYTES = []
+
+
 def run_ai_cover(args):
     """The one function that decides whether an enemy uses cover.
 
@@ -3470,6 +3475,15 @@ def run_ai_cover(args):
           _raises(lambda: rseaicover.apply(b"x" * 64, "nope"),
                   rseaicover.CoverError))
 
+    # THE CONTRACT, not the module. Calling rseaicover.apply directly is what
+    # let a version through that returned bare bytes: dataedit does
+    # `new, n = op(...)`, so bytes unpack one character at a time and the
+    # apply dies on the user's disc, not here. Every op this profile can
+    # emit is exercised through the real dispatch table.
+    from tcps2 import dataedit as _de
+    for name in ("ai_cover", "frag_warning"):
+        fn = _de.OPS.get(name)
+        check("%s is registered as a data operation" % name, fn is not None)
     profile = BY_ID["r6_3_slus20883"]
     check("stock writes nothing to the disc",
           not [e for e in profile.build_data(profile.effective({}))
@@ -3490,6 +3504,7 @@ def run_ai_cover(args):
                     plain[path] = lin.decompress(a.read_file(path))
                     break
     for path, data in sorted(plain.items()):
+        _COVER_BYTES.append(data)
         found = rseaicover.sites(data)
         check("%s holds exactly %d rungs" % (path, len(rseaicover.STOCK)),
               len(found) == len(rseaicover.STOCK), str(len(found)))
@@ -3497,13 +3512,23 @@ def run_ai_cover(args):
               rseaicover.reads(data) == rseaicover.STOCK,
               str(rseaicover.reads(data)))
         for setname in ("cover", "heavy"):
-            out = rseaicover.apply(data, setname)
+            out, _n = rseaicover.apply(data, setname)
             check("%s: %s keeps the package length" % (path, setname),
                   len(out) == len(data))
             check("%s: %s writes what it says" % (path, setname),
                   rseaicover.reads(out) == rseaicover.SETS[setname])
             check("%s: %s reverts byte for byte" % (path, setname),
-                  rseaicover.apply(out, "stock") == data)
+                  rseaicover.apply(out, "stock")[0] == data)
+        # Through the real dispatch table, with the real bytes. Calling the
+        # module directly is what let a version ship that returned bare
+        # bytes: dataedit does `new, n = op(...)`, so a bytes return unpacks
+        # one character at a time and the apply dies on the disc, not here.
+        got = _de.OPS["ai_cover"](data, {"set": "cover"})
+        check("%s: ai_cover through OPS returns (bytes, count)" % path,
+              isinstance(got, tuple) and len(got) == 2
+              and isinstance(got[0], bytes) and isinstance(got[1], int),
+              repr(type(got)))
+        check("%s: and it keeps the length" % path, len(got[0]) == len(data))
 
 
 def run_host_root(args):

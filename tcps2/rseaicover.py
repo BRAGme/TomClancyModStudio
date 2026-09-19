@@ -103,8 +103,13 @@ def reads(plain: bytes):
     return tuple(plain[o] for o in sites(plain))
 
 
-def apply(plain: bytes, choice: str = "stock") -> bytes:
-    """Rewrite the ladders. Same length in, same length out."""
+def apply(plain: bytes, choice: str = "stock"):
+    """Rewrite the ladders. Returns (bytes, rungsChanged).
+
+    The count is not decoration: every data operation hands one back, and
+    `dataedit` unpacks the pair. Returning bare bytes made it try to unpack
+    the file itself, one byte per name.
+    """
     want = SETS.get(choice)
     if want is None:
         raise CoverError("unknown cover setting %r" % (choice,))
@@ -119,9 +124,11 @@ def apply(plain: bytes, choice: str = "stock") -> bytes:
         raise CoverError("the thresholds read %r, which is neither the "
                          "shipped set nor one this tool writes" % (live,))
     out = bytearray(plain)
+    changed = 0
     for off, value in zip(found, want):
+        changed += out[off] != value
         out[off] = value
-    return bytes(out)
+    return bytes(out), changed
 
 
 def cards(prefix: str, group: str) -> list:
