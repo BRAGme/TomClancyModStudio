@@ -215,6 +215,41 @@ SETTINGS = [
              "a three-line file: an angle and this distance. 400 units is "
              "about four metres.",
         confidence="experimental", touches="config"),
+    Setting(
+        "game_speed", "Game speed", CHOICE, "stock", group="Feel",
+        help="Global time dilation -- everything in the world runs at this "
+             "rate, including you. Vegas ships it at 1.0 in the live config "
+             "and never exposes it.",
+        caution="Anything away from 1.0 changes animation and reload timing "
+                "too, not just movement.",
+        choices=[
+            Choice("stock", "Normal", "1.0."),
+            Choice("0.85", "Slower", "A more deliberate pace."),
+            Choice("0.7", "Slow motion", ""),
+            Choice("1.15", "Faster", ""),
+        ],
+        confidence="experimental", touches="config"),
+    Setting(
+        "interact_distance", "Reach for doors and objects", INT, 512,
+        group="Feel", minimum=64, maximum=2048, unit=" units",
+        help="How close you have to be before a door, ladder or objective "
+             "can be used.",
+        confidence="experimental", touches="config"),
+    Setting(
+        "bob_amount", "Weapon bob amount", CHOICE, "stock", group="Feel",
+        help="How far the weapon swings as you walk. The existing weapon-bob "
+             "option is on or off; this sets how much.",
+        choices=[
+            Choice("stock", "Stock", "0.006."),
+            Choice("0.5", "Half", ""),
+            Choice("2", "Double", ""),
+        ],
+        confidence="experimental", touches="config"),
+    Setting(
+        "voice_radius", "How far your voice carries", INT, 1500,
+        group="Rules", minimum=100, maximum=10000, unit=" units",
+        help="The radius other players hear you speak within.",
+        confidence="experimental", touches="config"),
 ]
 
 
@@ -311,6 +346,24 @@ def build_edits(values):
                            key="m_fFormationDistance",
                            value=v["squad_spacing"], stock="400",
                            note="squad spacing"))
+    # -- feel, from keys the live config ships and no menu exposes --------
+    if v["game_speed"] != "stock":
+        out.append(IniEdit(GAME, section="Engine.GameInfo", key="GameSpeed",
+                           value=v["game_speed"], stock="1.000000",
+                           note="game speed"))
+    if v["interact_distance"] != 512:
+        out.append(IniEdit(GAME, section="Engine.PlayerController",
+                           key="InteractDistance",
+                           value=v["interact_distance"], stock="512",
+                           note="interaction reach"))
+    if v["bob_amount"] != "stock":
+        out.append(IniEdit(GAME, section="Engine.Pawn", key="Bob",
+                           scale=float(v["bob_amount"]), stock="0.0060",
+                           note="weapon bob amount"))
+    if v["voice_radius"] != 1500:
+        out.append(IniEdit(GAME, section="R6Game.R6VoiceChatManagerInterface",
+                           key="m_fVoiceRadius", value=v["voice_radius"],
+                           stock="1500", note="voice radius"))
     return out
 
 

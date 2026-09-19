@@ -57,13 +57,13 @@ SQUAD_SIZE = {
 ENEMY_HEALTH = ['4', '8']
 ENEMY_HEALTH_ATTRS = ['damage_points']
 
-SETTINGS = _graw.shared_settings() + _graw_enemies.settings()
+SETTINGS = _graw.shared_settings() + _graw_enemies.settings("graw")
 
 
 def build_edits(values):
     return (_graw.shared_edits(values)
             + _graw_enemies.edits(values, SQUAD_SIZE, ENEMY_HEALTH,
-                                  ENEMY_HEALTH_ATTRS))
+                                  ENEMY_HEALTH_ATTRS, "graw"))
 
 
 NOTES = r"""

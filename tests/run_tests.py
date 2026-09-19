@@ -1125,6 +1125,83 @@ def test_sides(dets):
               len(everything) > 100)
 
 
+def test_graw_direction(dets):
+    r"""`skill_shooting` runs backwards, and the game's own data proves it.
+
+    This shipped inverted: "Elite" doubled the number and "Green" cut it,
+    when in fact the campaign's elite units carry the LOWEST values. Rather
+    than assert a constant, the test rebuilds the ladder from the compiled
+    group manager and checks the profile scales in the same direction the
+    game's own tiering does.
+    """
+    print("\n[GRAW: which way enemy marksmanship runs]")
+    from tcpc import xmlbin
+    from tcpc.games import _graw_enemies
+    for det in dets:
+        profile = det.profile
+        if profile.id not in ("graw", "graw2"):
+            continue
+        twin = engine.compiled_twin(profile,
+                                    "data/lib/managers/xml/group_manager.xml")
+        with engine.open_bundles(det.path, profile) as bundles:
+            root, _inc = xmlbin.loads(bundles.read(twin))
+
+        by_soldier = {}
+
+        def collect(node, soldier):
+            if node.kind != xmlbin.ELEMENT:
+                return
+            if node.name == "soldier":
+                soldier = node.get("name", soldier)
+            if node.name == "var" and node.get("name") == "skill_shooting":
+                by_soldier.setdefault(soldier, node.get("value"))
+            for kid in node.kids:
+                collect(kid, soldier)
+
+        collect(root, None)
+        check("%s: the compiled group manager declares %d shooting figures"
+              % (profile.short, len(by_soldier)), len(by_soldier) > 20)
+        if not by_soldier:
+            continue
+
+        best = min(by_soldier.values(), key=float)
+        worst = max(by_soldier.values(), key=float)
+        elite = sorted(k for k, v in by_soldier.items() if v == best)
+        rabble = sorted(k for k, v in by_soldier.items() if v == worst)
+        # The elite here are named: a boss, or special-forces leaders. The
+        # worst are guerillas or the rank and file. If that ever stops being
+        # true the direction below is no longer safe to assume.
+        check("%s: the lowest figure (%s) belongs to elite units, the highest "
+              "(%s) to the rank and file" % (profile.short, best, worst),
+              float(best) < float(worst)
+              and any(w in elite[0] for w in ("carlos", "sf_", "leader"))
+              and not any(w in rabble[0] for w in ("carlos",)),
+              "lowest=%s highest=%s" % (elite[:2], rabble[:2]))
+
+        # ...so "sharper" must scale DOWN
+        sharper = _graw_enemies.SKILL_SPREAD["elite"]
+        greener = _graw_enemies.SKILL_SPREAD["green"]
+        check("%s: 'Elite' scales the spread down (x%g) and 'Green' up (x%g)"
+              % (profile.short, sharper, greener),
+              sharper < 1.0 < greener)
+
+        # and the options proven dead are shipped visibly disabled
+        for key in ("enemy_precision",) + (("enemy_senses",)
+                                           if profile.id == "graw2" else ()):
+            setting = profile.setting(key)
+            check("%s: %s is shipped disabled with a reason"
+                  % (profile.short, key),
+                  setting is not None and not setting.enabled
+                  and len(setting.disabled_reason) > 40)
+            values = dict(profile.defaults())
+            values[key] = [c.value for c in setting.choices
+                           if c.value != setting.default][0]
+            note = "senses" if "senses" in key else "accuracy"
+            live = [e for e in profile.build_edits(profile.effective(values))
+                    if note in (e.note or "")]
+            check("%s: and it really emits nothing" % profile.short, not live)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1168,6 +1245,7 @@ def main():
         test_packages(dets)
         test_rs3_modes(dets)
         test_sides(dets)
+        test_graw_direction(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

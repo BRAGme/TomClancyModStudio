@@ -30,16 +30,27 @@ from 45 enemies to 83, and the campaign from 1,053 to 2,600.
 Friendly squads are named `friendly*`, `us_marines_*`, `loyalists*` and are not
 in the table, so they cannot be caught by it.
 
-## How good: a scale
+## How good: a scale, and it runs BACKWARDS
 
 `skill_shooting` lives on the soldier templates in `group_manager`. Every one
 of the 34 in GRAW 1 and 132 in GRAW 2 belongs to a `mex_*` or `ag_*` soldier --
 checked by walking the tree and reading each node's owning `<soldier>` -- so
-scaling all of them cannot reach the player's squad. GRAW 1 sits at 0.85 / 1.0 /
-1.2; GRAW 2 at 2.0 / 2.5.
+scaling all of them cannot reach the player's squad.
 
-`overall_enemy_precision` in `sb_global` is the global multiplier on top, and
-it is stored in a `default` attribute rather than a `value` one.
+**A LOWER value is a BETTER shot.** This shipped inverted and the game's own
+data is what settles it. Reading the compiled `group_manager`:
+
+    GRAW 1   mex_carlos (the named boss)   0.30      <- best
+             mex_sf_*  (special forces)    0.85
+             mex_inf_* (regular infantry)  1.00
+             mex_gue_* (guerillas)         1.20      <- worst
+
+    GRAW 2   mex_sf_leader_01..04 and their ag_ twins   2.0   <- best
+             every one of the other 124 soldiers        2.5
+
+In both games the units the campaign treats as elite carry the lowest number
+and the rabble carry the highest, so it is a spread multiplier and not a skill
+rating. "Sharper" therefore scales it DOWN.
 
 ## How tough: a remap again, to miss the corpses
 
@@ -57,7 +68,7 @@ GLOBAL = "data/sb_templates/global/sb_global.xml"
 ENEMY_UNITS = "data/units/beings/u_mex*.xml"
 
 
-def settings():
+def settings(game_id="graw"):
     return [
         Setting(
             "enemy_squads", "Enemies per squad", CHOICE, "stock",
@@ -84,28 +95,42 @@ def settings():
         Setting(
             "enemy_skill", "Enemy marksmanship", CHOICE, "stock",
             group="Enemies",
-            help="The per-soldier shooting skill in the group manager. Every "
-                 "one of these belongs to an enemy template, so your own squad "
-                 "is not affected.",
+            help="The per-soldier shooting figure in the group manager. It is "
+                 "a SPREAD, so the game's own elite units carry the lowest "
+                 "numbers -- special forces 0.85 against guerillas 1.2 in the "
+                 "first game, and the named boss lowest of all at 0.30. "
+                 "Sharper scales it down. Every one of these belongs to an "
+                 "enemy template, so your own squad is not affected.",
             choices=[
                 Choice("stock", "Stock", ""),
-                Choice("x1.5", "Sharper", "Half again."),
-                Choice("x2", "Elite", "Doubled."),
-                Choice("x0.6", "Green", ""),
+                Choice("sharp", "Sharper", "Spread cut by a third."),
+                Choice("elite", "Elite",
+                       "Spread halved -- tighter than the game's own special "
+                       "forces."),
+                Choice("green", "Green", "Spread half again as wide."),
             ],
             confidence="experimental", touches="data"),
         Setting(
             "enemy_precision", "Global enemy accuracy", CHOICE, "stock",
             group="Enemies",
             help="A single multiplier the whole AI reads, sitting on top of "
-                 "each soldier's own skill and each weapon's own spread. Your "
-                 "own squad has its own copy of this, which is left alone.",
+                 "each soldier's own spread and each weapon's own.",
             choices=[
                 Choice("stock", "Stock", "1.0."),
                 Choice("x1.4", "Sharper", ""),
                 Choice("x0.6", "Blunter", ""),
             ],
-            confidence="experimental", touches="data"),
+            enabled=False,
+            disabled_reason=(
+                "The value in the file is overwritten before it is ever used. "
+                "`apply_difficulty_settings` assigns this variable a literal "
+                "on every difficulty tier including Normal, and it runs every "
+                "session -- at profile load in the first game, at network "
+                "init in the second. Both games keep it in the same compiled "
+                "script as that function and nowhere else, which is how it "
+                "was caught. Shipped visible and off rather than quietly "
+                "doing nothing; use Enemy marksmanship instead."),
+            confidence="broken", touches="data"),
         Setting(
             "enemy_health", "Enemy toughness", CHOICE, "stock",
             group="Enemies",
@@ -124,8 +149,7 @@ def settings():
             group="Enemies",
             help="Sight range, peripheral cone, the distance a gunshot "
                  "carries, and the radius inside which you are spotted "
-                 "instantly. Stock sight is 150 m in both games; GRAW 2 "
-                 "already hears gunfire at half GRAW 1's range.",
+                 "instantly. Stock sight is 150 m.",
             choices=[
                 Choice("stock", "Stock", ""),
                 Choice("keen", "Keener", "Half again as far."),
@@ -133,18 +157,31 @@ def settings():
                 Choice("blind", "Short-sighted",
                        "A third. Stealth becomes very forgiving."),
             ],
+            enabled=(game_id == "graw"),
+            disabled_reason=(
+                "Advanced Warfighter 2 does not read these keys. The first "
+                "game's AI detection script accesses `ad_distance_sight` and "
+                "its siblings; the sequel's compiled scripts contain not one "
+                "reference to any `ad_` key, and use a different family "
+                "(`det_*`, 108 references) instead. The keys are still in the "
+                "sequel's data, which is exactly why this looked like it "
+                "worked."),
             confidence="experimental", touches="data"),
     ]
 
 
 #: `ad_*` keys worth moving together, all in `sb_global` and all distances or
 #: angles where bigger means the enemy notices you sooner.
+#: how far each choice scales the spread. Down is sharper.
+SKILL_SPREAD = {"sharp": 0.66, "elite": 0.5, "green": 1.5}
+
 SENSES = ("ad_distance_sight", "ad_view_cone_outer", "ad_distance_hear_weapon_ls",
           "ad_distance_hear_weapon_nls", "ad_distance_hear_body_ls",
           "ad_distance_hear_body_nls", "ad_auto_detect_distance")
 
 
-def edits(values, squad_size, health_values, health_attrs):
+def edits(values, squad_size, health_values, health_attrs,
+          game_id="graw"):
     """`squad_size` is {group name: roster}; `health_*` come from the profile."""
     out = []
     v = values
@@ -167,7 +204,8 @@ def edits(values, squad_size, health_values, health_attrs):
                                note="squad size"))
 
     # -- how good --------------------------------------------------------
-    skill = {"x1.5": 1.5, "x2": 2.0, "x0.6": 0.6}.get(v["enemy_skill"])
+    # Down is sharper: see the module docstring for the ladder this is read off.
+    skill = SKILL_SPREAD.get(v["enemy_skill"])
     if skill:
         out.append(XmlAttr(GROUPS, path="var[name=skill_shooting]",
                            attr="value", scale=skill, minimum=0,

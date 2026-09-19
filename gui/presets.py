@@ -160,14 +160,12 @@ PRESETS = {
             "enemy_squads": "full",
         }),
         ("Veteran enemies - better, not more", {
-            "enemy_skill": "x1.5",
-            "enemy_precision": "x1.4",
+            "enemy_skill": "sharp",
             "enemy_health": "x2",
         }),
         ("Overrun - more of them, and sharper", {
             "enemy_squads": "full",
-            "enemy_skill": "x1.5",
-            "enemy_precision": "x1.4",
+            "enemy_skill": "sharp",
         }),
         ("Stealth is worth it", {
             "enemy_senses": "dull",
@@ -175,7 +173,7 @@ PRESETS = {
         }),
         ("Thinned out - a gentler campaign", {
             "enemy_squads": "thin",
-            "enemy_skill": "x0.6",
+            "enemy_skill": "green",
             "enemy_health": "x0.5",
         }),
         ("Stock", {}),

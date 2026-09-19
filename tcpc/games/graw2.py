@@ -126,13 +126,13 @@ SQUAD_SIZE = {
 ENEMY_HEALTH = ['2.75', '3', '4']
 ENEMY_HEALTH_ATTRS = ['damage_points', 'damage_points_max']
 
-SETTINGS = _graw.shared_settings() + _graw_enemies.settings() + EXTRA
+SETTINGS = _graw.shared_settings() + _graw_enemies.settings("graw2") + EXTRA
 
 
 def build_edits(values):
     out = (_graw.shared_edits(values)
            + _graw_enemies.edits(values, SQUAD_SIZE, ENEMY_HEALTH,
-                                 ENEMY_HEALTH_ATTRS))
+                                 ENEMY_HEALTH_ATTRS, "graw2"))
     if values["hud_scheme"] == "brown":
         for name, value in HUD_ALT.items():
             out.append(XmlAttr(HUD_PALETTE, path="HUD/xdefine[name=%s]" % name,
