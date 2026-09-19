@@ -3137,6 +3137,7 @@ def run_pump():
     and no dialog -- the work had actually finished, and it looked like a
     hang. The collaborators here are stubs, so this needs no display.
     """
+    import pathlib
     import queue as _queue
     from gui.app import App
 
@@ -3221,6 +3222,36 @@ def run_pump():
           app.armed == 1)
     check("and the flag is released once the outer drain is done",
           app._pumping is False)
+
+    # The message a failed job hands back is built inside an `except ... as
+    # exc` block and run later, on the UI thread. Python deletes that name
+    # when the block exits, so capturing it by closure raised NameError
+    # instead of reporting the real failure -- which then killed the pump and
+    # hung the window. EVERY apply that threw anything went that way, and
+    # nobody ever saw the actual error. It has to be bound, not captured.
+    from gui import app as _appmod
+    src = pathlib.Path(_appmod.__file__).with_suffix(".py").read_text(
+        encoding="utf-8")
+    check("the failure hand-back binds the exception instead of capturing it",
+          "lambda e=exc, t=traceback.format_exc()" in src
+          and "lambda: done(None, (exc, tb))" not in src)
+
+    # and the same thing, executed rather than read
+    def handback():
+        try:
+            raise ValueError("the real failure")
+        except Exception as exc:                  # noqa: BLE001
+            return lambda e=exc, t="tb": (e, t)
+
+    got = handback()()
+    check("and the bound hand-back still carries the exception once it runs",
+          isinstance(got[0], ValueError) and str(got[0]) == "the real failure")
+
+    app = Stub()
+    app._msgs.put(("done", handback()))
+    app._pump()
+    check("so a failed job no longer reports NameError in place of the fault",
+          not any("NameError" in ln for ln in app.lines), str(app.lines[:3]))
 
 
 def run_gear_icons(args):

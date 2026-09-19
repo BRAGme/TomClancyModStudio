@@ -416,6 +416,19 @@ class App(tk.Tk):
                 except Exception:                     # noqa: BLE001
                     pass
 
+    def _fail(self, err):
+        """Report a job that threw: the message, then where it came from.
+
+        The traceback goes in the log as well as the message, because the one
+        line on its own has repeatedly not been enough to say which file or
+        which edit gave up -- and the log is what gets sent when something
+        goes wrong on somebody else's disc.
+        """
+        exc, tb = err[0], (err[1] if len(err) > 1 else "")
+        self._say(str(exc), "bad")
+        for line in str(tb).rstrip().splitlines():
+            self._say("  " + line, "bad")
+
     def _post(self, text, tag=None):
         self._msgs.put(("log", (text, tag)))
 
@@ -866,8 +879,15 @@ class App(tk.Tk):
                 self._msgs.put(("done", lambda: done(result, None)))
                 posted = True
             except Exception as exc:              # noqa: BLE001
-                tb = traceback.format_exc()
-                self._msgs.put(("done", lambda: done(None, (exc, tb))))
+                # Bound as defaults, NOT captured. Python deletes the name
+                # `exc` when the except block exits, and this lambda runs
+                # later on the UI thread -- so capturing it by closure raised
+                # NameError instead of reporting the real failure, which then
+                # killed the pump and hung the window. Every apply that threw
+                # anything at all went that way, and the actual error was
+                # never seen by anybody.
+                self._msgs.put(("done", lambda e=exc, t=traceback.format_exc():
+                                done(None, (e, t))))
                 posted = True
             finally:
                 if not posted:
@@ -918,7 +938,7 @@ class App(tk.Tk):
         def done(result, err):
             self.busy = False
             if err:
-                self._say(str(err[0]), "bad")
+                self._fail(err)
                 dialog.error(self, APP_NAME, str(err[0]))
             else:
                 ok = result["verified"] == result["applied"]
@@ -956,7 +976,7 @@ class App(tk.Tk):
         def done(result, err):
             self.busy = False
             if err:
-                self._say(str(err[0]), "bad")
+                self._fail(err)
                 dialog.error(self, APP_NAME, str(err[0]))
             else:
                 extra = (", %d data files put back" % result["data"]
