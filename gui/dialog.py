@@ -61,6 +61,18 @@ class Sheet(tk.Toplevel):
     def __init__(self, master, title, message, kind="info", cancel=False,
                  ok_text="OK", cancel_text="Cancel"):
         super().__init__(master)
+        # Invisible, but MAPPED, until it has been sized and placed.
+        # `_size` calls `update`, which maps the window, so without this the
+        # sheet appears at Tk's default position, gets measured, and then
+        # jumps to the middle -- a visible flicker to the left of the screen.
+        # `withdraw` would hide it, but a withdrawn window never receives the
+        # <Configure> events the panel sizes itself from, and every sheet
+        # then collapses to the same wrong height. Transparency hides it
+        # while leaving the geometry machinery running.
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:                 # no compositing: live with it
+            pass
         p = theme.P
         self.result = False
         self.title(title or "")
@@ -124,6 +136,10 @@ class Sheet(tk.Toplevel):
 
         self._size(panel)
         self._centre(master)
+        try:
+            self.attributes("-alpha", 1.0)      # shown, already in place
+        except tk.TclError:
+            pass
         self.grab_set()
         self.ok_btn.focus_set()
 
@@ -182,7 +198,7 @@ class Sheet(tk.Toplevel):
 
     def _centre(self, master):
         top = master.winfo_toplevel()
-        self.update_idletasks()
+        self.update()
         x = top.winfo_rootx() + (top.winfo_width() - self.winfo_width()) // 2
         y = top.winfo_rooty() + (top.winfo_height() - self.winfo_height()) // 3
         self.geometry("+%d+%d" % (max(0, x), max(0, y)))
