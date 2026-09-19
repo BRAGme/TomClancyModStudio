@@ -1,4 +1,4 @@
-r"""Produce dist/Tom Clancys PC ModStudio.exe.
+r"""Produce dist/Tom Clancys PC ModStudio <version>.exe.
 
     python build_exe.py              -- the ordinary build
     python build_exe.py --preview    -- a build that opens in preview mode, for
@@ -28,6 +28,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 #: what the built executable is called. Separate from the entry script,
 #: which keeps its own name -- renaming the output must not go looking
 #: for a source file that does not exist.
+#:
+#: The VERSION is part of the filename on purpose. With a fixed name every
+#: build downloads over the last one, and a user who opens the copy already
+#: sitting on their desktop is running old code with no way of telling --
+#: which happened, and cost a round trip working out why new options were
+#: "missing".
 NAME = "Tom Clancys PC ModStudio"
 
 #: the script PyInstaller is pointed at
@@ -128,7 +134,7 @@ def write_version_file(path, version):
 def main():
     version = app_version()
     preview = "--preview" in sys.argv
-    name = NAME + (" (preview)" if preview else "")
+    name = "%s %s%s" % (NAME, version, " (preview)" if preview else "")
     print("building version %s" % version)
     args = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
             "--onefile", "--windowed", "--name", name,
