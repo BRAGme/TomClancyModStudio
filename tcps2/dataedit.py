@@ -498,13 +498,18 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                     new, n = op(plain, edit.params, container)
                 else:
                     new, n = op(plain, edit.params)
-                # Only a compressed container has to keep its length. A LIN's
-                # packages carry relaid offsets and an rselzo chunk chain has
-                # fixed boundaries, so either would be corrupted by a size
-                # change; a plain-text INI can grow or shrink freely, because
-                # the archive writer will relocate it.
+                # An rselzo chunk chain has fixed boundaries and really is
+                # corrupted by a size change. A LIN is not: its packages sit
+                # back to back, nothing records their offsets, and the loader
+                # walks them -- so one can grow, which `_repack` handles by
+                # rebuilding the chain through `lin.rebuild`. This guard used
+                # to reject every container alike, which made `frag_warning`
+                # impossible: it adds three names and three imports, so it
+                # always changes the length, so it always threw. A plain-text
+                # INI has never been restricted, because the archive writer
+                # relocates it.
                 kind, _ = _unpack(arc.read_entry(ent), ent.path)
-                if len(new) != len(plain) and kind != "plain":
+                if len(new) != len(plain) and kind not in ("plain", "lin"):
                     raise DataEditError(
                         "%s: %s changed the file length, which a %s container "
                         "cannot survive" % (ent.path, edit.op, kind))

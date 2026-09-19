@@ -115,6 +115,7 @@ def main():
         run_host_root(args)
         run_op_contract(args)
         run_pump()
+        run_grown_lin(args)
         run_ai_cover(args)
         run_team_kits(args)
         run_gear_icons(args)
@@ -3126,6 +3127,116 @@ def run_enemy_toughness(args):
                   % (gid, val),
                   plain == val and armour >= plain,
                   "%d / %d" % (plain, armour))
+
+
+def run_grown_lin(args):
+    r"""An edit that makes a LIN package bigger must go through.
+
+    This pins a bug that made `frag_warning` impossible on every disc. It adds
+    three names and three imports to the package, so it ALWAYS changes the
+    length, and a guard in `apply_data` rejected any length change in a
+    compressed container -- the rule this project retracted once the loader
+    turned out to walk its packages rather than index them. `_repack` had
+    already gained the `lin.rebuild` path for exactly this; the guard upstream
+    had not caught up, so the rebuild was never reached.
+
+    It threw on every attempt, and until the pump was taught to report its own
+    faults the error was swallowed and the window simply hung. Only `rselzo`
+    still has to keep its length: its chunk boundaries are fixed.
+    """
+    import tempfile
+    from tcps2 import dataedit
+    from tcps2.iso import Iso
+    from tcps2.vokes import Region, Vokes, open_archives
+    from tcps2.games import BY_ID
+
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    profile = BY_ID["r6_3_slus20883"]
+
+    print(chr(10) + "[an edit that grows a LIN package]")
+
+    class Shadow(Region):
+        """Reads through to the real archive, keeps writes in memory."""
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    vals = dict(profile.defaults())
+    vals["frag_warning"] = True
+    edits = [e for e in profile.build_data(profile.normalise(vals))
+             if e.op == "frag_warning"]
+    check("the disc offers an edit that grows a package", len(edits) == 1)
+    if not edits:
+        return
+
+    work = tempfile.mkdtemp(prefix="tcms-grown-")
+    real_archives = dataedit._archives
+    try:
+        with Iso(iso_path) as iso:
+            shadows = {}
+            for real in open_archives(iso, profile.archive_pattern):
+                arc = Vokes(Shadow(real.r))
+                shadows[arc.r.name.upper()] = arc
+            dataedit._archives = lambda _iso, _p: shadows
+
+            # the op really does change the length -- otherwise this proves
+            # nothing about the guard it is here to pin
+            grew = False
+            for arc in shadows.values():
+                ent = arc.files.get("/COMMON.LIN")
+                if ent is None:
+                    continue
+                _kind, plain = dataedit._unpack(arc.read_entry(ent),
+                                                "/COMMON.LIN")
+                new, _n = dataedit.OPS["frag_warning"](plain,
+                                                       edits[0].params)
+                grew = len(new) > len(plain)
+                break
+            check("and it does make the package longer", grew)
+
+            try:
+                rep = dataedit.apply_data(iso, profile, edits,
+                                          dataedit.Store(work))
+                threw = None
+            except Exception as exc:                  # noqa: BLE001
+                rep, threw = None, exc
+            check("a longer package is no longer refused outright",
+                  threw is None, "%s: %s" % (type(threw).__name__, threw)
+                  if threw else "")
+            if threw is not None:
+                return
+            check("and the edit actually reached files",
+                  rep.get("files", 0) > 0, str(rep))
+            check("and it is counted", rep["changes"].get("frag_warning", 0) > 0,
+                  str(rep.get("changes")))
+
+            # what landed must still decompress to what the edit asked for
+            checked = 0
+            for arc in shadows.values():
+                for key, ent in sorted(arc.files.items()):
+                    if not key.startswith("/COMMON"):
+                        continue
+                    raw = arc.read_file(ent.path)
+                    kind, got = dataedit._unpack(raw, ent.path)
+                    if kind != "lin":
+                        continue
+                    checked += 1
+            check("and every COMMON package still decompresses afterwards",
+                  checked > 0, "checked %d" % checked)
+    finally:
+        dataedit._archives = real_archives
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def run_pump():
