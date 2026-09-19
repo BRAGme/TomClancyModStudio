@@ -133,3 +133,135 @@ def edits(values, forced_miss_on):
                            attr="sniperZoomMultiplier", value=v["sniper_zoom"],
                            stock="5", note="sniper zoom"))
     return out
+
+
+# ---------------------------------------------------------------------------
+# the enemy half of the weapon model
+# ---------------------------------------------------------------------------
+#
+# Lockdown is the one game here that ships the split already done: 42 `e_*.gun`
+# files, each paired 1:1 with a player twin, and not one enemy-only weapon. So
+# there is nothing to create -- the two sides were separate all along, and the
+# only asymmetry was in which knobs this tool exposed.
+#
+# It exposed two (enemy marksmanship, enemy damage) out of a complete AI
+# accuracy model. `Common/AIAccuracy` carries three blocks and every one of the
+# 42 enemy guns holds IDENTICAL values, so one number really does cover the
+# whole opposition:
+#
+#     Accuracy      BaseAccuracy  15    Recoil  -5
+#     Movement      ShooterShuffle -10   ShooterWalk -20   ShooterRun -30
+#     MethodOfFire  Overhead      -30   Wild    -40
+#
+# They are PENALTIES subtracted from the base, which is why "sharper" scales
+# them towards zero rather than up.
+
+AI_ACCURACY = "Common/AIAccuracy"
+
+#: {attribute: stock value}, measured identical across all 42 enemy guns
+MOVE_PENALTY = {"ShooterShuffle": "-10", "ShooterWalk": "-20",
+                "ShooterRun": "-30"}
+FIRE_PENALTY = {"Overhead": "-30", "Wild": "-40"}
+
+PENALTY_SCALE = {"none": 0.0, "half": 0.5, "double": 2.0}
+
+
+def enemy_settings():
+    return [
+        Setting(
+            "enemy_move_penalty", "How much moving spoils enemy aim", CHOICE,
+            "stock", group="Difficulty",
+            help="Every enemy weapon docks accuracy when its owner is moving: "
+                 "10 shuffling, 20 walking, 30 running, against a base of 15. "
+                 "That is why backing away from a charging enemy works. These "
+                 "are penalties, so 'none' makes enemies shoot as well on the "
+                 "move as standing still.",
+            choices=[
+                Choice("stock", "Stock", "-10 / -20 / -30."),
+                Choice("half", "Halved", "Enemies suffer less for moving."),
+                Choice("none", "None", "Moving costs them nothing."),
+                Choice("double", "Doubled", "A moving enemy is nearly "
+                                            "harmless."),
+            ],
+            confidence="experimental", touches="data"),
+        Setting(
+            "enemy_blind_fire", "How much blind firing spoils enemy aim",
+            CHOICE, "stock", group="Difficulty",
+            help="The penalty for firing overhead from cover (-30) or wild "
+                 "(-40). Enemies lean on both, so this decides how dangerous "
+                 "they are while they are behind something.",
+            choices=[
+                Choice("stock", "Stock", "-30 / -40."),
+                Choice("half", "Halved", ""),
+                Choice("none", "None", "Blind fire is as accurate as aimed."),
+                Choice("double", "Doubled", ""),
+            ],
+            confidence="experimental", touches="data"),
+        Setting(
+            "enemy_recoil", "Enemy recoil", CHOICE, "stock",
+            group="Difficulty",
+            help="The accuracy an enemy loses per shot, stock -5 against your "
+                 "own 0. This is the enemy half of the Recoil option on the "
+                 "Weapons page.",
+            choices=[
+                Choice("stock", "Stock", "-5."),
+                Choice("none", "None", "Enemy fire does not climb."),
+                Choice("double", "Doubled", ""),
+            ],
+            confidence="experimental", touches="data"),
+        Setting(
+            "enemy_magazines", "Enemy magazine capacity", CHOICE, "stock",
+            group="Difficulty",
+            help="How many rounds an enemy fires before reloading. The enemy "
+                 "half of the Magazine capacity option on the Weapons page.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x0.5", "Half", "They reload twice as often."),
+                Choice("x2", "Double", ""),
+            ],
+            confidence="experimental", touches="data"),
+        Setting(
+            "enemy_range", "How far enemy weapons reach", CHOICE, "stock",
+            group="Difficulty",
+            help="Stock enemy weapon range. Shortening it keeps firefights "
+                 "closer without making enemies any worse at them.",
+            choices=[
+                Choice("stock", "Stock", ""),
+                Choice("x0.5", "Half", ""),
+                Choice("x1.5", "Longer", ""),
+            ],
+            confidence="experimental", touches="data"),
+    ]
+
+
+def enemy_edits(values, enemy_guns):
+    """`enemy_guns` is the profile's own selector for the `e_*.gun` half."""
+    out = []
+    v = values
+
+    move = PENALTY_SCALE.get(v["enemy_move_penalty"])
+    if move is not None:
+        for attr, stock in MOVE_PENALTY.items():
+            out.append(XmlAttr(enemy_guns, path=AI_ACCURACY + "/Movement",
+                               attr=attr, scale=move, stock=stock,
+                               note="enemy movement penalty: " + attr))
+    blind = PENALTY_SCALE.get(v["enemy_blind_fire"])
+    if blind is not None:
+        for attr, stock in FIRE_PENALTY.items():
+            out.append(XmlAttr(enemy_guns, path=AI_ACCURACY + "/MethodOfFire",
+                               attr=attr, scale=blind, stock=stock,
+                               note="enemy blind-fire penalty: " + attr))
+    kick = {"none": 0.0, "double": 2.0}.get(v["enemy_recoil"])
+    if kick is not None:
+        out.append(XmlAttr(enemy_guns, path=AI_ACCURACY + "/Accuracy",
+                           attr="Recoil", scale=kick, stock="-5",
+                           note="enemy recoil"))
+    mags = {"x0.5": 0.5, "x2": 2.0}.get(v["enemy_magazines"])
+    if mags:
+        out.append(XmlAttr(enemy_guns, path="ReloadData", attr="clipSize",
+                           scale=mags, minimum=1, note="enemy magazine size"))
+    reach = {"x0.5": 0.5, "x1.5": 1.5}.get(v["enemy_range"])
+    if reach:
+        out.append(XmlAttr(enemy_guns, path="WeaponData", attr="range",
+                           scale=reach, minimum=1, note="enemy weapon range"))
+    return out

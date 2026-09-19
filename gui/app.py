@@ -42,7 +42,7 @@ PRESET_HINT = "Choose a preset…"
 #: can ask about a downloaded executable is "is this the new one" -- and with
 #: a fixed name and a fixed version there is no way to answer it. The window
 #: title and the first log line both carry it.
-VERSION = "1.4"
+VERSION = "1.5"
 NOTES_TAB = "About this game"
 
 

@@ -1410,6 +1410,89 @@ def test_soaf_npc_split(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_lockdown_sides(dets):
+    r"""Lockdown ships the split already done -- so prove it stays clean.
+
+    This is the one game here that needed no `_npc` copies: 42 `e_*.gun`
+    enemy weapons, each paired 1:1 with a player twin, zero enemy-only. The
+    risk is therefore not "does the split work" but "does an enemy option
+    leak", because the two sides sit in the SAME folder and differ only by a
+    two-character prefix. So the test sets every enemy-side option, applies,
+    and requires every single player weapon file to come back byte-identical.
+    """
+    det = next((d for d in dets if d.profile.id == "lockdown"), None)
+    if det is None:
+        return
+    print("\n[Lockdown: the enemy half of the weapon model]")
+    profile = det.profile
+    src = os.path.join(det.path, "data", "equip")
+    if not os.path.isdir(src):
+        return
+    guns = [f for f in os.listdir(src) if f.lower().endswith(".gun")]
+    enemy = [f for f in guns if f.lower().startswith("e_")]
+    player = [f for f in guns if not f.lower().startswith("e_")]
+    check("Lockdown: %d enemy weapons, %d player weapons, and every enemy one "
+          "has a player twin" % (len(enemy), len(player)),
+          enemy and player
+          and not {f[2:].lower() for f in enemy} - {f.lower() for f in player})
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-ldsides-")
+    try:
+        root = os.path.join(tmp, "ld")
+        for rel in ("data/equip", "data/mission", "data/actor",
+                    "data/options.xml"):
+            s = os.path.join(det.path, rel.replace("/", os.sep))
+            if os.path.isfile(s):
+                d = os.path.join(root, rel.replace("/", os.sep))
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                shutil.copy2(s, d)
+            elif os.path.isdir(s):
+                for base, _d, names in os.walk(s):
+                    for n in names:
+                        p = os.path.join(base, n)
+                        d = os.path.join(root, os.path.relpath(p, det.path))
+                        os.makedirs(os.path.dirname(d), exist_ok=True)
+                        shutil.copy2(p, d)
+        exe = os.path.join(root, profile.layout.exe.replace("/", os.sep))
+        os.makedirs(os.path.dirname(exe) or root, exist_ok=True)
+        with open(exe, "wb") as fh:
+            fh.write(b"stub")
+
+        values = dict(profile.defaults())
+        values.update(enemy_move_penalty="none", enemy_blind_fire="none",
+                      enemy_recoil="none", enemy_magazines="x2",
+                      enemy_range="x0.5", enemy_accuracy=60,
+                      enemy_damage="x2")
+        result = engine.apply(root, profile, profile.effective(values))
+        check("Lockdown: the enemy options apply", result.ok,
+              "; ".join(result.warnings[:2]))
+
+        equip = os.path.join(root, "data", "equip")
+
+        def same(name):
+            with open(os.path.join(equip, name), "rb") as a, \
+                    open(os.path.join(src, name), "rb") as b:
+                return a.read() == b.read()
+
+        leaked = [f for f in player if not same(f)]
+        check("Lockdown: not one of the %d player weapons was touched"
+              % len(player), not leaked, str(leaked[:4]))
+        moved = [f for f in enemy if not same(f)]
+        check("Lockdown: all %d enemy weapons were" % len(enemy),
+              len(moved) == len(enemy), "%d changed" % len(moved))
+
+        # ...and the reverse: a player-side option must not reach the enemy
+        engine.revert(root, profile)
+        values = dict(profile.defaults())
+        values.update(recoil="none", magazines="x2", player_damage="x1.5")
+        engine.apply(root, profile, profile.effective(values))
+        crossed = [f for f in enemy if not same(f)]
+        check("Lockdown: and a player-side option reaches no enemy weapon",
+              not crossed, str(crossed[:4]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1456,6 +1539,7 @@ def main():
         test_graw_direction(dets)
         test_npc_split(dets)
         test_soaf_npc_split(dets)
+        test_lockdown_sides(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

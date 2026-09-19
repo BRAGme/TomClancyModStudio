@@ -268,7 +268,7 @@ SETTINGS = [
         help="Another of the shipped developer readouts. Useful when lining "
              "up a camera or a texture replacement.",
         confidence="experimental", touches="config"),
-] + _lockdown_extra.settings()
+] + _lockdown_extra.settings() + _lockdown_extra.enemy_settings()
 
 
 def _factor(values, key, table):
@@ -410,6 +410,7 @@ def build_edits(values):
                                attr=attr, value="true", stock="false",
                                note=attr))
     out.extend(_lockdown_extra.edits(v, v["enemy_forced_miss"]))
+    out.extend(_lockdown_extra.enemy_edits(v, ENEMY_GUNS))
     return out
 
 

@@ -138,7 +138,13 @@ rather than quietly inert:
     allied placement in 25 missions wears a borrowed loadout. **Nineteen** of
     the twenty-two guns the enemy carries are shared with the player here, so
     the split matters considerably more.
-  * One seam in each, and it is the same seam: a single kit carried by both a
+  * *Lockdown needs no split at all* — it ships one. 42 `e_*.gun` enemy
+    weapons, each paired 1:1 with a player twin, and not one enemy-only
+    weapon. The two sides were separate all along, so the work there was
+    exposing the enemy half: every one of the 42 carries an identical
+    `Common/AIAccuracy` model (base 15, recoil −5, movement −10/−20/−30,
+    blind fire −30/−40) of which the tool previously touched one number.
+  * One seam in each of the two Red Storm games, and it is the same seam: a single kit carried by both a
     few friendly NPCs and by enemies — `m1911 only.kit` in Ghost Recon,
     `m9_only.kit` in Sum of All Fears — so those friendlies get the enemy's
     pistol. Nothing in the file layout tells them apart.
