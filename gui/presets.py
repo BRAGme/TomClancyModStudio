@@ -55,6 +55,22 @@ R6_3 = [
     ("Waves — onslaught  (Shipyard/Alcatraz)",
      dict(_wave(True, "always", 150, 4, 6), **FX_ON,
           decal_ring=96, bodies="stock")),
+
+    # "They always know where you are." Not one switch -- the engine has no
+    # omniscience flag -- but every dial that feeds awareness pushed at once:
+    # sight to its ceiling, no penalty for spotting you while they move, the
+    # longest hunt after they lose you, and the fastest reaction on contact.
+    # Wave mode supplies the rest, because m_bHuntFromStart is set by the
+    # spawner and so only reaches enemies the spawner released.
+    #
+    # It cannot make them see through walls. Line of sight is still line of
+    # sight; what changes is that once you are in it, at any range on any map,
+    # they react at once and keep coming for three minutes after you break it.
+    ("Hunted — they come looking",
+     dict(_wave(True, "always", 40, 2, 3, hunt=True, mapwide=True), **FX_ON,
+          sight=15000, search_time=180, spotting="sharp", speed="fast",
+          fire_delay="snap", terro_skill="up",
+          decal_ring=64, bodies="15")),
 ]
 
 # Ghost Recon and Jungle Storm scale difficulty with per-actor suppression

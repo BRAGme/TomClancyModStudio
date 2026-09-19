@@ -10,3 +10,6 @@ research/code/__pycache__/
 research/code/symbols_gr.txt
 research/filelist_*.txt
 research/ui_textures/
+
+# Game artwork for a private build only -- never published
+private-art/

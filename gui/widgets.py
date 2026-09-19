@@ -15,6 +15,8 @@ from tkinter import ttk
 
 from tcps2.model import BOOL, CHOICE, INT
 
+from . import gearicons, tooltip
+
 from . import skins, theme
 from .controls import RadioRow, Slider, Toggle
 
@@ -328,6 +330,19 @@ class ActionButton(tk.Canvas):
         self.configure(cursor="hand2" if on else "")
         self._draw()
 
+    def set_text(self, text):
+        """Relabel in place, keeping the width the bar already gave it.
+
+        Used where the button names the thing it will act on -- "Apply to
+        disc" against "Apply to data root" -- so the target is readable
+        without opening anything.
+        """
+        if text == self.text:
+            return
+        self.text = text
+        self.configure(width=self.width_needed())
+        self._draw()
+
     def width_needed(self):
         f = theme.F("bold" if self.accent else "body", 11)
         import tkinter.font as tkfont
@@ -424,6 +439,7 @@ class SettingCard(Chrome):
                      font=theme.F("body", 8)).pack(side="right",
                                                    padx=(0, theme.px(6)))
 
+        full = (chr(10) * 2).join(x for x in (s.help, s.caution) if x)
         if s.kind == BOOL:
             tog = Toggle(head, s.label, self.var, self.on_change)
             tog.pack(side="left", fill="x", expand=True)
@@ -435,6 +451,10 @@ class SettingCard(Chrome):
                      font=theme.F("title" if sharp else "bold",
                                   13 if sharp else 12)
                      ).pack(side="left")
+        if full:
+            hint = tooltip.Hint(head, full)
+            hint.pack(side="left", padx=(theme.px(8), 0))
+            self._controls.append(hint)
 
         if s.kind == INT:
             sl = Slider(self.body, self.var, s.minimum, s.maximum, s.unit,
@@ -444,16 +464,26 @@ class SettingCard(Chrome):
         elif s.kind == CHOICE:
             box = tk.Frame(self.body, bg=p.panel)
             box.pack(fill="x", pady=(theme.px(12), 0))
+            # Reserve the icon column for the whole list if ANY choice in it
+            # has an icon, so the odd one out does not break the alignment.
+            icons = {ch.value: gearicons.for_choice(s.key, ch.value)
+                     for ch in s.choices}
+            gap = gearicons.BOX_W if any(icons.values()) else 0
             for ch in s.choices:
                 row = RadioRow(box, ch.label, ch.help, ch.value, self.var,
-                               self.on_change)
+                               self.on_change, icon=icons[ch.value],
+                               icon_width=gap)
                 row.pack(fill="x", pady=(0, theme.px(7)))
                 self._controls.append(row)
 
+        # The full text lives in the `?` bubble; what stays on the card is the
+        # opening sentence of each. A caution is never hidden entirely -- a
+        # warning you have to hover to find is not a warning.
         if s.help:
-            self._text(s.help, p.dim)
+            self._text(tooltip.first_sentence(s.help), p.dim, size=9)
         if s.caution:
-            self._text("⚠  " + s.caution, p.warn, pady=(7, 0))
+            self._text("⚠  " + tooltip.first_sentence(s.caution), p.warn,
+                       size=9, pady=(7, 0))
         if not s.enabled and s.disabled_reason:
             self._text("✖  " + s.disabled_reason, p.bad, pady=(7, 0))
 

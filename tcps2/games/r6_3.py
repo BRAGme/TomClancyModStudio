@@ -30,7 +30,7 @@ import struct
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
-from .. import (rsecanon, rsechatter, rsedraw, rsekits, rseloadout,
+from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
                 rsemandown, rserpg, rseshadow, rsesidearm, rsescope,
                 rsewheel)
 
@@ -304,9 +304,9 @@ def _mission_settings():
 #: poking bytes in place. All of them are withdrawn together, because the
 #: evidence says the fault is the rewrite path and not the individual features.
 #: Delete this list to put them back once `uscode` is understood.
-REASSEMBLED = ("canon_team", "ss_man_down", "ai_sidearm",
-               "ai_sidearm_contact", "ai_say_dry",
-               "ss_chatter_kill", "ss_chatter_hostage")
+#: Still out: these two were bisected to a hang ON THE DISC, one each, with
+#: removing them loading fine. That is direct evidence, not association.
+REASSEMBLED = ("canon_team", "ss_man_down")
 
 #: Re-enabled 2026-09-15 once `uscode` stopped shrinking the declared memory
 #: size -- see REASSEMBLED_REASON for what that was and why it mattered. They go
@@ -361,18 +361,30 @@ REASSEMBLED_REASON = (
 
 
 #: Back on offer, but the padding fix has not yet survived a level load.
-RETRY = ()
+#: Put back at the player's request. None of these was ever bisected to a hang
+#: itself -- they were withdrawn because they share the re-assembly path with
+#: the two that were. That is a real reason to suspect them and not a reason to
+#: hide them, so they are selectable again and marked for what they are.
+RETRY = ("ai_sidearm", "ai_sidearm_contact", "ai_say_dry",
+         "ss_chatter_kill", "ss_chatter_hostage")
 
 RETRY_NOTE = (
-    "The hang that withdrew this is understood and fixed -- the edit used to "
-    "shrink the block's declared MEMORY size while padding the disk back out "
-    "with EX_Nothing, which is one disk byte and one memory byte and so cannot "
-    "make the memory total up again. Padding now mixes EX_Nothing with an "
-    "EX_LocalVariable carrying one of the block's own refs, compact on disk and "
-    "four bytes in RAM, so both numbers land exactly; all four edits now "
-    "reproduce the original size to the byte. That is measured, not yet played: "
-    "this has not been through a level load. If a load hangs, this is the first "
-    "thing to turn off.")
+    "RISKY. This edit RE-ASSEMBLES UnrealScript rather than poking bytes in "
+    "place, and that path has frozen this disc's level load twice -- once on "
+    "the initial load, once in split screen. Those two were different options, "
+    "not this one, and this one has never been bisected to a hang on its own. "
+    "It is switchable because suspicion by association is not proof, not "
+    "because it is known to be safe.\n\n"
+    "What is known: the assembler is faithful (6,726 of 6,789 script blocks "
+    "round-trip byte-identically), the container repacks to the same length "
+    "and decompresses back to exactly the bytes put in, the archive layout "
+    "does not move, and the declared memory size now lands on its original "
+    "value exactly. Three separate theories of the cause -- the shrinking "
+    "memory size, the chunk padding, the declared size -- were each tested and "
+    "each cleared. The cause is still not known.\n\n"
+    "So: expect it to work, be ready for it not to. If a load hangs, this is "
+    "the first thing to turn off, and RESTORE DISC puts the disc back exactly "
+    "as it shipped.")
 
 
 def _settings():
@@ -431,10 +443,25 @@ def _build_settings():
                      "zone is about this number plus the release size. Set this "
                      "first, then the wave size, then the total.",
                 requires={"wave_enable": True}, confidence="verified"),
-        Setting("wave_hunt", "Waves hunt you from the start", BOOL, True,
+        Setting("wave_hunt", "Enemies hunt you from the start", BOOL, True,
                 "Enemy Waves",
-                help="Without this a zone waits to be triggered by the level's "
-                     "own script, which in Terrorist Hunt never happens.",
+                help="This is the switch for enemies who come looking for you "
+                     "rather than waiting to see you. Every enemy a wave "
+                     "releases starts already hunting, so they cross the map "
+                     "toward you instead of holding a patrol -- turn it off "
+                     "and a zone waits to be triggered by the level's own "
+                     "script, which in Terrorist Hunt never happens, so "
+                     "nothing comes at all. Pair it with \"Spawn across the "
+                     "whole map\" and the pressure arrives from every "
+                     "direction rather than one corner.",
+                caution="It reaches the enemies the wave system releases, not "
+                        "the ones the designers placed by hand. Those keep "
+                        "their authored behaviour and still have to see or "
+                        "hear you first -- their strategy is chosen at "
+                        "runtime and is not in the level file, so there is "
+                        "nothing to edit for them short of rewriting script. "
+                        "And nothing here lets anyone see through walls; the "
+                        "engine has no such flag.",
                 requires={"wave_enable": True}, confidence="verified"),
         Setting("wave_mapwide", "Spawn across the whole map", BOOL, True,
                 "Enemy Waves", pnach_only=True,
@@ -521,10 +548,12 @@ def _build_settings():
 
         # ---- shared with the other two Unreal-family discs ---------------
     ] + r6tuning.cards(
-        ["fire_delay", "sight", "search_time", "speed", "spotting"],
+        ["fire_delay", "sight", "search_time", "speed", "spotting",
+         "toughness"],
         "", "Enemy Behaviour",
     ) + xboxbuild.cards(xboxbuild.R6_3, "", "Enemy Behaviour") \
       + rseloadout.cards("r6_3_slus20883", "", "Enemy Behaviour") \
+      + [rseloadout.flashlight_card("", "Enemy Behaviour")] \
       + [rserpg.card("", "Enemy Behaviour")] \
       + r6tuning.cards(["player_grenades", "player_mags"], "", "Loadout") + [
 
@@ -702,7 +731,7 @@ def _build_settings():
                      "shipped code does not say so. The Enemy Behaviour page "
                      "raises their skill and their never-miss range for both "
                      "modes at once, which is the lever that does exist."),
-    ] + rsechatter.cards("", TEAM_GROUP) + [
+    ] + rseaicover.cards("", "Enemies") + rsefragwarn.cards("", TEAM_GROUP) + rsechatter.cards("", TEAM_GROUP) + [
         rsemandown.card("", "Split Screen"),
         rsecanon.card("", "Split Screen"),
         Setting("teammates", "AI teammates in split screen", BOOL, False,
@@ -933,6 +962,16 @@ def build_data(v: dict) -> list:
                             {"percent": carry},
                             "%d%% of two-entry templates carry a grenade" % carry))
     out += rseloadout.edits(v, "", r"/COMMON(OFF|_SS)?\.LIN$")
+    if v.get("frag_warning"):
+        out.append(FileEdit("frag_warning", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "teammates warn you about their own frag"))
+    cover = str(v.get("ai_cover", "stock"))
+    if cover != "stock":
+        out.append(FileEdit("ai_cover", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"set": cover},
+                            "enemies fight from cover: %s"
+                            % rseaicover.SHARES.get(cover, cover)))
     speed = int(v.get("rpg_speed", 1))
     if speed != 1:
         out.append(FileEdit("rpg_speed", r"/COMMON(OFF|_SS)?\.LIN$", "",

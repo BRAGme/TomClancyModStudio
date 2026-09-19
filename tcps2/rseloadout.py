@@ -417,6 +417,48 @@ SHIPPED = {
 
 MODES = ("stock", "varied", "snipers", "chaos")
 
+#: `Flashlight=` and `GasMask=` are one-digit 0/1 flags on every terrorist
+#: template, sitting right after the marksmanship block. Measured on Rainbow
+#: Six 3: of 118 templates, 10 carry a flashlight and 5 a gas mask. So "chance"
+#: here means how many of the enemy TYPES carry one -- the engine has no
+#: per-spawn roll to turn up.
+#:
+#: Which templates get one is chosen by a seeded shuffle rather than by taking
+#: the first N, so a given share is the same every time it is applied but is
+#: not biased toward whatever happens to sit at the top of the file.
+GADGET_SHARES = {
+    "stock": None, "none": 0, "few": 15, "some": 35,
+    "half": 50, "most": 75, "all": 100,
+}
+
+
+def set_gadget_share(plain: bytes, key: str, share, seed: int = 1701):
+    """Give `share` percent of enemy templates `key=1`, the rest `key=0`.
+
+    One digit for one digit, so the file length never moves and every template
+    offset stays where it was. Returns `(bytes, changed)`.
+    """
+    if share is None:
+        return plain, 0
+    spans = templates(plain)
+    if not spans:
+        return plain, 0
+    order = list(range(len(spans)))
+    random.Random(seed).shuffle(order)
+    want = int(round(len(spans) * int(share) / 100.0))
+    on = set(order[:want])
+    out = bytearray(plain)
+    changed = 0
+    for i, (a, b) in enumerate(spans):
+        block = bytes(out[a:b])
+        new = _set_field(block, key, 1 if i in on else 0)
+        if new != block:
+            if len(new) != len(block):
+                raise LoadoutError("%s edit changed a template's length" % key)
+            out[a:b] = new
+            changed += 1
+    return bytes(out), changed
+
 
 def cards(pid, prefix, group):
     """The two enemy-loadout cards, worded for whichever disc this is."""
@@ -468,12 +510,38 @@ def cards(pid, prefix, group):
     ]
 
 
+def flashlight_card(prefix, group):
+    from .model import CHOICE, Choice, Setting
+
+    return Setting(
+        prefix + "enemy_flashlight", "How many enemies carry a flashlight",
+        CHOICE, "stock", group, confidence="measured", touches="data",
+        choices=[Choice("stock", "Leave it as the disc has it"),
+                 Choice("none", "None of them"),
+                 Choice("few", "A few  (15%)"),
+                 Choice("some", "Some  (35%)"),
+                 Choice("half", "Half of them"),
+                 Choice("most", "Most  (75%)"),
+                 Choice("all", "Every one")],
+        help="Every enemy archetype carries a `Flashlight=` flag, and the disc "
+             "sets it on 10 of its 118 templates -- so on a dark level most "
+             "men walk in without one. This decides how many of the types "
+             "carry one instead. It is a share of the ARCHETYPES, not a roll "
+             "per man, because the engine has no per-spawn roll to turn up: "
+             "which template a spawner uses is what decides it.",
+        caution="It only shows on levels dark enough for a beam to register -- "
+                "on a daylight map you will not see any difference. One digit "
+                "for one digit, so the file length never moves, and choosing "
+                "'Leave it as the disc has it' puts the shipped 10 back.")
+
+
 def edits(values, prefix, pattern):
     """The FileEdit list these two cards imply, or nothing if both are stock."""
     from .model import FileEdit
 
     mode = values.get(prefix + "enemy_loadout", "stock")
     aim = int(values.get(prefix + "enemy_aim", 0) or 0)
+    torch = values.get(prefix + "enemy_flashlight", "stock")
     if mode not in MODES:
         raise LoadoutError("unknown weapons mode %r" % mode)
     # Always emit, even for "stock". The file on the disc may already carry a
@@ -482,12 +550,14 @@ def edits(values, prefix, pattern):
     # change does, now that edits are applied to the original. Returning
     # nothing here would leave an earlier choice baked in with no way for the
     # page to undo it.
-    if mode == "stock" and aim == 0:
+    if mode == "stock" and aim == 0 and torch == "stock":
         return [FileEdit("enemy_loadout", pattern, "", {"weapons": "stock"},
                          "enemy templates: as the game shipped")]
     params = {"weapons": mode}
     if aim:
         params["marksmanship"] = aim
+    if torch != "stock":
+        params["flashlight"] = GADGET_SHARES[torch]
     told = {"stock": "", "varied": "varied weapons",
             "snipers": "varied weapons, marksmen among them",
             "chaos": "weapons and odds re-rolled"}[mode]

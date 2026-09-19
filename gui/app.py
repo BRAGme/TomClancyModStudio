@@ -16,7 +16,7 @@ import sys
 import threading
 import tkinter as tk
 import traceback
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,14 +25,14 @@ from tcps2.detect import identify, look, preview_detection  # noqa: E402
 from tcps2.games import PROFILES  # noqa: E402
 from tcps2.model import BOOL, INT  # noqa: E402
 
-from . import discorddialog, presence, skins, theme  # noqa: E402
+from . import dialog, discorddialog, presence, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
 from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
                       SettingCard, nav_style)  # noqa: E402
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "4.5"
+VERSION = "5.8"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -92,6 +92,10 @@ class App(tk.Tk):
         self._last_size = (0, 0)
         #: None until Discord presence is switched on; see gui/presence.py
         self.presence = None
+        #: A folder of loose archives the game reads instead of the disc's,
+        #: or None for the ordinary in-place mode. Remembered per disc: the
+        #: two can hold different edits at once and must not be confused.
+        self.data_root = None
 
         self._build()
         self._load_prefs()
@@ -152,8 +156,6 @@ class App(tk.Tk):
         self.browse.pack(side="left", padx=(theme.px(10), 0))
         self.browse_dir = ActionButton(row, "Folder", self._browse_folder)
         self.browse_dir.pack(side="left", padx=(theme.px(6), 0))
-        self.preview_btn = ActionButton(row, "Preview", self._enter_preview)
-        self.preview_btn.pack(side="left", padx=(theme.px(6), 0))
 
         # Second line: which game, out of the discs in that folder. The two
         # fields are the two questions in order -- where are your discs, and
@@ -172,13 +174,11 @@ class App(tk.Tk):
                            padx=(0, theme.px(4)), pady=theme.px(2))
         self.game_box.bind("<<ComboboxSelected>>", self._pick_game)
 
-        # Opening line rather than a blank bar: without a disc the window has
-        # nothing to say for itself, and Preview is the one thing that works
-        # in that state.
+        # Opening line rather than a blank bar: without a disc the window
+        # has nothing to say for itself.
         self.status = tk.Label(
             self.stage,
-            text="Choose a disc image or a folder of them — or press "
-                 "Preview to read every option without a disc.",
+            text="Choose a disc image, or a folder of them.",
             bg=p.bg, fg=p.dim, font=theme.F("body", 9), anchor="w")
 
         self.group = Chrome(self.stage, kind="group", pad=theme.px(12),
@@ -203,10 +203,12 @@ class App(tk.Tk):
         self.apply_btn = ActionButton(self.bar, "Apply to disc", self._apply,
                                       accent=True)
         self.cheat_btn = ActionButton(self.bar, "Cheat file", self._save_pnach)
+        self.root_btn = ActionButton(self.bar, "Data root", self._data_root)
         self.revert_btn = ActionButton(self.bar, "Restore disc", self._revert)
         self.discord_btn = ActionButton(self.bar, "Discord", self.discord_setup)
         self.discord_btn.configure(width=self.discord_btn.width_needed())
-        for b in (self.apply_btn, self.cheat_btn, self.revert_btn):
+        for b in (self.apply_btn, self.cheat_btn, self.root_btn,
+                  self.revert_btn):
             b.pack(side="right", padx=(theme.px(10), 0))
             b.set_enabled(False)
         # Packed last so it sits at the LEFT of the right-hand group: "Apply to
@@ -279,7 +281,8 @@ class App(tk.Tk):
         self.logwrap.set_height(px(LOG_H))
 
         for b in (self.browse, self.browse_dir, self.apply_btn,
-                  self.cheat_btn, self.revert_btn, self.discord_btn):
+                  self.cheat_btn, self.root_btn, self.revert_btn,
+                  self.discord_btn):
             b.configure(width=b.width_needed())
 
         self._fit_nav()
@@ -472,6 +475,13 @@ class App(tk.Tk):
         elif det.ok:
             self._select_in_shelf(det.path)
         self.detection = det
+        # A disc remembers the folder it was last patched through, so the
+        # target does not silently change between sessions.
+        remembered = getattr(self, "_saved_roots", {}).get(
+            os.path.abspath(str(getattr(det, "path", "") or "")))
+        self.data_root = remembered if remembered and os.path.isdir(
+            remembered) else None
+        self._sync_root_ui()
 
         if not det.ok:
             self.profile = None
@@ -536,6 +546,8 @@ class App(tk.Tk):
         crc_ok = bool(self.detection and self.detection.crc_matches)
         self.apply_btn.set_enabled(on and has and crc_ok)
         self.cheat_btn.set_enabled(on and has)
+        from tcps2 import hostroot
+        self.root_btn.set_enabled(on and has and hostroot.supported(self.profile))
         self.revert_btn.set_enabled(on and bool(self.detection
                                                 and self.detection.has_backup))
 
@@ -772,13 +784,14 @@ class App(tk.Tk):
         if self.busy:
             return False
         if not (self.detection and self.detection.ok):
-            messagebox.showinfo(APP_NAME, "Load a supported disc image first.")
+            dialog.info(self, APP_NAME, "Load a supported disc image first.")
             return False
         return True
 
     def _run(self, fn, done):
         self.busy = True
-        for b in (self.apply_btn, self.cheat_btn, self.revert_btn):
+        for b in (self.apply_btn, self.cheat_btn, self.root_btn,
+                  self.revert_btn):
             b.set_enabled(False)
 
         def worker():
@@ -798,7 +811,7 @@ class App(tk.Tk):
         try:
             pl = engine.plan(path, profile, vals)
         except engine.EngineError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            dialog.error(self, APP_NAME, str(exc))
             self._say(str(exc), "bad")
             return
 
@@ -822,7 +835,7 @@ class App(tk.Tk):
             lines.append("")
             lines += ["• " + w for w in pl.warnings]
         lines += ["", "Close the emulator first -- it locks the file."]
-        if not messagebox.askokcancel(APP_NAME, "\n".join(lines)):
+        if not dialog.ask(self, APP_NAME, "\n".join(lines)):
             return
 
         self._say("Patching…")
@@ -831,7 +844,7 @@ class App(tk.Tk):
             self.busy = False
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
             else:
                 ok = result["verified"] == result["applied"]
                 self._say("Done: %d of %d words verified by reading the disc "
@@ -844,19 +857,20 @@ class App(tk.Tk):
                               "bad" if d.get("broken") else "good")
                 self._say("Backup: %s" % result["backup"])
                 if not ok:
-                    messagebox.showerror(APP_NAME, "Some words did not land. The "
+                    dialog.error(self, APP_NAME, "Some words did not land. The "
                                                    "disc may be a different build.")
             self.detection = identify(path)
             self._set_buttons(True)
 
         self._run(lambda: engine.apply(path, profile, vals,
+                                       data_root=self.data_root,
                                        progress=lambda m: self._post("  " + m)),
                   done)
 
     def _revert(self):
         if not self._guard():
             return
-        if not messagebox.askokcancel(
+        if not dialog.ask(self, 
                 APP_NAME, "Put %s back exactly as it shipped?\n\nClose the "
                           "emulator first." % os.path.basename(self.detection.path)):
             return
@@ -866,7 +880,7 @@ class App(tk.Tk):
             self.busy = False
             if err:
                 self._say(str(err[0]), "bad")
-                messagebox.showerror(APP_NAME, str(err[0]))
+                dialog.error(self, APP_NAME, str(err[0]))
             else:
                 extra = (", %d data files put back" % result["data"]
                          if result.get("data") else "")
@@ -877,8 +891,92 @@ class App(tk.Tk):
             self._set_buttons(True)
 
         self._run(lambda: engine.revert(path, profile,
+                                        data_root=self.data_root,
                                         progress=lambda m: self._post("  " + m)),
                   done)
+
+    def _data_root(self):
+        """Choose, or create, the folder the game reads instead of the disc.
+
+        An empty folder is filled from the disc; one that already holds the
+        archives is simply selected, so this is both "set up" and "switch
+        back to the one I made last week".
+        """
+        from tcps2 import hostroot
+        if not self._guard():
+            return
+        if self.data_root:
+            if dialog.ask(self, 
+                    APP_NAME,
+                    "Stop using the loose data root and go back to patching "
+                    "the disc itself?\n\n%s\n\nThe folder is left alone."
+                    % self.data_root):
+                self.data_root = None
+                self._say("Back to patching the disc in place", "good")
+                self._sync_root_ui()
+            return
+        try:
+            hostroot.require(self.profile)
+        except hostroot.HostRootError as exc:
+            dialog.info(self, APP_NAME, str(exc))
+            return
+        folder = filedialog.askdirectory(
+            title="An empty folder for the loose data, or one you made before")
+        if not folder:
+            return
+        if hostroot.is_root(folder):
+            self.data_root = folder
+            self._say("Using the loose data root at %s" % folder, "good")
+            self._sync_root_ui()
+            return
+        if os.listdir(folder) and not dialog.ask(self, 
+                APP_NAME, "%s is not empty and is not a data root.\n\n"
+                          "Export into it anyway?" % folder):
+            return
+        if not dialog.ask(self, 
+                APP_NAME,
+                "Copy the whole disc into\n%s\n\nThat is about 2.5 GB and "
+                "takes a minute. Afterwards, Apply writes your edits into "
+                "that folder instead of the ISO, and files there are allowed "
+                "to grow.\n\nClose the emulator first -- it locks the disc."
+                % folder):
+            return
+        path = self.detection.path
+
+        def done(result):
+            if isinstance(result, Exception):
+                self._say(str(result), "bad")
+                dialog.error(self, APP_NAME, str(result))
+                self._set_buttons(True)
+                return
+            rep, bat = result
+            self.data_root = folder
+            self._say("Exported %d files (%.1f GB); launcher at %s"
+                      % (rep["files"], rep["bytes"] / float(1 << 30), bat),
+                      "good")
+            dialog.info(self, 
+                APP_NAME,
+                "Done.\n\nRun the game with:\n%s\n\nIt has to be that "
+                "launcher -- it passes -elf, which is the only thing that "
+                "tells PCSX2 where the loose files are. You must also switch "
+                "on Settings -> Emulation -> Enable Host Filesystem, which is "
+                "off by default. Boot the ISO on its own and the game runs "
+                "happily off the disc with none of your edits in it." % bat)
+            self._sync_root_ui()
+            self._set_buttons(True)
+
+        def work():
+            rep = hostroot.export(path, folder,
+                                  progress=lambda m: self._post(m))
+            return rep, hostroot.write_launcher(folder, path, _pcsx2_guess())
+
+        self._run(work, done)
+
+    def _sync_root_ui(self):
+        """Say which target Apply is pointed at, in the button itself."""
+        on = bool(self.data_root)
+        self.apply_btn.set_text("Apply to data root" if on else "Apply to disc")
+        self.root_btn.set_text("Using data root" if on else "Data root")
 
     def _save_pnach(self):
         if not self._guard():
@@ -886,7 +984,7 @@ class App(tk.Tk):
         vals = self.profile.effective(self._values())
         words = self.profile.build_pnach(vals) if self.profile.build_pnach else []
         if not words:
-            messagebox.showinfo(APP_NAME,
+            dialog.info(self, APP_NAME,
                                 "None of the options you have chosen need a "
                                 "cheat file -- they all go into the disc.")
             return
@@ -902,10 +1000,10 @@ class App(tk.Tk):
         try:
             engine.write_pnach(path, self.profile, words, crc)
         except OSError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            dialog.error(self, APP_NAME, str(exc))
             return
         self._say("Wrote %d cheat lines to %s" % (len(words), path), "good")
-        messagebox.showinfo(
+        dialog.info(self, 
             APP_NAME,
             "Saved %d patch lines.\n\nTurn cheats on for this game in PCSX2 and "
             "restart the emulator so the file is re-read. The lines are "
@@ -927,6 +1025,14 @@ class App(tk.Tk):
             pass
         if self.profile:
             data["profiles"][self.profile.id] = self._values()
+        roots = data.get("data_roots", {})
+        if self.detection:
+            key = os.path.abspath(str(self.detection.path))
+            if self.data_root:
+                roots[key] = self.data_root
+            else:
+                roots.pop(key, None)
+        data["data_roots"] = roots
         try:
             with open(settings_path(), "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=1)
@@ -941,6 +1047,7 @@ class App(tk.Tk):
             return
         self._recent = data.get("recent", [])
         self._saved_values = data.get("profiles", {})
+        self._saved_roots = data.get("data_roots", {})
         for p in self._recent:
             if os.path.isfile(p):
                 self.after(250, lambda q=p: (self.detection is None
@@ -949,11 +1056,39 @@ class App(tk.Tk):
                 break
 
 
+def _pcsx2_guess():
+    """A pcsx2-qt.exe on this machine, or None to leave a placeholder.
+
+    Only ever a convenience -- the launcher says to edit it, and a wrong
+    guess is visible in the file rather than hidden in a setting.
+    """
+    import glob
+    seen = []
+    for root in (r"E:\Emulators", r"C:\Program Files\PCSX2",
+                 os.path.expanduser(r"~\Documents\PCSX2")):
+        seen += glob.glob(os.path.join(root, "*", "pcsx2-qt*.exe"))
+        seen += glob.glob(os.path.join(root, "pcsx2-qt*.exe"))
+    seen.sort(key=lambda p: (0 if "remix" not in p.lower() else 1, len(p)))
+    return seen[0] if seen else None
+
+
+def baked_preview() -> bool:
+    """Was this executable built as a preview build?
+
+    `build_exe.py --preview` drops a marker beside the assets. A friend who
+    does not own the discs can then just double-click: passing `--preview` on
+    a shortcut is not something anyone should have to be told to do.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
+    return os.path.exists(os.path.join(base, "assets", "preview.mode"))
+
+
 def main(argv=None):
     theme.set_dpi_aware()
     argv = list(sys.argv[1:] if argv is None else argv)
     app = App()
-    if "--preview" in argv or "-p" in argv:
+    if "--preview" in argv or "-p" in argv or baked_preview():
         # Set before the 250 ms recent-disc timer fires, so a machine that has
         # opened a disc before still lands in preview when asked for preview.
         app.preview_only = True

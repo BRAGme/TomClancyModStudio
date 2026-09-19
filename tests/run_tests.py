@@ -111,7 +111,13 @@ def main():
         run_rpg_speed(args)
         run_split_scope(args)
         run_split_shadows(args)
+        run_host_filesystem(args)
+        run_host_root(args)
+        run_ai_cover(args)
         run_team_kits(args)
+        run_gear_icons(args)
+        run_enemy_toughness(args)
+        run_enemy_flashlights(args)
         run_split_draw(args)
         run_split_wheel(args)
         run_zopfli_fallback()
@@ -2990,6 +2996,193 @@ def run_split_scope(args):
           and len(rsescope.FRAMEBUFFER_READS) == 8)
 
 
+def run_enemy_flashlights(args):
+    """The per-archetype flashlight flag.
+
+    The safety argument is that one digit replaces one digit, so the assertions
+    are mostly about length and about nothing else in the file moving.
+    """
+    import collections
+    import re
+    from tcps2 import dataedit, lin, rseloadout, vokes
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+
+    if not args.rs3data:
+        return
+    print(chr(10) + "[Rainbow Six 3 -- enemy flashlights]")
+    with Iso(args.rs3data) as iso:
+        arc = [v for v in vokes.open_archives(iso)
+               if "VOKES0" in str(getattr(v.r, "name", "")).upper()][0]
+        container = arc.read_file("/COMMON.LIN")
+    plain = lin.decompress(container)
+
+    def share_of(buf):
+        c = collections.Counter(m.group(1).decode()
+                                for m in re.finditer(rb"Flashlight=([0-9]+)", buf))
+        return c
+
+    stock = share_of(plain)
+    check("the disc ships the flag on a minority of templates",
+          stock.get("1", 0) == 10 and stock.get("0", 0) == 108, str(dict(stock)))
+    check("and that is every template rseloadout knows about",
+          sum(stock.values()) == len(rseloadout.templates(plain)),
+          "%d vs %d" % (sum(stock.values()), len(rseloadout.templates(plain))))
+
+    op = dataedit.OPS["enemy_loadout"]
+    for want, expect_on in (("none", 0), ("half", 59), ("all", 118)):
+        out, _n = op(plain, {"weapons": "stock",
+                             "flashlight": rseloadout.GADGET_SHARES[want]}, None)
+        got = share_of(out)
+        check("%s gives %d templates a flashlight" % (want, expect_on),
+              got.get("1", 0) == expect_on, str(dict(got)))
+        check("%s does not move the file length" % want, len(out) == len(plain))
+
+    a, _ = op(plain, {"weapons": "stock", "flashlight": 35}, None)
+    b, _ = op(plain, {"weapons": "stock", "flashlight": 35}, None)
+    check("the same share gives the same file twice", a == b)
+    NLB = bytes([10])
+    touched = {plain[max(0, i - 14):i + 1].split(b"=")[0].split(NLB)[-1]
+               for i in range(len(plain)) if plain[i] != a[i]}
+    check("and nothing but the flag is touched",
+          touched == {b"Flashlight"}, str(touched))
+
+    out, _n = op(plain, {"weapons": "stock", "flashlight": 100}, container)
+    packed = lin.substitute(container, lambda _old: out)[0]
+    check("a full set still repacks into the shipped container",
+          len(packed) == len(container))
+    check("and decompresses back to exactly what was written",
+          lin.decompress(packed) == out)
+
+    p = BY_ID["r6_3_slus20883"]
+    check("leaving it alone emits no flashlight parameter",
+          "flashlight" not in [e for e in p.build_data(p.effective({}))
+                               if e.op == "enemy_loadout"][0].params)
+
+
+def run_enemy_toughness(args):
+    """The enemy wound pool, shared by the two Unreal-family discs.
+
+    Asserted against the shipped INI rather than a constant, because the whole
+    option rests on 10 being what the disc actually says.
+    """
+    import re
+    from tcps2 import vokes
+    from tcps2.games import BY_ID, r6tuning
+    from tcps2.iso import Iso
+
+    print(chr(10) + "[Rainbow Six 3 -- how much enemies can take]")
+    if args.rs3data:
+        with Iso(args.rs3data) as iso:
+            arc = [v for v in vokes.open_archives(iso)
+                   if "VOKES0" in str(getattr(v.r, "name", "")).upper()][0]
+            txt = arc.read_file("/R6GAMESETTINGS.INI").decode("latin-1")
+        got = {}
+        for k in ("m_iTerroristMaximumWounds",
+                  "m_iArmouredTerroristMaximumWounds",
+                  "m_iRainbowMaximumWounds"):
+            m = re.search(r"^\s*%s\s*=\s*(\d+)" % k, txt, re.M)
+            got[k] = int(m.group(1)) if m else None
+        check("the disc really ships a terrorist wound pool of 10",
+              got["m_iTerroristMaximumWounds"] == r6tuning.WOUNDS_STOCK,
+              str(got["m_iTerroristMaximumWounds"]))
+        check("and the armoured one really is 1.5x it",
+              got["m_iArmouredTerroristMaximumWounds"]
+              == int(r6tuning.WOUNDS_STOCK * r6tuning.WOUNDS_ARMOURED_RATIO),
+              str(got["m_iArmouredTerroristMaximumWounds"]))
+        check("a Rainbow operative carries more than an enemy, as the card says",
+              got["m_iRainbowMaximumWounds"] > got["m_iTerroristMaximumWounds"])
+
+    for gid, prefix in (("r6_3_slus20883", ""), ("gr2_slus21105", "gr2_")):
+        p = BY_ID[gid]
+        st = p.setting(prefix + "toughness")
+        check("%s offers the dial" % gid, st is not None)
+        if st is None:
+            continue
+        check("%s: it defaults to the shipped value" % gid,
+              st.default == r6tuning.WOUNDS_STOCK, str(st.default))
+        stock = [e for e in p.build_data(
+                     p.effective({prefix + "toughness": r6tuning.WOUNDS_STOCK}))
+                 if e.op == "ini_values"
+                 and "m_iTerroristMaximumWounds" in e.params["values"]]
+        check("%s: leaving it alone writes nothing" % gid, not stock)
+        check("%s: the ceiling clears the disc's own per-hit wound floor"
+              % gid, st.maximum >= 120, str(st.maximum))
+        for val in (1, 25, 60, r6tuning.WOUNDS_MAX):
+            d = [e for e in p.build_data(
+                     p.effective({prefix + "toughness": val}))
+                 if e.op == "ini_values"][0].params["values"]
+            plain = d["m_iTerroristMaximumWounds"]
+            armour = d["m_iArmouredTerroristMaximumWounds"]
+            check("%s: %d writes through and armour stays tougher"
+                  % (gid, val),
+                  plain == val and armour >= plain,
+                  "%d / %d" % (plain, armour))
+
+
+def run_gear_icons(args):
+    """The texture reader, and the reason no game art is shipped.
+
+    The icons are deliberately NOT bundled: the PS2 chain is decodable but not
+    yet named, and the Xbox art is different pictures belonging to someone
+    else. So what is asserted here is that the reader works and that no game
+    art has crept back into the build.
+    """
+    import os
+    from tcps2 import rsekits, utexture
+    from gui import gearicons
+
+    print(chr(10) + "[Rainbow Six 3 -- loadout icons]")
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    check("no game artwork is bundled, so the build is safe to release",
+          not os.path.isdir(os.path.join(here, "assets", "gearicons")))
+
+    every = set()
+    for table in (rsekits.PRIMARIES, rsekits.SECONDARIES):
+        every |= set(table)
+    every |= set(rsekits.GADGETS)
+    missing = sorted(v for v in every if v not in gearicons.KIND)
+    check("every loadout choice still has a glyph to fall back on",
+          not missing, str(missing))
+    check("and the glyph set covers nothing it should not",
+          not (set(gearicons.KIND) - every - {"stock"}),
+          str(sorted(set(gearicons.KIND) - every)))
+
+    check("the naming rule the Xbox packages follow is recorded",
+          utexture.icon_name("R63rdWeapons.SubMP5A4") == "SubMP5A4_T"
+          and utexture.icon_name("R6Weapons.R6FragGrenadeGadget")
+          == "R6FragGrenadeGadget_T")
+
+    import struct
+    opaque = struct.pack("<HHI", 0xF800, 0x001F, 0x00000000)
+    px = utexture.dxt1(opaque, 4, 4)
+    check("DXT1 decodes a flat red block",
+          len(px) == 16 and px[0] == (255, 0, 0, 255), str(px[0]))
+    punch = struct.pack("<HHI", 0x001F, 0xF800, 0xFFFFFFFF)
+    check("and the c0<=c1 form gives a transparent index 3",
+          utexture.dxt1(punch, 4, 4)[0] == (0, 0, 0, 0))
+    short = False
+    try:
+        utexture.dxt1(bytes(4), 8, 8)
+    except utexture.TextureError:
+        short = True
+    check("a truncated payload is refused, not silently padded", short)
+    check("a non-package is refused",
+          _raises(utexture.Package, b"not a package at all" + bytes(64),
+                  utexture.TextureError))
+
+
+def _raises(fn, *a):
+    want = a[-1]
+    try:
+        fn(*a[:-1])
+    except want:
+        return True
+    except Exception:                       # noqa: BLE001
+        return False
+    return False
+
+
 def run_team_kits(args):
     """The squad gadget slots, which live in every mission's own INI.
 
@@ -3184,6 +3377,204 @@ def run_team_kits(args):
     check("choosing one writes exactly one data edit",
           len(made) == 1 and made[0].params["primary"] == "teargas"
           and made[0].params["secondary"] == "stock")
+
+
+def run_host_filesystem(args):
+    """The dev-kit `-host` switch that moves the vokes archives off the disc.
+
+    Every word is checked against the disc rather than trusted, because the
+    whole mechanism rests on three branches being exactly the instructions the
+    module says they are. The strings matter as much as the branches: if the
+    prefix the builder appends is not literally `host0:` then the path it
+    produces is not one PCSX2 will serve.
+    """
+    from tcps2 import overlay, rsehost
+    from tcps2.games.r6_3 import SP
+    from tcps2.iso import Iso
+
+    if not args.rs3data:
+        return
+    print(chr(10) + "[Rainbow Six 3 -- the host filesystem switch]")
+    with Iso(args.rs3data) as iso:
+        ov = overlay.open_overlay(iso, SP)
+        live = {va: ov.read_word(va) for va in rsehost.WORDS}
+        store = ov.read_word(rsehost.FLAG_STORE)
+        got = {}
+        for name, va in rsehost.SWITCHES.items():
+            off = va - ov.img.base_va
+            end = ov.img.image.find(b"\0", off)
+            got[name] = bytes(ov.img.image[off:end])
+
+    for va, (stock, forced, why) in sorted(rsehost.WORDS.items()):
+        check("%08x is the shipped word (%s)" % (va, why),
+              live[va] in (stock, forced), "%#010x" % live[va])
+
+    check("the flag store really is sw $s3, -0x7f60($gp)",
+          (store >> 26) == 0x2B and ((store >> 21) & 31) == 28
+          and (store & 0xFFFF) == (rsehost.FLAG_GP_OFFSET & 0xFFFF),
+          "%#010x" % store)
+
+    for name, va in sorted(rsehost.SWITCHES.items()):
+        check("the parser knows -%s" % name, got[name] == b"-" + name.encode(),
+              repr(got[name]))
+
+    stock_prefix = rsehost.WORDS[rsehost.PREFIX_TEST][0]
+    check("the prefix test is a beq on $v0 that skips to the CD branch",
+          (stock_prefix >> 26) == 4 and ((stock_prefix >> 16) & 31) == 0
+          and ((stock_prefix >> 21) & 31) == 2)
+    check("forcing it is a nop, so the host branch simply falls through",
+          rsehost.WORDS[rsehost.PREFIX_TEST][1] == 0)
+
+    ver_stock, ver_forced, _ = rsehost.WORDS[rsehost.VERSION_TEST]
+    check("the version test is a bne and the edit makes it unconditional",
+          (ver_stock >> 26) == 5 and (ver_forced >> 26) == 4
+          and ((ver_forced >> 21) & 31) == 0 and ((ver_forced >> 16) & 31) == 0)
+    check("and it keeps the same branch target",
+          (ver_stock & 0xFFFF) == (ver_forced & 0xFFFF))
+
+    e = rsehost.edits()
+    check("three words, each carrying the word it replaces", len(e) == 3
+          and all(w.stock == rsehost.WORDS[w.va][0] for w in e))
+    # Deliberately not wired into the profile: the switch is proven to put the
+    # game on loose archives, but nothing has yet shown that EDITING one of
+    # them changes what is played, so no disc gets these words by default.
+    from tcps2.games import BY_ID
+    profile = BY_ID["r6_3_slus20883"]
+    every = {w.va for w in profile.build_edits(
+        profile.effective({s.key: s.default for s in profile.settings}))}
+    check("no default config writes these words to a disc",
+          not (every & set(rsehost.WORDS)),
+          "%r" % sorted(every & set(rsehost.WORDS)))
+
+
+def run_ai_cover(args):
+    """The one function that decides whether an enemy uses cover.
+
+    The assertions that matter are about the SIGNATURE, not about offsets: the
+    anchor has to find exactly seven rungs carrying exactly the shipped
+    thresholds, because that is what proves this is the build the ladders were
+    measured on. Everything else follows.
+    """
+    from tcps2 import lin, rseaicover, vokes
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+
+    print(chr(10) + "[Rainbow Six 3 -- enemies fighting from cover]")
+
+    for name, values in sorted(rseaicover.SETS.items()):
+        for ladder in rseaicover.LADDERS:
+            rungs = [values[i] for i in ladder]
+            check("the %s ladder %r is strictly decreasing" % (name, rungs),
+                  all(a > b for a, b in zip(rungs, rungs[1:])))
+    check("an unknown set is refused rather than guessed",
+          _raises(lambda: rseaicover.apply(b"x" * 64, "nope"),
+                  rseaicover.CoverError))
+
+    profile = BY_ID["r6_3_slus20883"]
+    check("stock writes nothing to the disc",
+          not [e for e in profile.build_data(profile.effective({}))
+               if e.op == "ai_cover"])
+    e = [e for e in profile.build_data(
+             profile.effective({"ai_cover": "heavy"})) if e.op == "ai_cover"]
+    check("choosing a set emits one edit against the script package",
+          len(e) == 1 and "COMMON" in e[0].select)
+
+    if not args.rs3data:
+        return
+    with Iso(args.rs3data) as iso:
+        arcs = vokes.open_archives(iso)
+        plain = {}
+        for path in ("/COMMON.LIN", "/COMMON_SS.LIN"):
+            for a in arcs:
+                if path in a.files:
+                    plain[path] = lin.decompress(a.read_file(path))
+                    break
+    for path, data in sorted(plain.items()):
+        found = rseaicover.sites(data)
+        check("%s holds exactly %d rungs" % (path, len(rseaicover.STOCK)),
+              len(found) == len(rseaicover.STOCK), str(len(found)))
+        check("%s carries the shipped thresholds" % path,
+              rseaicover.reads(data) == rseaicover.STOCK,
+              str(rseaicover.reads(data)))
+        for setname in ("cover", "heavy"):
+            out = rseaicover.apply(data, setname)
+            check("%s: %s keeps the package length" % (path, setname),
+                  len(out) == len(data))
+            check("%s: %s writes what it says" % (path, setname),
+                  rseaicover.reads(out) == rseaicover.SETS[setname])
+            check("%s: %s reverts byte for byte" % (path, setname),
+                  rseaicover.apply(out, "stock") == data)
+
+
+def run_host_root(args):
+    """The loose-data-root delivery mode.
+
+    The interesting assertions are about the two things that can silently
+    produce a game that ignores every edit: the launcher must use an ELF
+    override, because an ISO boot leaves PCSX2 with no host root at all, and
+    the three switch words must ride the ordinary word pass rather than being
+    written before it, because that pass rebuilds the overlay from pristine.
+    """
+    import tempfile
+    from tcps2 import hostroot, rsehost, vokes
+    from tcps2.games import BY_ID
+
+    print(chr(10) + "[the loose data root]")
+
+    # -- growth, which is the whole point of the mode ---------------------
+    check("a loose archive grows by at least the step, 16-byte aligned",
+          hostroot.GROW_STEP % vokes.Vokes.ALIGN == 0
+          and hostroot.GROW_STEP >= (1 << 20))
+    check("LooseVokes is a Vokes, so every edit runs against it unchanged",
+          issubclass(hostroot.LooseVokes, vokes.Vokes))
+    check("and it only overrides write -- allocate and the rest are shared",
+          set(hostroot.LooseVokes.__dict__) & {"write", "grow"}
+          == {"write", "grow"})
+
+    # -- which containers move out of the disc ----------------------------
+    for name, want in (("/VOKES0.IMG", True), ("/GR.IMG", True),
+                       ("/MENU.IMG", True), ("/SP.SOZ", False),
+                       ("/SLUS_208.83", False)):
+        check("%s %s an archive" % (name, "is" if want else "is not"),
+              bool(hostroot.ARCHIVE_RE.search(name)) == want)
+
+    # -- the launcher, where a wrong command line costs a whole session ---
+    tmp = tempfile.mkdtemp(prefix="tcps2root")
+    open(os.path.join(tmp, "SLUS_208.83"), "wb").write(b"\0" * 16)
+    bat = hostroot.write_launcher(tmp, r"X:\game.iso", r"X:\pcsx2-qt.exe")
+    text = open(bat, encoding="ascii").read()
+    check("the launcher passes -elf, which is what sets the host root",
+          "-elf" in text and "SLUS_208.83" in text)
+    check("it names the ISO too, so cdrom0 still works", "X:\\game.iso" in text)
+    check("it says Host Filesystem must be enabled, which is off by default",
+          "Enable Host Filesystem" in text)
+    check("it warns that an ISO boot silently reads the disc instead",
+          "silently" in text)
+    check("and %~dp0 survived the formatting", "%~dp0" in text
+          and "%%" not in text)
+    check("a folder with no boot ELF is refused, not half-written",
+          _raises(lambda: hostroot.write_launcher(
+                      tempfile.mkdtemp(prefix="tcps2empty"), "X:\\g.iso"),
+                  hostroot.HostRootError))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # -- only the disc whose addresses are known --------------------------
+    check("Rainbow Six 3 is supported",
+          hostroot.supported(BY_ID["r6_3_slus20883"]))
+    for gid in ("gr2_slus21105", "graw_slus21422"):
+        if gid in BY_ID:
+            check("%s is refused rather than patched at R6 3's offsets" % gid,
+                  _raises(lambda g=gid: hostroot.require(BY_ID[g]),
+                          hostroot.HostRootError))
+
+    # -- the words go through the normal pass -----------------------------
+    profile = BY_ID["r6_3_slus20883"]
+    plain = {w.va for w in profile.build_edits(profile.effective({}))}
+    check("no switch word is written unless the mode is chosen",
+          not (plain & set(rsehost.WORDS)))
+    check("and choosing it contributes exactly the three",
+          len(rsehost.edits()) == 3
+          and {w.va for w in rsehost.edits()} == set(rsehost.WORDS))
 
 
 def run_split_shadows(args):

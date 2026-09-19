@@ -53,7 +53,7 @@ class Palette:
     edge_dim: str = "#38444f"    # the dim one
     text: str = "#c8d6e0"
     dim: str = "#8593a0"
-    faint: str = "#59656f"
+    faint: str = "#788693"   # 4.6:1 on panel -- WCAG AA for small text
     title: str = "#dbe6ee"
 
     accent: str = "#9fb8cc"      # rules, ticks, slider fill
@@ -97,7 +97,7 @@ GR = Palette(
     edge_dim="#6b5a25",
     text="#b9d6f2",
     dim="#7fa3c6",
-    faint="#4d6a86",
+    faint="#7290ae",
     title="#ffffff",
     accent="#d3a83b",
     accent_dim="#8d6f24",
@@ -127,7 +127,7 @@ JS = Palette(
     edge_dim="#6b5a25",
     text="#bfe6e0",
     dim="#7fbdb5",
-    faint="#4a7a75",
+    faint="#5f9d96",
     title="#ffffff",
     accent="#d3a83b",
     accent_dim="#8d6f24",
@@ -163,7 +163,7 @@ GRAW = replace(
     edge_dim="#1d5c5f",
     text="#cdeced",
     dim="#8fb9ba",
-    faint="#54797b",
+    faint="#5e888a",
     title="#e8fbfb",
     accent="#3ee0e0",
     accent_dim="#227e80",
@@ -188,7 +188,7 @@ GR2 = replace(
     edge_dim="#4e6b3f",
     text="#d5e9c8",
     dim="#9bba8b",
-    faint="#66805a",
+    faint="#749267",
     accent="#b4e198",
     accent_dim="#6f9457",
     sel_fill="#b4e198",
@@ -203,7 +203,7 @@ GR2 = replace(
 )
 
 SOAF = replace(GR, bg="#0d1410", veil="#0a1109", panel="#16241a",
-               panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#5a7d60",
+               panel2="#1e3223", text="#c3dfc6", dim="#8bb492", faint="#6a9371",
                sel_text="#16241a",
                title_ink="#d2a047",
                title_shadow="#4a3208",
@@ -228,7 +228,7 @@ LOCKDOWN = replace(
     edge_dim="#3c5878",
     text="#dce8f4",
     dim="#9fb6cd",
-    faint="#6a8199",
+    faint="#8598ac",
     title="#ffffff",
     accent="#7fc4ea",
     accent_dim="#42648a",
@@ -237,7 +237,7 @@ LOCKDOWN = replace(
     tab="#7fc4ea",
     title_shadow="#8c1c16",
     warn="#e0b552",
-    bad="#d2604a",
+    bad="#da7d6b",
     good="#7fc14a",
     title_track=6,
 )

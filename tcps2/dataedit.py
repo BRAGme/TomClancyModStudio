@@ -22,6 +22,10 @@ from .vokes import Vokes, VokesError, open_archives
 
 MANIFEST = "data-edits.json"
 
+#: A file at least this big is named in the log on its own, because packing it
+#: is where the seconds go. COMMON.LIN's payload is 5 MB; a map INI is 3 KB.
+_CHATTY_BYTES = 256 * 1024
+
 
 class DataEditError(Exception):
     pass
@@ -136,6 +140,16 @@ def _op_ss_man_down(plain, params):
     return rsemandown.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_frag_warning(plain, params):
+    from . import rsefragwarn
+    return rsefragwarn.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_ai_cover(plain, params):
+    from . import rseaicover
+    return rseaicover.apply(plain, str(params.get("set", "stock")))
+
+
 def _op_ai_sidearm(plain, params):
     from . import rsesidearm
     return rsesidearm.apply(plain, int(params.get("chance", 0)),
@@ -148,6 +162,14 @@ def _op_enemy_loadout(plain, params, container=None):
     mark = params.get("marksmanship")
     mark = None if mark in (None, "", "stock") else int(mark)
     mode = params.get("weapons", "stock")
+    # Applied to the plain bytes FIRST, so that when a container is present the
+    # fitter measures the text that will actually be written. It is one digit
+    # for one digit, so it cannot change the length -- but it does change what
+    # deflates, and the chunk check has to see the real thing.
+    torch = params.get("flashlight")
+    extra = 0
+    if torch is not None:
+        plain, extra = rseloadout.set_gadget_share(plain, "Flashlight", torch)
     if container is None:
         # No container to measure against, so take the edit at full strength
         # and let the caller's own length check speak. Tests use this path.
@@ -155,7 +177,7 @@ def _op_enemy_loadout(plain, params, container=None):
     else:
         new, stats = rseloadout.fit_to_lin(container, plain, weapons=mode,
                                            marksmanship=mark)
-    return new, stats["weapons"] + stats["skills"]
+    return new, stats["weapons"] + stats["skills"] + extra
 
 
 #: Ops that want the file's original container bytes as a third argument,
@@ -194,6 +216,8 @@ OPS = {
     "enemy_loadout": _op_enemy_loadout,
     "split_wheel": _op_split_wheel,
     "ai_sidearm": _op_ai_sidearm,
+    "ai_cover": _op_ai_cover,
+    "frag_warning": _op_frag_warning,
     "ss_man_down": _op_ss_man_down,
     "ss_chatter": _op_ss_chatter,
     "canon_team": _op_canon_team,
@@ -232,7 +256,17 @@ def _unpack(original, path=""):
 
 def _repack(kind, original, plain):
     if kind == "lin":
-        return lin.substitute(original, lambda _old: plain)[0]
+        # `substitute` is still the better path when the payload happens to be
+        # the same length: it re-deflates only the chunks that changed and
+        # leaves the container's own length alone, so the archive entry never
+        # has to move. When an edit genuinely grows a package -- which is
+        # allowed, see `lin.rebuild` -- the whole chain is rebuilt instead.
+        # That usually comes out SMALLER anyway, because deflating at level 9
+        # beats the packer the disc shipped with.
+        if len(plain) == len(lin.decompress(original)):
+            return lin.substitute(original, lambda _old: plain)[0]
+        _parts, tail = lin.parse(original)
+        return lin.rebuild(plain, tail)
     if kind == "rselzo":
         return rselzo.repack(original, plain)
     return plain
@@ -363,6 +397,11 @@ def _archives(iso, profile):
     same handful of methods, so everything downstream -- the backup store, the
     relocation check, verify and revert -- runs unchanged.
     """
+    # A loose data root answers this one question for itself, which is all it
+    # takes for every edit below -- and the backup store, verify and revert --
+    # to run against a folder instead of a disc image.
+    if hasattr(iso, "loose_archives"):
+        return iso.loose_archives(profile)
     out = {}
     if getattr(profile, "archive_kind", "vokes") == "nimitz":
         from .nimitz import open_pak
@@ -490,8 +529,20 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None):
                 % (restored, "" if restored == 1 else "s"))
 
     # write, biggest first
+    #
+    # Everything below this line used to happen in silence, and re-deflating a
+    # 5 MB script package at maximum effort takes long enough that the log
+    # looked identical to a hang -- which is exactly how it was read. So say
+    # what is in flight BEFORE starting on it, not after finishing: a line
+    # that appears once the slow part is over is no use to anyone watching.
     built, put_back = [], 0
-    for (arc_name, path), (arc, ent, plain) in pending.items():
+    total = len(pending)
+    if total:
+        say("  %d file%s to rebuild" % (total, "" if total == 1 else "s"))
+    for n, ((arc_name, path), (arc, ent, plain)) in enumerate(
+            pending.items(), 1):
+        if len(plain) >= _CHATTY_BYTES or n % 25 == 0 or n == total:
+            say("  packing %d/%d  %s" % (n, total, path))
         original = store.original(arc_name, path)
         source = original[0] if original else arc.read_entry(ent)
         kind, was = _unpack(source, path)

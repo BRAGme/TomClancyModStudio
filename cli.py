@@ -183,10 +183,32 @@ def cmd_plan(args):
     return 0
 
 
+def cmd_root(args):
+    """Export a loose data root, and the launcher that makes PCSX2 use it."""
+    from tcps2 import hostroot
+    det = _need(args.iso)
+    hostroot.require(det.profile)
+    dest = args.out or os.path.join(
+        os.path.dirname(os.path.abspath(args.iso)),
+        os.path.splitext(os.path.basename(args.iso))[0] + " data")
+    print("exporting to %s" % dest)
+    rep = hostroot.export(args.iso, dest, progress=lambda m: print(m))
+    bat = hostroot.write_launcher(dest, args.iso, args.pcsx2)
+    print("%d files, %.1f GB, archives: %s"
+          % (rep["files"], rep["bytes"] / (1 << 30), ", ".join(rep["archives"])))
+    print("launcher: %s" % bat)
+    if not args.pcsx2:
+        print("  edit it to point at your pcsx2-qt.exe")
+    print("then: apply --data-root \"%s\"" % dest)
+    return 0
+
+
 def cmd_apply(args):
     det = _need(args.iso)
     vals = _values(det.profile, args)
-    r = engine.apply(args.iso, det.profile, vals, progress=lambda m: print("  " + m))
+    root = getattr(args, "data_root", None)
+    r = engine.apply(args.iso, det.profile, vals, data_root=root,
+                     progress=lambda m: print("  " + m))
     print("%d of %d words verified by reading the disc back"
           % (r["verified"], r["applied"]))
     if r.get("data"):
@@ -207,7 +229,9 @@ def cmd_apply(args):
 
 def cmd_revert(args):
     det = _need(args.iso)
-    r = engine.revert(args.iso, det.profile, progress=lambda m: print("  " + m))
+    r = engine.revert(args.iso, det.profile,
+                      data_root=getattr(args, "data_root", None),
+                      progress=lambda m: print("  " + m))
     print("restored; stock hash %s" % ("matches" if r["hash_ok"] else "DOES NOT MATCH"))
     return 0 if r["hash_ok"] else 1
 
@@ -292,8 +316,21 @@ def main(argv=None):
     common(sub.add_parser("info")).set_defaults(fn=cmd_info)
     common(sub.add_parser("list")).set_defaults(fn=cmd_list)
     common(sub.add_parser("plan"), True).set_defaults(fn=cmd_plan)
-    common(sub.add_parser("apply"), True).set_defaults(fn=cmd_apply)
-    common(sub.add_parser("revert")).set_defaults(fn=cmd_revert)
+    app = common(sub.add_parser("apply"), True)
+    app.add_argument("--data-root", metavar="FOLDER",
+                     help="patch the loose archives in FOLDER instead of the "
+                          "ones inside the ISO, and switch the disc onto them")
+    app.set_defaults(fn=cmd_apply)
+    rp = common(sub.add_parser("revert"))
+    rp.add_argument("--data-root", metavar="FOLDER")
+    rp.set_defaults(fn=cmd_revert)
+
+    ep = common(sub.add_parser(
+        "data-root", help="export a loose data root the game reads instead "
+                          "of the disc"), False, True)
+    ep.add_argument("--pcsx2", metavar="EXE",
+                    help="path to pcsx2-qt.exe, written into the launcher")
+    ep.set_defaults(fn=cmd_root)
     common(sub.add_parser("cheat"), True, True).set_defaults(fn=cmd_cheat)
     common(sub.add_parser("art"), False, True).set_defaults(fn=cmd_art)
     fp = common(sub.add_parser("files"))

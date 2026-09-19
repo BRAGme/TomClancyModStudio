@@ -85,6 +85,55 @@ SPOTTING = {
 }
 
 
+#: `m_iTerroristMaximumWounds` and its armoured counterpart, as shipped on both
+#: Rainbow Six 3 and Ghost Recon 2 -- measured, identical on each. The armoured
+#: variant is exactly 1.5x the plain one, and this keeps that ratio rather than
+#: pinning it, so an armoured terrorist stays the tougher of the two at every
+#: setting.
+WOUNDS_STOCK = 10
+WOUNDS_ARMOURED_RATIO = 1.5
+
+
+#: The ceiling used to be 60 -- the player's own wound count -- on the
+#: reasoning that nothing in the level should outlast you. Play-testing said
+#: otherwise: doubling the pool from 10 to 20 changed the number of shots not
+#: at all. The disc's own damage block explains why. It carries
+#: `m_iTorsoWoundThreshold=30` and `m_iArmsLegsWoundThreshold=40` under the
+#: comment "above this value the target is wounded, below this value: no
+#: effect", so a hit that registers at all is already worth more than the whole
+#: shipped 10-wound pool. Until the pool clears that per-hit floor the dial has
+#: nothing to bite on, which is exactly the "no change" that was reported.
+#: The ceiling is therefore well past it, so the setting has somewhere to go.
+WOUNDS_MAX = 250
+
+
+def _toughness(key, group, over):
+    return Setting(key, "How much punishment enemies take", INT, WOUNDS_STOCK,
+                   group, minimum=1, maximum=WOUNDS_MAX, unit="wounds",
+                   confidence="applied", touches="data",
+                   help="`m_iTerroristMaximumWounds`, which the disc ships at "
+                        "10. It is a wound pool, not hit points: where a shot "
+                        "lands still decides how much of it goes, through the "
+                        "head, torso and limb thresholds beside it. Those "
+                        "thresholds are the reason small changes here do "
+                        "nothing -- the disc will not count a torso hit worth "
+                        "less than 30 or a limb hit worth less than 40, so a "
+                        "hit that registers already empties a 10 or 20 pool on "
+                        "its own. Move this in large steps, not small ones: "
+                        "try 120 or 250 rather than 15, and compare against 10.",
+                   caution="Armoured terrorists scale with it, keeping the "
+                           "1.5x the disc ships -- so they stay tougher than "
+                           "the rest at whatever you choose. This does not "
+                           "touch your health or your squad's.\n\n"
+                           "The game reads this file once, while it boots. "
+                           "Resuming a PCSX2 savestate restores the values "
+                           "that were live when the state was made, so a "
+                           "changed setting will look like it did nothing -- "
+                           "boot the disc fresh and start a new mission to "
+                           "test it.",
+                   **over)
+
+
 def ini_updates(p: str, v: dict) -> dict:
     """The INI keys a values dict implies, for the settings that are shared.
 
@@ -117,6 +166,12 @@ def ini_updates(p: str, v: dict) -> dict:
 
     if p + "grenade_dist" in v and int(v[p + "grenade_dist"]) != 500:
         out["m_fMinDistToThrowGrenade"] = int(v[p + "grenade_dist"])
+
+    wounds = int(v.get(p + "toughness", WOUNDS_STOCK))
+    if wounds != WOUNDS_STOCK:
+        out["m_iTerroristMaximumWounds"] = wounds
+        out["m_iArmouredTerroristMaximumWounds"] = max(
+            wounds, int(round(wounds * WOUNDS_ARMOURED_RATIO)))
 
     if p + "perfect_dist" in v and int(v[p + "perfect_dist"]) != 500:
         out["m_fDistForPerfectAccuracyTerro"] = "%.1f" % float(v[p + "perfect_dist"])
@@ -372,6 +427,7 @@ def _sens_boost(key, group, over):
 
 
 _CARDS = {
+    "toughness": _toughness,
     "skill": _skill,
     "fire_delay": _fire_delay,
     "perfect_dist": _perfect_dist,

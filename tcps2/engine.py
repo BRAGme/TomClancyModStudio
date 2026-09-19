@@ -24,7 +24,7 @@ import struct
 import time
 from dataclasses import dataclass, field
 
-from . import dataedit
+from . import dataedit, hostroot
 from .iso import Iso
 from .overlay import OverlayError, open_overlay
 from .soz import SozImage
@@ -282,12 +282,28 @@ def plan(iso_path, profile, values) -> Plan:
 # apply
 # ---------------------------------------------------------------------------
 
-def apply(iso_path, profile, values, progress=None) -> dict:
+def apply(iso_path, profile, values, progress=None, data_root=None) -> dict:
+    """Patch a disc, or a disc plus a loose data root.
+
+    `data_root` picks the second delivery mode. Word edits still go into the
+    ISO either way -- the boot ELF reads the overlay from `cdrom0:` -- but the
+    archives are then read from, and written to, that folder. Its history is
+    kept separately from the disc's, because the two can hold different edits
+    at the same time and a revert of one must not claim the other.
+    """
     values = profile.effective(values)
     edits = profile.build_edits(values) if profile.build_edits else []
     data = profile.build_data(values) if profile.build_data else []
     folder = backup_dir_for(iso_path)
     store = WordStore(folder)
+    data_folder = backup_dir_for(data_root) if data_root else folder
+    if data_root:
+        # These ride the ordinary word pass rather than being written first:
+        # that pass rebuilds the overlay from the pristine copy, so anything
+        # applied before it would simply be discarded. Going through it also
+        # means the backup store remembers them and revert puts them back.
+        hostroot.require(profile)
+        edits = list(edits) + hostroot.rsehost.edits()
 
     def say(msg):
         if progress:
@@ -322,11 +338,18 @@ def apply(iso_path, profile, values, progress=None) -> dict:
         # Run the data pass even with nothing to write: the store may remember
         # files an earlier run edited, and switching every data setting back off
         # has to put those back rather than quietly leave them on the disc.
-        dstore = dataedit.Store(folder)
+        dstore = dataedit.Store(data_folder)
         if data or dstore.entries():
             say("Editing the game's own data files")
-            report["data"] = dataedit.apply_data(iso, profile, data, dstore,
-                                                 progress=progress)
+            if data_root:
+                say("  in the loose archives, which may grow")
+                with hostroot.HostRoot(data_root, writable=True) as root:
+                    report["data"] = dataedit.apply_data(
+                        root, profile, data, dstore, progress=progress)
+                report["data_root"] = str(data_root)
+            else:
+                report["data"] = dataedit.apply_data(iso, profile, data,
+                                                     dstore, progress=progress)
 
     say("Verifying against the disc")
     with Iso(iso_path) as iso:
@@ -336,8 +359,13 @@ def apply(iso_path, profile, values, progress=None) -> dict:
             report["verified"] = ok
             report["failed"] = [e for e in edits if ov.read_word(e.va) != e.value]
         if report["data"]:
-            good, bad = dataedit.verify_data(iso, profile,
-                                             dataedit.Store(folder))
+            if data_root:
+                with hostroot.HostRoot(data_root) as root:
+                    good, bad = dataedit.verify_data(
+                        root, profile, dataedit.Store(data_folder))
+            else:
+                good, bad = dataedit.verify_data(iso, profile,
+                                                 dataedit.Store(data_folder))
             report["data"]["verified"] = good
             report["data"]["broken"] = bad
     return report
@@ -347,8 +375,9 @@ def apply(iso_path, profile, values, progress=None) -> dict:
 # revert
 # ---------------------------------------------------------------------------
 
-def revert(iso_path, profile, progress=None) -> dict:
+def revert(iso_path, profile, progress=None, data_root=None) -> dict:
     folder = backup_dir_for(iso_path)
+    data_folder = backup_dir_for(data_root) if data_root else folder
     out = {"restored": False, "hash_ok": True, "data": 0}
 
     def say(msg):
@@ -356,11 +385,16 @@ def revert(iso_path, profile, progress=None) -> dict:
             progress(msg)
 
     with Iso(iso_path, writable=True) as iso:
-        dstore = dataedit.Store(folder)
+        dstore = dataedit.Store(data_folder)
         if dstore.entries():
             say("Restoring %d data file(s)" % len(dstore.entries()))
-            out["data"] = dataedit.revert_data(iso, profile, dstore,
-                                               progress=progress)["files"]
+            if data_root:
+                with hostroot.HostRoot(data_root, writable=True) as root:
+                    out["data"] = dataedit.revert_data(
+                        root, profile, dstore, progress=progress)["files"]
+            else:
+                out["data"] = dataedit.revert_data(iso, profile, dstore,
+                                                   progress=progress)["files"]
 
         if profile.overlays:
             spec = profile.overlays[0]

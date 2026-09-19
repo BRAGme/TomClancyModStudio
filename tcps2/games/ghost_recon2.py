@@ -245,7 +245,7 @@ def _settings():
                         "apply on top of it, so the practical distance is "
                         "shorter when you are still and longer when you run."),
 
-    ] + r6tuning.cards(["search_time", "speed", "spotting"], "gr2_",
+    ] + r6tuning.cards(["search_time", "speed", "spotting", "toughness"], "gr2_",
                        "Enemies") + rseloadout.cards(
         "gr2_slus21105", "gr2_", "Enemies") + [
 

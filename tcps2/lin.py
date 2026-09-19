@@ -11,14 +11,27 @@ Note the field order is (raw, compressed) -- the reverse of the Red Storm games'
 container in `rselzo.py`, which is exactly the kind of detail that silently
 produces garbage if you assume.
 
-**The editing rule is narrow and it is not negotiable: equal-length
-substitution only.** The payload is a concatenation of about 110 cooked Unreal
-packages whose recorded offsets the PS2 cooker relaid, so changing any package's
-byte length corrupts loading -- the symptom is a very slow load and then the
-emulator asserting on garbage geometry fed to the VIF. So `substitute` takes a
-function that must hand back exactly as many bytes as it was given, re-deflates
-only the chunks whose plain bytes actually changed, and pads each one back to
-its original compressed size so the container's own length never moves either.
+**A package CAN get longer. Measured 2026-09-18, and this corrects a rule this
+module used to state as non-negotiable.** The payload is a concatenation of
+about 110 cooked Unreal packages, and they sit back-to-back with a gap of
+exactly zero -- no directory, no padding, no separator, and nothing anywhere
+records where one ends. The loader has to be walking them, and it is: inserting
+20 bytes into the middle of the gameplay package, which shifts that package's
+import table, its export table and every package after it, produced a disc that
+boots, loads a level and plays.
+
+What was really being observed is two other things wearing one label. Growing a
+package means REBUILDING the container, and a rebuild that re-chunks at the
+wrong granularity overruns the loader's fixed 16384-byte inflate buffer, which
+is what fed garbage to the VIF. The "very slow load" half was separately traced
+to a file relocated to the far end of a vokes archive.
+
+`substitute` is still the right tool for an edit that happens to fit, because
+it re-deflates only the chunks that changed and leaves the container's length
+alone. `rebuild` is for the rest. Note that `rebuild` usually comes out
+SMALLER even when the payload grows -- deflating at level 9 beats the disc's
+own packer by several KB on COMMON -- so a grown package generally still fits
+the slot it shipped in.
 
 Padding is safe because the loader inflates a stream and stops at its end;
 trailing bytes inside the chunk are never looked at -- `rpg_speed` ships 163
@@ -93,6 +106,34 @@ def decompress(data: bytes) -> bytes:
             raise LinError("chunk at 0x%X yields %d bytes, header says %d"
                            % (off, len(piece), raw))
         out += piece
+    return bytes(out)
+
+
+def rebuild(plain: bytes, tail: bytes = b"", level: int = 9) -> bytes:
+    """A whole container from a payload of ANY length.
+
+    The counterpart to `substitute`, for the case it refuses. Nothing here is
+    clever: re-chunk the payload at exactly `CHUNK_RAW` and deflate each chunk
+    on its own, which is the layout the loader expects. The size rule that
+    `substitute` enforces is about the PACKAGES inside the payload, not about
+    the container -- the container is a bare chain to EOF with no length
+    recorded anywhere in it, so a longer payload simply makes a longer chain.
+
+    Chunking at the wrong granularity is the trap. The loader inflates into a
+    fixed 16384-byte buffer, so a chunk that yields more than that overruns it,
+    and the failure looks like corrupt geometry rather than a bad read.
+    """
+    if not plain:
+        raise LinError("refusing to build a container with no payload")
+    out = bytearray()
+    for i in range(0, len(plain), CHUNK_RAW):
+        raw = plain[i:i + CHUNK_RAW]
+        comp = zlib.compress(raw, level)
+        out += struct.pack("<II", len(raw), len(comp)) + comp
+    out += tail
+    # A container that will not read back is not worth writing.
+    if decompress(bytes(out)) != plain:
+        raise LinError("rebuilt container does not round-trip")
     return bytes(out)
 
 

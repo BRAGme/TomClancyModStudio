@@ -1,6 +1,15 @@
 """Produce dist/Tom Clancys PS2 ModStudio.exe.
 
-    python build_exe.py
+    python build_exe.py              -- the public build
+    python build_exe.py --with-art   -- a private build with the game's icons
+    python build_exe.py --preview    -- a no-disc build for someone without
+                                        the games, to look round the options
+
+**No-art is the default on purpose.** The loadout icons are Ubisoft artwork, so
+a build that carries them must not be published. Making the safe build the one
+you get by typing nothing means the art can only ever ship by asking for it.
+The art itself lives in `private-art/`, which is git-ignored, so it is not in
+the repository either.
 
 One file, no installer, no Python needed on the target machine. The imports are
 listed explicitly because the entry point defers them until it knows whether it
@@ -24,6 +33,11 @@ NAME = "Tom Clancys PS2 ModStudio"
 #: the script PyInstaller is pointed at
 ENTRY = "ModStudio.py"
 
+#: Where a private build picks the game's loadout icons up from, and where they
+#: land inside the bundle. Git-ignored; see the module docstring.
+ART_SOURCE = "private-art"
+ART_TARGET = os.path.join("assets", "gearicons")
+
 HIDDEN = [
     "cli", "gui", "gui.app", "gui.theme", "gui.widgets", "gui.controls",
     "gui.presets", "tcps2", "tcps2.iso", "tcps2.soz", "tcps2.vokes",
@@ -33,7 +47,7 @@ HIDDEN = [
     "tcps2.games.graw", "tcps2.games.soaf", "tcps2.games.lockdown",
     "tcps2.games.r6tuning", "tcps2.games.rstuning", "tcps2.nimitz",
     "tcps2.lin", "tcps2.rselzo", "tcps2.transforms", "tcps2.dataedit",
-    "tcps2.overlay", "tcps2.rsb", "gui.skins",
+    "tcps2.overlay", "tcps2.rsb", "gui.dialog", "gui.skins", "gui.gearicons", "gui.tooltip", "tcps2.utexture",
     "tcps2.psx", "tcps2.upscale",
     "tcps2.rseloadout", "tcps2.rseguns", "tcps2.rsemissions",
     "tcps2.rsewheel", "tcps2.rserpg", "tcps2.rsesidearm", "tcps2.rsescope", "tcps2.rsedraw",
@@ -101,9 +115,18 @@ def write_version_file(path, version):
 
 def main():
     version = app_version()
-    print("building version %s" % version)
+    with_art = "--with-art" in sys.argv
+    art = os.path.join(ROOT, ART_SOURCE, "gearicons")
+    if with_art and not os.path.isdir(art):
+        print("--with-art was asked for but %s does not exist" % art)
+        return 2
+    preview = "--preview" in sys.argv
+    name = NAME + (" (art)" if with_art else "") + (" (preview)" if preview else "")
+    print("building version %s%s" % (version,
+                                     "  [private, with game art]" if with_art
+                                     else "  [public, no game art]"))
     args = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-            "--onefile", "--windowed", "--name", NAME,
+            "--onefile", "--windowed", "--name", name,
             "--distpath", os.path.join(ROOT, "dist"),
             "--workpath", os.path.join(ROOT, "build"),
             "--specpath", os.path.join(ROOT, "build")]
@@ -112,6 +135,16 @@ def main():
         args += ["--icon", icon,
                  "--add-data", "%s%s%s" % (os.path.join(ROOT, "assets"),
                                            os.pathsep, "assets")]
+    if with_art:
+        args += ["--add-data", "%s%s%s" % (art, os.pathsep, ART_TARGET)]
+    if preview:
+        # A marker rather than a code change, so the preview build is the same
+        # binary as the public one plus one empty file.
+        flag = os.path.join(ROOT, "build", "preview.mode")
+        os.makedirs(os.path.dirname(flag), exist_ok=True)
+        with open(flag, "w", encoding="utf-8") as fh:
+            fh.write("built by build_exe.py --preview" + chr(10))
+        args += ["--add-data", "%s%s%s" % (flag, os.pathsep, "assets")]
     build_dir = os.path.join(ROOT, "build")
     os.makedirs(build_dir, exist_ok=True)
     args += ["--version-file",
@@ -126,7 +159,7 @@ def main():
     rc = subprocess.call(args, cwd=ROOT)
     if rc:
         return rc
-    exe = os.path.join(ROOT, "dist", NAME + ".exe")
+    exe = os.path.join(ROOT, "dist", name + ".exe")
     print("\n%s  v%s  (%.1f MB)"
           % (exe, version, os.path.getsize(exe) / 1048576.0))
     shutil.rmtree(os.path.join(ROOT, "build"), ignore_errors=True)

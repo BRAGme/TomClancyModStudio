@@ -119,7 +119,8 @@ class Toggle(tk.Frame):
 class RadioRow(tk.Frame):
     """One option of a choice: a marker, a label, and an explanation."""
 
-    def __init__(self, master, text, help_text, value, variable, command=None):
+    def __init__(self, master, text, help_text, value, variable, command=None,
+                 icon=None, icon_width=0):
         super().__init__(master, bg=theme.P.panel)
         self.var = variable
         self.value = value
@@ -132,6 +133,19 @@ class RadioRow(tk.Frame):
         self.dot = _Hit(top, d, d, self.choose)
         self.dot.redraw = self._draw
         self.dot.pack(side="left", padx=(0, theme.px(11)))
+        # Held on the instance because Tk keeps only a weak reference to an
+        # image: drop it and the row paints blank.
+        self.icon = icon
+        self.icon_lbl = None
+        if icon is not None:
+            self.icon_lbl = tk.Label(top, image=icon, bg=theme.P.panel)
+            self.icon_lbl.pack(side="left", padx=(0, theme.px(9)))
+        elif icon_width:
+            # Hold the column open so every label in the list starts at the
+            # same x, icon or not.
+            gap = tk.Frame(top, bg=theme.P.panel, width=icon_width, height=1)
+            gap.pack_propagate(False)
+            gap.pack(side="left", padx=(0, theme.px(9)))
         self.label = tk.Label(top, text=text, bg=theme.P.panel, fg=theme.P.text,
                               font=theme.F("body", 10), anchor="w")
         self.label.pack(side="left", fill="x", expand=True)
@@ -145,7 +159,10 @@ class RadioRow(tk.Frame):
             self.help.pack(fill="x", padx=(theme.px(29), 0),
                            pady=(theme.px(1), 0))
 
-        for w_ in (self.label, top):
+        clickable = [self.label, top]
+        if self.icon_lbl is not None:
+            clickable.append(self.icon_lbl)
+        for w_ in clickable:
             w_.bind("<Button-1>", lambda _e: self.choose())
             w_.configure(cursor="hand2")
         variable.trace_add("write", lambda *_a: self._draw())
