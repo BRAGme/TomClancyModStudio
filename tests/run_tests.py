@@ -117,6 +117,7 @@ def main():
         run_pump()
         run_grown_lin(args)
         run_fit_in_place(args)
+        run_room_invariant(args)
         run_ai_cover(args)
         run_team_kits(args)
         run_gear_icons(args)
@@ -3128,6 +3129,60 @@ def run_enemy_toughness(args):
                   % (gid, val),
                   plain == val and armour >= plain,
                   "%d / %d" % (plain, armour))
+
+
+def run_room_invariant(args):
+    r"""No file may be told it has room that belongs to the next file.
+
+    This pins a silent corruption. `_tail_room` and `_align_slack` are two
+    readings of the SAME stretch of disc -- between a file's end and the start
+    of the next -- to different standards, and the room calculation SUMMED
+    them. On Ghost Recon 2 that told R6GAMESETTINGS.INI it had four bytes when
+    it had two, and it was written over the front of RAINBOWSIX3.INI. Nothing
+    complained: both files still had entries and both still read back. Only a
+    scan for overlapping extents found it.
+
+    Asserted as an invariant over every file of every archive rather than on
+    the one case, because the arithmetic is what was wrong, not the file.
+    """
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+    from tcps2.games import BY_ID
+
+    print(chr(10) + "[room after a file never reaches the next one]")
+
+    discs = [(args.iso, "r6_3_slus20883"),
+             (args.gr, "ghost_recon_slus20613"),
+             (args.js, "jungle_storm_slus20820"),
+             (args.gr2, "gr2_slus21105"),
+             (args.graw, "graw_slus21422")]
+    looked = 0
+    for iso_path, pid in discs:
+        if not iso_path:
+            continue
+        profile = BY_ID[pid]
+        worst = None
+        checked = 0
+        with Iso(iso_path) as iso:
+            for arc in open_archives(iso, profile.archive_pattern):
+                placed = sorted((e.offset, e) for e in arc.files.values()
+                                if e.offset >= arc.data_start)
+                starts = [o for o, _e in placed]
+                for i, (off, e) in enumerate(placed):
+                    nxt = starts[i + 1] if i + 1 < len(starts) else None
+                    if nxt is None:
+                        continue
+                    reach = off + e.size + arc._room_after(e)
+                    checked += 1
+                    if reach > nxt and (worst is None or reach - nxt > worst[0]):
+                        worst = (reach - nxt, arc.r.name, e.path)
+        looked += 1
+        check("%s: no file's room reaches into the next (%d checked)"
+              % (profile.short, checked), worst is None,
+              "%s %s overruns by %d" % (worst[1], worst[2], worst[0])
+              if worst else "")
+    if not looked:
+        check("a disc was supplied to check the invariant on", False)
 
 
 def run_fit_in_place(args):

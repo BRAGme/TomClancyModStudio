@@ -247,6 +247,26 @@ class Vokes:
         """
         return self._go_home(e, data, home)
 
+    def _room_after(self, e):
+        """Bytes a file may run into past its own end, without moving.
+
+        `_tail_room` and `_align_slack` are two readings of the SAME stretch
+        of disc -- the run between this file's end and the start of the next
+        one -- taken to different standards. One demands the bytes be verified
+        blank; the other trusts them when there are fewer than ALIGN of them,
+        because that can only be the packer's own padding. Neither can ever
+        reach past the next file.
+
+        So the answer is the larger of the two and NEVER their sum. Summing
+        them counted the same bytes twice and wrote a file over the front of
+        its neighbour: on Ghost Recon 2, R6GAMESETTINGS.INI grew four bytes
+        into a two-byte gap, was told it had four, and overwrote the first two
+        bytes of RAINBOWSIX3.INI. Silently -- both files still had entries,
+        both still read back, and only a scan for overlapping extents showed
+        it.
+        """
+        return max(self._tail_room(e), self._align_slack(e))
+
     def room_for(self, e, home=None):
         """How long a file may be and still not have to move.
 
@@ -257,7 +277,7 @@ class Vokes:
         than it looks: there is one 64 KB pad and nothing else big enough, so a
         handful of relocations exhaust it and every later one fails outright.
         """
-        room = e.size + self._tail_room(e) + self._align_slack(e)
+        room = e.size + self._room_after(e)
         if home:
             room = max(room, home[1])
         return room
@@ -387,7 +407,7 @@ class Vokes:
             raise VokesError("%s: %s is a stub record (offset 0x%x is before "
                              "the data area) and cannot be replaced"
                              % (self.r.name, e.path, e.offset))
-        if len(data) <= e.size + self._tail_room(e) + self._align_slack(e):
+        if len(data) <= e.size + self._room_after(e):
             # Fits where it already is -- possibly by growing back into slack it
             # gave up earlier. A file that SHRINKS has its recorded extent
             # shrunk with it, so the rest of its original slot stops being
