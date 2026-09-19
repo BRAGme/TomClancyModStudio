@@ -77,7 +77,6 @@ PRESETS = {
             "enemy_skill": "sharp",
             "enemy_awareness": "up",
             "enemy_armour": "up",
-            "mp_enemies": True,
         }),
         ("Range day — tight weapons, soft enemies", {
             "weapon_accuracy": "tight",

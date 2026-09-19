@@ -29,7 +29,17 @@ from ..model import (BOOL, CHOICE, Choice, INT, Setting, XmlAttr, XmlText)
 #: separator, so the player's squad -- which lives one level down -- is not
 #: matched.
 ENEMY_ACTORS = "Actor/*.atr"
-#: The fixed name every script-spawned multiplayer and co-op enemy uses.
+
+#: ...but the folder is not the whole test, and assuming it was is a mistake
+#: this profile shipped. An actor with a `<KitPath>` was equipped out of the
+#: PLAYER's kit folders, which makes it friendly however it is filed. In
+#: Ghost Recon all 562 root actors lack one, so this changes nothing there; in
+#: Sum of All Fears 49 of 448 have one -- eleven support teams and a hostage --
+#: and every "tougher enemies" option had been buffing them.
+ENEMY_ONLY = "lacks:KitPath"
+
+#: The fixed name every script-spawned multiplayer and co-op enemy uses. These
+#: sit in the Actor root, so `ENEMY_ACTORS` already reaches them.
 MP_ACTORS = "Actor/opposing_force_*.atr"
 GUNS = "Equip/*.gun"
 COMBAT_MODEL = "Equip/CmbtModl.xml"
@@ -95,15 +105,6 @@ def shared_settings():
                 Choice("up", "Sharper", "One rung up."),
                 Choice("down", "Slower", "One rung down."),
             ],
-            confidence="experimental", touches="mod"),
-        Setting(
-            "mp_enemies", "Also apply to multiplayer and co-op enemies", BOOL,
-            True, group="Enemies",
-            help="Enemies spawned by a script in co-op and adversarial modes "
-                 "come from a separate, fixed set of actor files named "
-                 "opposing_force_*. They are not in the campaign's actor list, "
-                 "so without this the options above would change nothing "
-                 "outside the story missions.",
             confidence="experimental", touches="mod"),
 
         # -- Lethality ---------------------------------------------------
@@ -183,10 +184,6 @@ def shared_edits(values, game_id):
     out = []
     v = values
     actor_globs = [ENEMY_ACTORS]
-    if v["mp_enemies"]:
-        # `opposing_force_*.atr` sits beside the campaign actors, so the
-        # broad glob already includes it; the MP Actor Files folder does not.
-        actor_globs.append("Actor/MP Actor Files/*/*.atr")
 
     # -- enemy skill rungs -----------------------------------------------
     skill = v["enemy_skill"]
@@ -194,7 +191,7 @@ def shared_edits(values, game_id):
         for glob in actor_globs:
             if skill == "elite":
                 out.append(XmlText(glob, path="Weapon", value="7",
-                                   note="enemy marksmanship"))
+                                   note="enemy marksmanship", scope=ENEMY_ONLY))
             else:
                 # A rung up or down, clamped to the 1..7 scale. An addition
                 # rather than a multiplication, because the rungs are a scale
@@ -204,7 +201,7 @@ def shared_edits(values, game_id):
                     glob, path="Weapon",
                     offset=1 if skill == "sharp" else -1,
                     minimum=SKILL_MIN, maximum=SKILL_MAX,
-                    note="enemy marksmanship"))
+                    note="enemy marksmanship", scope=ENEMY_ONLY))
 
     aware = v["enemy_awareness"]
     if aware != "stock":
@@ -213,21 +210,21 @@ def shared_edits(values, game_id):
                 out.append(XmlText(
                     glob, path=tag, offset=1 if aware == "up" else -1,
                     minimum=SKILL_MIN, maximum=SKILL_MAX,
-                    note="enemy " + tag.lower()))
+                    note="enemy " + tag.lower(), scope=ENEMY_ONLY))
 
     armour = v["enemy_armour"]
     if armour != "stock":
         for glob in actor_globs:
             if armour == "none":
                 out.append(XmlText(glob, path="ArmorLevel", value="0",
-                                   note="enemy armour"))
+                                   note="enemy armour", scope=ENEMY_ONLY))
             elif armour == "max":
                 out.append(XmlText(glob, path="ArmorLevel", value="3",
-                                   note="enemy armour"))
+                                   note="enemy armour", scope=ENEMY_ONLY))
             else:
                 out.append(XmlText(glob, path="ArmorLevel", offset=1,
                                    minimum=ARMOUR_MIN, maximum=ARMOUR_MAX,
-                                   note="enemy armour"))
+                                   note="enemy armour", scope=ENEMY_ONLY))
 
     # -- lethality --------------------------------------------------------
     lethal = {"lethal": 0.5, "brutal": 0.25, "spongy": 2.0}.get(v["lethality"])

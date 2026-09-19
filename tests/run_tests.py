@@ -1059,6 +1059,72 @@ def test_rs3_modes(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_sides(dets):
+    r"""No option aimed at the enemy may reach the player's own people.
+
+    Both Red Storm profiles got this wrong by scoping "enemy" to a FOLDER.
+    Ghost Recon's `mp_enemies` option -- on by default, labelled "also apply
+    to multiplayer and co-op enemies" -- pointed at
+    `Actor\MP Actor Files\*\*.atr`, which is the player's own four MP classes,
+    four per platoon; the real script-spawned enemies are `opposing_force_*`
+    in the Actor root and were already covered. And in Sum of All Fears 49 of
+    the 448 root actors carry a `<KitPath>`, which means they were equipped
+    out of the player's kit folders: eleven support teams and a hostage.
+
+    So the test is not "does the glob look right", it is: take every enemy
+    option, plan it against the real installation, and assert that not one
+    targeted file is friendly.
+    """
+    import re
+    print("\n[Red Storm: enemy options must not reach friendly actors]")
+    kitpath = re.compile(rb"<\s*KitPath\s*>\s*[^\s<]", re.I)
+    for det in dets:
+        profile = det.profile
+        if profile.id not in ("ghost_recon", "soaf"):
+            continue
+        values = dict(profile.defaults())
+        for key, value in (("enemy_skill", "sharp"), ("enemy_armour", "up"),
+                           ("enemy_awareness", "up")):
+            if profile.setting(key):
+                values[key] = value
+        plan = engine.plan(det.path, profile,
+                           profile.build_edits(profile.effective(values)))
+        base = os.path.join(det.path, profile.layout.base_mod.replace("/", os.sep))
+        actors = [r for r in plan if r.lower().startswith("actor/")
+                  and r.lower().endswith(".atr")]
+        check("%s: enemy options reach %d actor files" % (profile.short,
+                                                          len(actors)),
+              len(actors) > 100)
+
+        friendly = []
+        for rel in actors:
+            path = os.path.join(base, rel.replace("/", os.sep))
+            try:
+                with open(path, "rb") as fh:
+                    if kitpath.search(fh.read()):
+                        friendly.append(rel)
+            except OSError:
+                pass
+        check("%s: none of them is an actor equipped from the player's kits"
+              % profile.short, not friendly,
+              "%d friendly: %s" % (len(friendly), friendly[:3]))
+
+        under_mp = [r for r in plan if "mp actor files" in r.lower()]
+        check("%s: the player's own multiplayer characters are untouched"
+              % profile.short, not under_mp, str(under_mp[:3]))
+
+        # and the negative: the friendly actors really are in the folder the
+        # old glob swept, so this test would have failed before the fix.
+        everything = engine.expand(engine.walk_rel(base), "Actor/*.atr")
+        carried = [r for r in everything
+                   if kitpath.search(open(os.path.join(base,
+                      r.replace("/", os.sep)), "rb").read())]
+        check("%s: %d of the %d root actors are friendly (0 is fine, it means "
+              "the folder rule happened to hold here)"
+              % (profile.short, len(carried), len(everything)),
+              len(everything) > 100)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1101,6 +1167,7 @@ def main():
         test_graw_enemies(dets)
         test_packages(dets)
         test_rs3_modes(dets)
+        test_sides(dets)
         test_mod_guard(dets)
     else:
         print("\nNo games installed -- the checks that need one were skipped.")

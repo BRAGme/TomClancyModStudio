@@ -427,9 +427,11 @@ def plan(root, profile, edits) -> dict:
         for rel in walk_rel(root):
             if rel.lower() not in seen and not rel.lower().startswith("bundles/"):
                 names.append(rel)
+        content_root = root
     else:
         base = source_root(root, profile)
         names = walk_rel(base) if base and os.path.isdir(base) else []
+        content_root = base
     out = {}
     for e in edits:
         hits = expand(names, e.select)
@@ -440,7 +442,7 @@ def plan(root, profile, edits) -> dict:
             # miss, because there is no single path to invent.
             hits = [e.select.replace("\\", "/")]
         for rel in hits:
-            if not in_scope(rel, e.scope):
+            if not in_scope(rel, e.scope, content_root):
                 continue
             out.setdefault(rel, []).append(e)
     return out
@@ -450,7 +452,7 @@ def _is_glob(pattern) -> bool:
     return any(ch in pattern for ch in "*?")
 
 
-def in_scope(rel, scope) -> bool:
+def in_scope(rel, scope, base=None) -> bool:
     """Whether `rel` survives an edit's extra filter.
 
     A glob alone is sometimes the wrong shape for what an option means.
@@ -458,10 +460,35 @@ def in_scope(rel, scope) -> bool:
     told apart only by an `e_` prefix, so `data\\equip\\*.gun` is every gun in
     the game and "your weapon damage" needs to say which half it meant. The
     filter is written as `not:<glob>` or `only:<glob>` against the file name.
+
+    Two verbs test the file's CONTENTS instead, because sometimes the name
+    does not carry the distinction at all. `lacks:<tag>` and `has:<tag>` ask
+    whether the file has a non-empty `<tag>` element.
+
+    That is not a theoretical nicety. "Enemy" in the two Red Storm games was
+    scoped by folder, and in Sum of All Fears 49 of the 448 actors in the
+    enemy folder are friendly -- eleven support teams and a hostage -- so
+    every "tougher enemies" option was also buffing them. An enemy there is an
+    actor with no `<KitPath>`: a kit path means somebody equipped this actor
+    from the player's own kit folders.
     """
     if not scope:
         return True
     verb, _, pattern = scope.partition(":")
+    if verb in ("has", "lacks"):
+        if base is None:
+            raise ApplyError(
+                "scope %r tests file contents and needs a search root" % scope)
+        path = os.path.join(base, rel.replace("/", os.sep))
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            return False
+        rx = re.compile(br"<\s*%s\s*>\s*[^\s<]"
+                        % re.escape(pattern.encode("latin-1")), re.I)
+        found = bool(rx.search(raw))
+        return found if verb == "has" else not found
     name = rel.rsplit("/", 1)[-1].lower()
     hit = fnmatch.fnmatchcase(name, pattern.lower())
     if verb == "not":
