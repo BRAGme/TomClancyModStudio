@@ -1097,8 +1097,9 @@ def run(args, work):
     check("a backup was taken", os.path.exists(r["backup"]))
 
     print("\n[re-apply from pristine, not from the patched disc]")
-    vals2 = dict(vals, wave_total=99, wave_trigger=5, wave_gate="away",
-                 bodies="30", decal_ring=64, viewmodel=False, fx_weather=False)
+    vals2 = dict(vals, wave_enable=True, wave_total=99, wave_trigger=5,
+                 wave_gate="away", bodies="30", decal_ring=64,
+                 viewmodel=False, fx_weather=False)
     r2 = engine.apply(iso_path, PROFILE, vals2)
     check("second apply verifies", r2["applied"] == r2["verified"])
     with Iso(iso_path) as iso:
@@ -1126,6 +1127,16 @@ def run(args, work):
     s = PROFILE.setting("wave_total")
     check("an out-of-range value is clamped", s.coerce(9999) == s.maximum)
     check("nonsense falls back to the default", s.coerce("banana") == s.default)
+    # Wave mode is OFF unless asked for. It stops Terrorist Hunt finishing
+    # its load -- measured on Parade: stock loads, stock plus a DEFAULT patch
+    # hangs, and the same patch with this one setting off loads. It is an
+    # opt-in behaviour change rather than a fix, so it must never be what
+    # pressing Apply with nothing ticked gives you.
+    check("wave mode is off unless it is asked for",
+          PROFILE.setting("wave_enable").default is False)
+    check("and a default config emits no wave words at all",
+          not any("wave:" in e.note
+                  for e in PROFILE.build_edits(PROFILE.defaults())))
     off = dict(PROFILE.defaults(), wave_enable=False)
     check("no wave words are emitted when wave mode is off",
           not any("wave:" in e.note for e in PROFILE.build_edits(off)))
@@ -1135,7 +1146,7 @@ def run(args, work):
           PROFILE.unmet("wave_total", off) == ["Enable wave mode"])
 
     print("\n[cheat file]")
-    words = PROFILE.build_pnach(PROFILE.defaults())
+    words = PROFILE.build_pnach(dict(PROFILE.defaults(), wave_enable=True))
     check("the cave is 67 words plus a hijack", len(words) == 68)
     path = engine.write_pnach(os.path.join(work, "x.pnach"), PROFILE, words, "21CC1EC3")
     text = open(path, encoding="utf-8").read()
@@ -4379,7 +4390,7 @@ def run_combination_warnings():
     from tcps2.games.r6_3 import PROFILE, combination_warnings
 
     print("\n[combinations that run the console out of memory]")
-    base = dict(PROFILE.defaults())
+    base = dict(PROFILE.defaults(), wave_enable=True)
     check("an untouched config says nothing",
           not combination_warnings(base), str(combination_warnings(base)))
 

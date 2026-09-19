@@ -403,10 +403,16 @@ def _settings():
 def _build_settings():
     return [
         # ---- wave mode -------------------------------------------------
-        Setting("wave_enable", "Enable wave mode", BOOL, True, "Enemies",
+        Setting("wave_enable", "Enable wave mode", BOOL, False, "Enemies",
                 help="Rainbow Six 3 already ships a terrorist deployment-zone "
                      "system that the campaign uses and Terrorist Hunt never "
                      "triggers. This switches it on and hands you its dials.",
+                caution="Terrorist Hunt will not finish loading with this on. "
+                        "Measured on Parade: stock loads, a stock-plus-defaults "
+                        "patch hangs on the load screen, and the same patch with "
+                        "this off loads. The campaign is unaffected. Which of "
+                        "the dials does it is not yet known, so treat the whole "
+                        "feature as campaign-only for now.",
                 confidence="verified"),
         Setting("wave_gate", "Where waves feed", CHOICE, "always", "Enemies",
                 choices=[
