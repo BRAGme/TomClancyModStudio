@@ -78,6 +78,18 @@ respawning, round gap, the unused co-op leash), Weapons (damage by range,
 accuracy, movement and turning spread, suppressor penalty), Feel (aim assist,
 field of view, camera shake, weapon bob, squad spacing).
 
+## Where the shipped data is simply wrong, and the tool says so
+
+* **Raven Shield's two ammunition types are barely different.** Across the 33
+  calibres that offer both, FMJ and JHP carry the **same damage figure** in 32
+  of them and the same range in 32 of them. The only thing separating the
+  rounds in ordinary play is how hard a kill staggers (0.25 against 0.5) — and
+  one field runs backwards: hollow points carry **four times** the penetration
+  figure of ball ammunition, when a hollow point is the round designed *not*
+  to over-penetrate. One pair, `ammo762x54mmR`, even ships its stagger values
+  the wrong way round relative to the other 32. "What the two ammunition types
+  do" gives each round a job instead.
+
 ## Options shipped visibly DISABLED, with the reason on the card
 
 Two Advanced Warfighter options were found to do nothing and are shipped off

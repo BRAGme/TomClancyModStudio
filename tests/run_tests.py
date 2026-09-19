@@ -1671,6 +1671,111 @@ def test_graw_sides(dets):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_rs3_ammo_character(dets):
+    r"""FMJ and JHP ship undifferentiated; prove the option differentiates them.
+
+    The first half of this test is the justification for the option existing
+    at all, so it asserts the complaint rather than assuming it: across every
+    calibre that offers both rounds, the damage figure is the SAME NUMBER.
+    If a future build of the game ever stops being true, the option's premise
+    is gone and this fails loudly.
+    """
+    det = next((d for d in dets if d.profile.id == "ravenshield"), None)
+    if det is None:
+        return
+    print("\n[Raven Shield: ball versus hollow point]")
+    profile = det.profile
+    from tcpc.games import _rs3_ammo
+
+    stock = upackage.Package.load(os.path.join(det.path, "system",
+                                               "R6Weapons.u"))
+    pairs = []
+    for e in stock.classes():
+        if e.size <= 0 or not e.name.endswith("FMJ"):
+            continue
+        twin = e.name[:-3] + "JHP"
+        if stock.export(twin):
+            pairs.append((e.name, twin))
+    check("Raven Shield: %d calibres ship both a ball and a hollow-point round"
+          % len(pairs), len(pairs) > 25)
+
+    same_energy = [f for f, j in pairs
+                   if stock.get(f, "m_iEnergy") == stock.get(j, "m_iEnergy")]
+    # 32 of 33, not all 33: ammo545mm7N6Subsonic is the single calibre where
+    # the hollow point really does carry more energy (+12%). Asserting the
+    # exact count rather than "all" keeps the option's stated premise honest.
+    check("Raven Shield: and the damage figure is identical on %d of the %d "
+          "-- which is the whole reason for the option"
+          % (len(same_energy), len(pairs)),
+          len(same_energy) == len(pairs) - 1,
+          "%d differ, expected exactly 1" % (len(pairs) - len(same_energy)))
+    backwards = [j for _f, j in pairs
+                 if (stock.get(j, "m_iPenetrationFactor") or 0)
+                 > (stock.get(BASE := "R6Bullet", "m_iPenetrationFactor") or 0)]
+    check("Raven Shield: and hollow points out-pierce ball on all %d, which is "
+          "the wrong way round" % len(backwards), len(backwards) == len(pairs))
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-ammo-")
+    try:
+        root = sandbox_for(det, tmp)
+        values = dict(profile.defaults())
+        values.update(ammo_character="realistic", ammo_ball_pierces=True)
+        result = engine.apply(root, profile, profile.effective(values))
+        check("Raven Shield: the ammunition option applies", result.ok,
+              "; ".join(result.warnings[:2]))
+
+        after = upackage.Package.load(os.path.join(root, "system",
+                                                   "R6Weapons.u"))
+        base = after.get("R6Bullet", "m_iPenetrationFactor")
+        harder = softer = pierces = stops = 0
+        for f, j in pairs:
+            if after.get(j, "m_iEnergy") > stock.get(j, "m_iEnergy"):
+                harder += 1
+            if after.get(f, "m_iEnergy") < stock.get(f, "m_iEnergy"):
+                softer += 1
+            # ball has no penetration of its own: it inherits the base
+            if after.find_property(f, "m_iPenetrationFactor") is None \
+                    and base > after.get(j, "m_iPenetrationFactor"):
+                pierces += 1
+            if after.get(j, "m_fKillStunTransfer") \
+                    > after.get(f, "m_fKillStunTransfer"):
+                stops += 1
+        check("Raven Shield: every hollow point now hits harder (%d/%d) and "
+              "every ball round softer (%d/%d)"
+              % (harder, len(pairs), softer, len(pairs)),
+              harder == len(pairs) and softer == len(pairs))
+        check("Raven Shield: ball now out-pierces hollow point on all %d "
+              "(base %s against %s)"
+              % (pierces, base, after.get(pairs[0][1], "m_iPenetrationFactor")),
+              pierces == len(pairs))
+        check("Raven Shield: hollow point staggers harder on all %d -- "
+              "including the one pair that ships it backwards" % stops,
+              stops == len(pairs))
+        check("Raven Shield: ball reaches further than hollow point everywhere",
+              all(after.get(f, "m_fRange") > after.get(j, "m_fRange")
+                  for f, j in pairs))
+
+        # the package must still be the same length and still parse
+        a = os.path.getsize(os.path.join(det.path, "system", "R6Weapons.u"))
+        b = os.path.getsize(os.path.join(root, "system", "R6Weapons.u"))
+        check("Raven Shield: the package is unchanged in length (%d bytes)" % b,
+              a == b)
+
+        # turning the base switch off must leave the shared value alone
+        engine.apply(root, profile, profile.effective(
+            dict(values, ammo_ball_pierces=False)))
+        again = upackage.Package.load(os.path.join(root, "system",
+                                                   "R6Weapons.u"))
+        check("Raven Shield: declining the base change leaves it at stock",
+              again.get("R6Bullet", "m_iPenetrationFactor")
+              == stock.get("R6Bullet", "m_iPenetrationFactor"))
+        check("Raven Shield: ...while the rounds stay differentiated",
+              again.get(pairs[0][1], "m_iEnergy")
+              > again.get(pairs[0][0], "m_iEnergy"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_mod_guard(dets):
     print("\n[the mod folder guard]")
     tmp = tempfile.mkdtemp(prefix="tcpc-guard-")
@@ -1713,6 +1818,7 @@ def main():
         test_graw_enemies(dets)
         test_packages(dets)
         test_rs3_modes(dets)
+        test_rs3_ammo_character(dets)
         test_sides(dets)
         test_graw_direction(dets)
         test_npc_split(dets)

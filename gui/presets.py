@@ -46,6 +46,15 @@ PRESETS = {
             "ammo_damage": "x1.5",
             "weapon_magazines": 2,
         }),
+        ("Ammunition actually matters", {
+            "ammo_character": "realistic",
+            "ammo_ball_pierces": True,
+        }),
+        ("Pick your round or pay for it", {
+            "ammo_character": "extreme",
+            "ammo_ball_pierces": True,
+            "terro_helmets": "half",
+        }),
         ("Everybody dies fast", {
             "ammo_damage": "x2",
             "ammo_penetration": "max",

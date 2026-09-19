@@ -32,7 +32,7 @@ Options that write to `user.ini` still apply; options that reason about stock
 class behaviour may not.
 """
 
-from . import _rs3_modes, _rs3_weapons
+from . import _rs3_ammo, _rs3_modes, _rs3_weapons
 from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT,
                      IniEdit, Layout, Setting)
 
@@ -208,7 +208,7 @@ SETTINGS = [
              "installation actually reads -- it overrides the engine's own "
              "DesiredFOV of 90.",
         confidence="experimental", touches="config"),
-] + _rs3_modes.settings() + _rs3_weapons.settings()
+] + _rs3_modes.settings() + _rs3_weapons.settings() + _rs3_ammo.settings()
 
 SKILL_SCALE = {"green": 0.66, "hard": 1.5}
 NERVE = {
@@ -323,6 +323,7 @@ def build_edits(values):
 
     # -- weapons and ammunition, in the compiled packages -----------------
     out.extend(_rs3_weapons.edits(v))
+    out.extend(_rs3_ammo.edits(v))
     return out
 
 

@@ -279,7 +279,7 @@ class Package:
         # Imports give a name to a class that lives in another package, which
         # is most of them -- `R6AssaultRifle` is in `R6Weapons.u` while its
         # subclasses are in `R63rdWeapons.u`.
-        imports = []
+        self.imports = imports = []
         pos = import_offset
         for _ in range(import_count):
             _pkg, pos = compact_index(d, pos)
@@ -507,6 +507,30 @@ class Package:
             return struct.unpack_from("<f", self.data, found.offset)[0]
         if found.type == T_BYTE:
             return self.data[found.offset]
+        return None
+
+    def object_name(self, class_name, prop):
+        """What an ObjectProperty points AT, by name, or None.
+
+        The value is a compact index into the reference space the export table
+        uses -- positive is an export in this package, negative an import from
+        another. Needed because a weapon does not name its ammunition as text:
+        `m_pBulletClass` is a pointer, and following it is the only way to
+        learn which round the AI actually fires.
+        """
+        found = self.find_property(class_name, prop, "object")
+        if found is None:
+            return None
+        ref, _next = compact_index(self.data, found.offset)
+        return self._ref_name(ref)
+
+    def _ref_name(self, ref):
+        if ref > 0:
+            idx = ref - 1
+            return self.exports[idx].name if idx < len(self.exports) else None
+        if ref < 0:
+            idx = -ref - 1
+            return self.imports[idx] if idx < len(self.imports) else None
         return None
 
     def set(self, class_name, prop, value, kind="any") -> bool:
