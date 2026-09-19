@@ -3994,16 +3994,17 @@ def run_ai_cover(args):
     check("stock writes nothing to the disc",
           not [e for e in profile.build_data(profile.effective({}))
                if e.op == "ai_cover"])
-    # Withdrawn 2026-09-19: it hangs the initial load. Asking for a set must
-    # now reach the disc with NOTHING, the same as every other withdrawal --
-    # a disabled option that still wrote would be the worst of both.
+    # Withdrawn and put back the same day. The disc that hung also had wave
+    # mode on -- which is what hangs Terrorist Hunt -- and the bisect never
+    # removed it, so this option was convicted on a confounded test. With
+    # only this applied, Parade Terrorist Hunt reaches gameplay and the
+    # edited ladder is live in EE RAM. So it must emit again.
     e = [e for e in profile.build_data(
              profile.effective({"ai_cover": "heavy"})) if e.op == "ai_cover"]
-    check("a withdrawn set reaches the disc with nothing", not e, str(e))
-    check("and the option says so rather than just going quiet",
-          profile.setting("ai_cover").enabled is False
-          and "hangs the initial load"
-          in profile.setting("ai_cover").disabled_reason)
+    check("choosing a set emits one edit against the script package",
+          len(e) == 1 and "COMMON" in e[0].select, str(e))
+    check("and the option is not left withdrawn",
+          profile.setting("ai_cover").enabled is True)
 
     # The module itself stays exercised. The cause is not found yet, so the
     # code has to keep working for whoever picks it up -- a withdrawal that
@@ -4405,19 +4406,42 @@ def run_combination_warnings():
 
     print("\n[combinations that run the console out of memory]")
     base = dict(PROFILE.defaults(), wave_enable=True)
+
+    def oom(vals):
+        """Just the memory warnings.
+
+        Wave mode also warns on its own now, because it stops Terrorist Hunt
+        loading, and that note rides along with every config here -- they all
+        have wave mode on, since that is what feeds the zones. Filtering it
+        keeps these checks about the thing they were written for; the note
+        itself is asserted directly, just above.
+        """
+        return [w for w in combination_warnings(vals)
+                if "Terrorist Hunt" not in w]
+
     check("an untouched config says nothing",
-          not combination_warnings(base), str(combination_warnings(base)))
+          not oom(base), str(oom(base)))
+
+    # A stored profile ignores a changed default, so the warning is what
+    # actually reaches someone who turned wave mode on before it was known
+    # to hang Terrorist Hunt.
+    check("wave mode warns on its own, not only in combination",
+          any("Terrorist Hunt" in w for w in combination_warnings(base)),
+          str(combination_warnings(base)))
+    check("and a config without it says nothing about it",
+          not any("Terrorist Hunt" in w for w in
+                  combination_warnings(dict(base, wave_enable=False))))
 
     bodies_only = dict(base, bodies="never", wave_gate="stock")
     check("bodies alone with the zones behaving is fine",
-          not combination_warnings(bodies_only), str(combination_warnings(bodies_only)))
+          not oom(bodies_only), str(oom(bodies_only)))
 
     both = dict(base, bodies="never")
-    got = combination_warnings(both)
+    got = oom(both)
     check("but bodies never plus every zone feeding warns", got, str(got))
 
     real = dict(base, bodies="never", decal_ring=160)
-    got = combination_warnings(real)
+    got = oom(real)
     check("and the disc that actually froze gets all three",
           len(got) == 3, "%d warnings" % len(got))
     check("the first one names the fix",

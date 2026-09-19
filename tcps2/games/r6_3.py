@@ -1075,6 +1075,24 @@ def combination_warnings(v: dict) -> list:
     alive, and the switch that caused it was set several sessions ago.
     """
     out = []
+
+    # Said every time wave mode is on, not just in combination.
+    #
+    # Turning the DEFAULT off does nothing for anyone who already has it
+    # stored: a saved profile carries the old value and goes on applying it,
+    # which is exactly how this was missed. The reporter's profile still said
+    # True hours after the default changed, so every apply they made through
+    # the window carried wave mode -- and that sent one investigation after
+    # an option that turned out to be innocent. A default is advice to new
+    # discs; a warning is the only thing that reaches an old profile.
+    if v.get("wave_enable"):
+        out.append(
+            "Wave mode is on, and Terrorist Hunt will not finish loading "
+            "with it. Measured on Parade: stock loads, stock plus this hangs "
+            "on the load screen, and turning this one setting off loads "
+            "again. The campaign is unaffected. Turn it off under Enemies if "
+            "you are playing Terrorist Hunt.")
+
     feeding = (v.get("wave_enable")
                and v.get("wave_gate", "stock") != "stock")
     forever = v.get("bodies", "stock") == "never"
