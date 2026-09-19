@@ -1756,6 +1756,107 @@ def test_graw_sides(dets):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_rs3_expansions(dets):
+    r"""Gold's two expansions must be retuned with the base game, and only them.
+
+    Athena Sword and Iron Wrath ship their own weapons, ammunition and menu
+    bars in packages of their own. Every option here used to stop at
+    `system\`, so a person who turned an option on got it on the base game and
+    silently not on the 31 expansion weapons or the three expansion ammunition
+    pairs.
+
+    The second half is the one that matters more. The tempting spelling of the
+    fix is a glob over `Mods\*\System\*Weapons.u`, and `Mods\` is also where a
+    person's OWN mods live -- this machine has SupplyDrop, which carries
+    fourteen weapon packages. Retuning somebody else's mod without being asked
+    would be a worse bug than the one being fixed, so it is asserted against.
+    """
+    det = next((d for d in dets if d.profile.id == "ravenshield"), None)
+    if det is None:
+        return
+    print("\n[Raven Shield: the Gold expansions]")
+    profile = det.profile
+
+    OFFICIAL = ("Mods/AthenaSword/System/ASWeapons.u",
+                "Mods/AthenaSword/System/ASDescription.u",
+                "Mods/IronWrath/System/MP2Weapons.u",
+                "Mods/IronWrath/System/MP23rdWeapons.u",
+                "Mods/IronWrath/System/MP2Description.u")
+
+    values = dict(_max_values(profile))
+    values["menu_bars"] = True                 # a default-ON bool; max turns it off
+    values["ammo_character"] = "realistic"
+    selects = {e.select.replace("\\", "/") for e in
+               profile.build_edits(profile.effective(values))}
+    missing = [f for f in OFFICIAL if f not in selects]
+    check("Raven Shield: all %d expansion packages are named by the edits"
+          % len(OFFICIAL), not missing, str(missing))
+
+    # -- and nothing else under Mods\ ------------------------------------
+    stray = sorted(f for f in selects
+                   if f.lower().startswith("mods/") and f not in OFFICIAL)
+    check("Raven Shield: no third-party mod is selected",
+          not stray, str(stray[:4]))
+    others = [d for d in os.listdir(os.path.join(det.path, "Mods"))
+              if d.lower() not in ("athenasword", "ironwrath")]
+    check("Raven Shield: %d other mod folder(s) are installed to be spared "
+          "(%s)" % (len(others), ", ".join(sorted(others)) or "none"),
+          True)
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-gold-")
+    try:
+        root = sandbox_for(det, tmp)
+        copied = [f for f in OFFICIAL
+                  if os.path.exists(os.path.join(root, f.replace("/", os.sep)))]
+        if len(copied) != len(OFFICIAL):
+            check("Raven Shield: the expansion packages reached the sandbox",
+                  False, str(sorted(set(OFFICIAL) - set(copied))))
+            return
+        sizes = {f: os.path.getsize(os.path.join(root, f.replace("/", os.sep)))
+                 for f in OFFICIAL}
+
+        result = engine.apply(root, profile, profile.effective(values))
+        check("Raven Shield: the expansion apply succeeded", result.ok,
+              "; ".join(result.warnings[:2]))
+        written = {c.rel.replace("\\", "/") for c in result.changes}
+        unwritten = [f for f in OFFICIAL if f not in written]
+        check("Raven Shield: all %d expansion packages were written"
+              % len(OFFICIAL), not unwritten, str(unwritten))
+
+        grew = [f for f in OFFICIAL
+                if os.path.getsize(os.path.join(root, f.replace("/", os.sep)))
+                != sizes[f]]
+        check("Raven Shield: no expansion package changed length",
+              not grew, str(grew))
+
+        # the three expansion ammunition pairs really moved
+        moved = []
+        for rel, cls in (("Mods/AthenaSword/System/ASWeapons.u",
+                          "ammo9x39mmSP6NormalJHP"),
+                         ("Mods/IronWrath/System/MP2Weapons.u",
+                          "ammo46x30mmNormalJHP"),
+                         ("Mods/IronWrath/System/MP2Weapons.u",
+                          "ammo46x30mmSubsonicJHP")):
+            was = upackage.Package.load(
+                os.path.join(det.path, rel.replace("/", os.sep)))
+            now = upackage.Package.load(
+                os.path.join(root, rel.replace("/", os.sep)))
+            want = int(was.get(cls, "m_iEnergy")
+                       * _rs3_ammo.CHARACTER["realistic"]["jhp"]["energy"])
+            if now.get(cls, "m_iEnergy") == want \
+                    and abs(now.get(cls, "m_fKillStunTransfer") - 0.60) < 1e-6:
+                moved.append(cls)
+        check("Raven Shield: the %d expansion hollow-point classes are "
+              "retuned" % len(moved), len(moved) == 3, str(moved))
+
+        mismatched = [c for c in result.changes if c.status == "stock-mismatch"]
+        check("Raven Shield: every expansion edit found the stock value it "
+              "expected", not mismatched,
+              str([(c.rel, c.what) for c in mismatched[:3]]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_rs3_ammo_character(dets):
     r"""FMJ and JHP ship undifferentiated; prove the option differentiates them.
 
@@ -2025,6 +2126,7 @@ def main():
         test_graw_enemies(dets)
         test_packages(dets)
         test_rs3_modes(dets)
+        test_rs3_expansions(dets)
         test_rs3_ammo_character(dets)
         test_sides(dets)
         test_graw_direction(dets)

@@ -8,7 +8,7 @@ corrected picture is more interesting than the wrong one.
 
 Three mechanics already separate them, all shipped, all working:
 
-1. **`m_szBulletType`.** `R6Bullet` defaults to `"JHP"` and the 33 ball
+1. **`m_szBulletType`.** `R6Bullet` defaults to `"JHP"` and the 36 ball
    classes override it to `"FMJ"`. A hollow point that hits a person is
    deactivated on the spot; a ball round with energy left over keeps flying
    and can hit the man behind him.
@@ -23,9 +23,20 @@ Three mechanics already separate them, all shipped, all working:
    harder.
 
 What genuinely does NOT differ is **damage and range**: `m_iEnergy` is the
-same number in 32 of the 33 calibres that ship both, and `m_fRange` likewise.
+same number in 35 of the 36 pairs that ship both, and `m_fRange` likewise.
 The exception is `ammo545mm7N6Subsonic`, where the hollow point carries 12%
 more of both.
+
+## Where the 36 pairs live
+
+33 are in `system\R6Weapons.u`. The other three belong to Gold's two
+official expansions and sit in packages of their own -- the 9x39mm SP-6 in
+Athena Sword's `ASWeapons.u`, and the 4.6x30mm normal and subsonic loads in
+Iron Wrath's `MP2Weapons.u`. This option reached only the base game's until
+now, so an expansion round kept its stock figures while everything else
+moved. The package list is shared with the weapon options and lives in
+`_rs3_weapons.py`, which also says why the two expansions are named one by
+one rather than globbed: `Mods\` is where a person's OWN mods live too.
 
 So the honest job for an option here is not "make them different" -- they are
 -- but "give them a damage and range contrast as well", so the choice is felt
@@ -41,8 +52,10 @@ in a firefight and not only when shooting at a door.
 
 Every figure is scaled from that calibre's OWN stock value, so the balance
 between a .22 and a .50 is preserved. Stun is the exception and is set
-absolutely, because it only ever holds 0.25 or 0.5 and one pair --
-`ammo762x54mmR` -- ships them the wrong way round relative to the other 32.
+absolutely, because it only ever holds 0.25 or 0.5 and four of the 36 pairs
+do not follow the usual 0.25/0.50: the two `ammo762x54mmR` loads ship them
+REVERSED, and the two `ammo30calMagnum` loads give the hollow point 0.25 as
+well, so it gets no stagger bonus at all. Scaling would keep all four.
 
 `m_fRangeConversionConst` is a quadratic energy-falloff term,
 `RangeConversion(d) = d*d*c + c`. It also gates surface penetration at
@@ -69,8 +82,7 @@ turns it on generally.
 """
 
 from ..model import CHOICE, Choice, PropEdit, Setting
-
-AMMO = "system/R6Weapons.u"
+from ._rs3_weapons import AMMO_PACKAGES
 
 #: Each profile: how the round's own stock figures are moved. `stun` is an
 #: absolute because the field only ever holds 0.25 or 0.5, and one pair holds
@@ -97,7 +109,7 @@ def settings():
                  "bounces off, ball can pass through one man and hit the one "
                  "behind him, and a hollow-point kill staggers harder. What "
                  "they do NOT differ in is damage or range -- those are the "
-                 "same number in 32 of the 33 calibres that offer both. This "
+                 "same number in 35 of the 36 pairs that offer both. This "
                  "adds that contrast, so the choice is felt in a firefight "
                  "and not only against a door.",
             caution="Every figure is scaled from that calibre's own stock "
@@ -128,21 +140,24 @@ def edits(values):
     if not spec:
         return []
     out = []
-    for cls, key in (("*FMJ", "fmj"), ("*JHP", "jhp")):
-        how = spec[key]
-        side = "ball" if key == "fmj" else "hollow point"
-        out.append(PropEdit(AMMO, cls=cls, prop="m_iEnergy",
-                            scale=how["energy"], minimum=1,
-                            note="%s damage" % side))
-        out.append(PropEdit(AMMO, cls=cls, prop="m_fRange",
-                            scale=how["rng"], minimum=1,
-                            note="%s range" % side))
-        out.append(PropEdit(AMMO, cls=cls, prop="m_fRangeConversionConst",
-                            scale=how["falloff"], minimum=0.0001,
-                            note="%s energy falloff" % side))
-        # absolute, not scaled: the field only ever holds 0.25 or 0.5, and
-        # `ammo762x54mmR` ships them the wrong way round.
-        out.append(PropEdit(AMMO, cls=cls, prop="m_fKillStunTransfer",
-                            value=how["stun"],
-                            note="%s stopping power" % side))
+    for pkg in AMMO_PACKAGES:
+        for cls, key in (("*FMJ", "fmj"), ("*JHP", "jhp")):
+            how = spec[key]
+            side = "ball" if key == "fmj" else "hollow point"
+            out.append(PropEdit(pkg, cls=cls, prop="m_iEnergy",
+                                scale=how["energy"], minimum=1,
+                                note="%s damage" % side))
+            out.append(PropEdit(pkg, cls=cls, prop="m_fRange",
+                                scale=how["rng"], minimum=1,
+                                note="%s range" % side))
+            out.append(PropEdit(pkg, cls=cls, prop="m_fRangeConversionConst",
+                                scale=how["falloff"], minimum=0.0001,
+                                note="%s energy falloff" % side))
+            # absolute, not scaled: the field only ever holds 0.25 or 0.5, and
+            # four of the 36 pairs do not follow the usual 0.25/0.50 -- the two
+            # `ammo762x54mmR` loads ship them REVERSED, and the two
+            # `ammo30calMagnum` loads give the hollow point no bonus at all.
+            out.append(PropEdit(pkg, cls=cls, prop="m_fKillStunTransfer",
+                                value=how["stun"],
+                                note="%s stopping power" % side))
     return out

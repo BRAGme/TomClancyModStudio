@@ -61,16 +61,39 @@ reaches them anyway.
 
 from ..model import BOOL, CHOICE, Choice, INT, PropEdit, Setting
 
-#: the two packages carrying weapon classes. `R61stWeapons.u` is deliberately
-#: not here: it holds first-person hands and meshes and no statistics, so
-#: including it would only mean backing up and rewriting a file byte for byte.
-WEAPON_PACKAGES = ("system/R6Weapons.u", "system/R63rdWeapons.u")
+# Gold's two official expansions -- Athena Sword and Iron Wrath -- ship their
+# own weapons, ammunition and menu bars in packages of their own, and every
+# option here used to stop at the base game's. A person who turned on "less
+# recoil" got it on 142 base weapons and not on the 31 expansion ones, with
+# nothing on screen saying so.
+#
+# These are named ONE BY ONE on purpose. The obvious spelling is a glob over
+# `Mods/*/System/*Weapons.u`, and it is wrong: `Mods\` is also where a person's
+# OWN mods live. This installation has two of them -- NewOperative and
+# SupplyDrop, the latter carrying fourteen weapon packages of its own -- and
+# silently retuning somebody else's mod is not this tool's business. Only the
+# two folders that ship with Gold are listed.
+#
+# An install without them is fine: `plan()` expands each path against the real
+# folder, so a package that is not there matches nothing and its edits are
+# simply not planned.
+ATHENA = "Mods/AthenaSword/System/"
+IRON = "Mods/IronWrath/System/"
 
-#: ammunition lives with the base weapon classes
-AMMO_PACKAGE = "system/R6Weapons.u"
+#: the packages carrying weapon classes. `R61stWeapons.u` and `MP21stWeapons.u`
+#: are deliberately not here: they hold first-person hands and meshes and no
+#: statistics, so including them would only mean backing up and rewriting a
+#: file byte for byte.
+WEAPON_PACKAGES = ("system/R6Weapons.u", "system/R63rdWeapons.u",
+                   ATHENA + "ASWeapons.u", IRON + "MP23rdWeapons.u")
+
+#: ammunition lives with the base weapon classes, and with each expansion's
+AMMO_PACKAGES = ("system/R6Weapons.u",
+                 ATHENA + "ASWeapons.u", IRON + "MP2Weapons.u")
 
 #: the loadout menu's stat bars
-DESC_PACKAGE = "system/R6Description.u"
+DESC_PACKAGES = ("system/R6Description.u",
+                 ATHENA + "ASDescription.u", IRON + "MP2Description.u")
 
 #: Ammunition classes are all named `ammo<calibre><load>`, plus `R6Bullet`,
 #: which is the base every one of them inherits from and the value an
@@ -232,17 +255,19 @@ def edits(values):
 
     damage = DAMAGE_SCALE.get(v["ammo_damage"])
     if damage is not None:
-        for cls in AMMO_CLASSES:
-            out.append(PropEdit(AMMO_PACKAGE, cls=cls, prop="m_iEnergy",
-                                scale=damage, minimum=1,
-                                note="bullet damage"))
+        for pkg in AMMO_PACKAGES:
+            for cls in AMMO_CLASSES:
+                out.append(PropEdit(pkg, cls=cls, prop="m_iEnergy",
+                                    scale=damage, minimum=1,
+                                    note="bullet damage"))
 
     pen = {"max": 4, "min": 1}.get(v["ammo_penetration"])
     if pen is not None:
-        for cls in AMMO_CLASSES:
-            out.append(PropEdit(AMMO_PACKAGE, cls=cls,
-                                prop="m_iPenetrationFactor", value=pen,
-                                note="penetration"))
+        for pkg in AMMO_PACKAGES:
+            for cls in AMMO_CLASSES:
+                out.append(PropEdit(pkg, cls=cls,
+                                    prop="m_iPenetrationFactor", value=pen,
+                                    note="penetration"))
 
     if v["menu_bars"]:
         out.extend(_bar_edits(damage, recoil, accuracy, settle))
@@ -267,12 +292,13 @@ def _bar_edits(damage, recoil, accuracy, settle):
             continue
         for i in range(BAR_SLOTS):
             prop = "%s[%d]" % (bar, i)
-            if inverted and factor == 0:
-                out.append(PropEdit(DESC_PACKAGE, prop=prop, value=100,
-                                    note="menu bar: " + bar))
-                continue
-            out.append(PropEdit(
-                DESC_PACKAGE, prop=prop,
-                scale=(1.0 / factor) if inverted else factor,
-                minimum=0, maximum=100, note="menu bar: " + bar))
+            for pkg in DESC_PACKAGES:
+                if inverted and factor == 0:
+                    out.append(PropEdit(pkg, prop=prop, value=100,
+                                        note="menu bar: " + bar))
+                    continue
+                out.append(PropEdit(
+                    pkg, prop=prop,
+                    scale=(1.0 / factor) if inverted else factor,
+                    minimum=0, maximum=100, note="menu bar: " + bar))
     return out
