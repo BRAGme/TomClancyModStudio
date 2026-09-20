@@ -851,3 +851,51 @@ they were never relevant either.
 That is three leads closed by one properly sampled timeline, which is the
 argument for sampling through a failure rather than photographing its
 aftermath.
+
+---
+
+# THE CHUNK: it dies on the final partial chunk of a bank
+
+Tracking the streaming offset and length through both series:
+
+| | offset `0x09e180` | length `0x09e184` |
+|---|---|---|
+| working, 31-35 | advancing: `0e0000`, `010000`, `180000`, `2c0000`, `400000` | **`00010000`** every capture |
+| hanging, healthy 43-45 | advancing: `190000`, `380000`, `4b0000` | **`00010000`** |
+| hanging, collapse 46 | `00540000` | **`00004680`** |
+| hanging, dead 47-53 | `00540000` frozen | **`00004680`** frozen, 8 captures |
+
+**The normal streaming length is `0x10000` — 64 KB. At the collapse it becomes
+`0x4680`, which is 18,048 bytes and NOT a multiple of the `0x4000` read unit.**
+That is a short, unaligned remainder: the final partial chunk of the file. The
+offset freezes at `0x540000`, so the bank ends at `0x544680`, about 5.52 MB.
+
+It also matches the clamp already decompiled on the EE side, in the caller of
+the RPC wrapper:
+
+```c
+iVar4 = FUN_000934f4(local_34);                       // the file's size
+if (iVar4 < (int)(local_30 + local_2c)) {             // request runs past it
+    local_2c = (iVar4 - local_30) + 0xfU & 0xfffffff0;  // clamp to the tail
+```
+
+So both sides agree this is the read-the-tail path.
+
+## What is proven, and what is inferred
+
+**Proven.** The streaming length is `0x10000` in every healthy capture of both
+series, and `0x4680` in all eight captures after the collapse. The offset
+advances throughout the healthy phase and is frozen afterwards. SPU transfers
+continue to start and complete during the hang, so the driver is alive and
+repeating the same short read.
+
+**Inferred.** That the short final chunk is what it cannot complete —
+consistent with every measurement, but the failing arithmetic inside the loop
+has not been read.
+
+This is the first explanation that accounts for the SHAPE of the failure
+rather than only its end state: why the load runs normally for 7.5 seconds and
+20 MB, why it stops at one specific instant, why the driver stays alive, and
+why nothing about the edited bytes is wrong. The edits change WHICH bank is
+asked for. A bank whose length leaves this particular remainder hits a tail
+case the streaming loop does not get past.
