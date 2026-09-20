@@ -386,3 +386,68 @@ that is not the right kind of object.
 The next tool is the IOP's own module list, or disassembling the IOP image as
 its own target, rather than another guess at a struct offset reached through
 an EE pointer.
+
+---
+
+# Update: the IOP module map, and the SPU-stall idea refuted
+
+## What is loaded on the IOP
+
+From name strings in the IOP image — no layout assumptions:
+
+```
+0x01be70  IOP_SIF_manager        / PsIIsifman
+0x01e2c0  IOP_SIF_rpc_interface  / PsIIsifcmd / "SIFCMD/RPC"
+0x0222c4  LGAUD.IRX                            <- the game's audio IRX
+0x030714  RPC.IRX
+0x088690  Sound_Device_Library   / PsIIlibsd
+0x098800  SPU driver data (E_SPU_DMA_TRANSFER_IDLE / _RUNNING,
+                           SND_C_INVALID_SPU_TRANSFER_HANDLE)
+```
+
+## The state diff, wedged against working
+
+289,549 bytes differ overall — two different discs at different moments, so
+most of that is bank data legitimately differing. The useful part is how
+SMALL the differences are inside the modules that matter:
+
+| region | differing bytes |
+|---|---|
+| sifman + sifcmd/RPC | **33** |
+| LGAUD.IRX + RPC.IRX | **2** |
+| libsd + SPU driver | **15** |
+
+## An idea that looked right and is not
+
+The SPU driver holds a transfer state and a handle, and at first reading they
+looked like the answer:
+
+```
+working   state 0   handle ffffffff   (SND_C_INVALID_SPU_TRANSFER_HANDLE)
+wedged    state 1   handle 01076651   (a live transfer)
+```
+
+A sound bank DMA that starts and never finishes would explain everything. It
+is wrong. Checked across all seven captures, the handle CHANGES between the
+two wedged captures of the same hang (`01076651` then `0106ff55`), and
+`ss_man_down` reads idle in one capture and running in the next. Transfers are
+completing and new ones starting.
+
+**So the IOP sound driver is alive and doing work.** The request is not
+unserviced because the driver is dead, and the SPU DMA is not stuck.
+
+The one stable discriminator in that region is a counter at `0x099f58`:
+**4 in all three working captures, 6 in all four wedged ones.** What it counts
+is not yet known.
+
+## Status
+
+Still standing, and now with the driver's health established: the EE sends an
+ordinary sound command, the IOP receives it — the packet is in IOP low memory
+in four of four wedged captures and none of three working — the IOP sound
+driver is alive and transferring, and the request is still never completed.
+
+The registry hunt is not finished. The IOP image is now a Ghidra target in its
+own right (MIPS:LE:32, base 0), which is the tool that was missing: with
+`LGAUD.IRX` and `sifcmd` located, the RPC registration can be found in code
+rather than guessed at from EE-side pointers.
