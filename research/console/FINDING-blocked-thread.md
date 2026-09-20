@@ -512,3 +512,58 @@ registered server with a valid handler, and is not completed.
 **What is left** is the server's own thread: whether the RPC loop that should
 dispatch to `0x0008f00c` is running, blocked or dead. That is an IOP thread
 question, and it is the next thing to look at.
+
+---
+
+# RESOLVED TO A FUNCTION: the IOP sound handler never returns
+
+The `SifRpcDataQueue_t` for the sound service sits at IOP `0x007e1684` — its
+`link` and `end` both point at the server record at `0x007e169c`, which is what
+identifies it. Its `active` flag is unanimous across every capture:
+
+| | thread_id | active |
+|---|---|---|
+| SP in-game (works) | `01076651` | **0** |
+| SS loading (works) | `01076651` | **0** |
+| SS loading, earlier (works) | `01076651` | **0** |
+| `canon_team` wedged | `01076651` | **1** |
+| `canon_team` +4s | `01076651` | **1** |
+| `ss_man_down` wedged | `01076651` | **1** |
+| `ss_man_down` +4s | `01076651` | **1** |
+
+Same thread id and same queue links throughout. `active` is set when the loop
+has taken a request and is servicing it, and cleared when the handler returns.
+
+**So the RPC loop thread is not idle and not waiting for work. It dequeued the
+request, dispatched to the handler, and never came back.**
+
+## The chain, end to end
+
+1. The DARE sound engine issues a **blocking** `sceSifCallRpc` (mode 0),
+   command `0x80020010` (`canon_team`) or `0x80020012` (`ss_man_down`),
+   from `FUN_0050d790`.
+2. The EE thread blocks in `WaitSema` — TCB `0x0001ac58`, a fifth blocked
+   thread the working disc never has.
+3. The packet reaches the IOP: present in IOP low memory in 4 of 4 wedged
+   captures, 0 of 3 working.
+4. The IOP service is registered and intact — sid `0x12345678`, handler
+   `0x0008f00c`, registered at `0x0008efec` in the sound device library.
+5. The RPC loop thread `0x01076651` dequeues it and sets `active`.
+6. **The handler never returns.** `active` stays 1, no reply is sent, the EE
+   thread waits forever, and the level load never finishes.
+
+## Where the fault is
+
+Inside `0x0008f00c` — the sound library's RPC handler — or something it
+calls. Everything upstream of it has been measured and is correct.
+
+That is a single function in `Sound_Device_Library` / `PsIIlibsd`, and the IOP
+image is now imported as its own Ghidra target (`MIPS:LE:32`, base 0), so it
+can be read directly rather than inferred.
+
+## Why it took so long, in one line
+
+Every wrong turn in this file came from assuming a struct layout and reading
+bytes through it. Every correct step came from anchoring on a value already
+known independently — the buffer address, the send size arithmetic, the
+service id — and letting that identify the structure instead.
