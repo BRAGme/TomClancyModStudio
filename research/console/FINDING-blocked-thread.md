@@ -567,3 +567,68 @@ Every wrong turn in this file came from assuming a struct layout and reading
 bytes through it. Every correct step came from anchoring on a value already
 known independently — the buffer address, the send size arithmetic, the
 service id — and letting that identify the structure instead.
+
+---
+
+# Update: the handler decompiled, and an attractive answer refuted
+
+## The path, all the way down
+
+```
+0x0008f00c   the registered RPC handler
+             if (fno > 0xffff) -> next;  our fno is 0x8002001x, so always
+0x00091f20   large-fno path, dispatches on & 0x0fff0000 -- the SAME split
+             the EE side uses (0x40000 / 0x20000 / 0x10000)
+0x00093778   the 0x20000 class
+   -0x7ffdfff0  canon_team  (0x80020010): reads 5 words, then a size/bounds
+                calculation against FUN_000934f4
+   -0x7ffdffee  ss_man_down (0x80020012): reads 2 words, then
+                FUN_00094220 / FUN_00095940 / FUN_00095828 / FUN_00098488
+```
+
+Both are ordinary, well-formed command handlers.
+
+## The answer that looked certain and is wrong
+
+Walking the call graph from `0x00093778`, only four blocking sites are
+reachable, all funnelling through `FUN_000955c0`, which is:
+
+```c
+FUN_00092130();                                   // lock
+while (puVar1 = PTR_DAT_00099f78, PTR_DAT_00099f78 == 0) {
+    FUN_00092220();                               // unlock
+    FUN_0008fca8(1000);                           // delay
+    FUN_00092130();                               // lock
+}
+PTR_DAT_00099f78 = *(void **)(PTR_DAT_00099f78 + 0x30);
+```
+
+A free-list allocator of 0x34-byte records with **no timeout and no failure
+path**. If the pool is exhausted it spins for ever, the handler never
+returns, the queue stays `active`, and the EE waits on its semaphore
+permanently. It explains the idle IOP (a delay loop, not a hot spin), the
+still-working SPU transfers, and why two different edits hang the same way --
+each adding one more concurrent sound than the pool holds.
+
+**It is wrong.** The free-list head was measured in all seven captures:
+
+| | free-list head | counter `0x099f58` |
+|---|---|---|
+| works (3) | `000cb434` / `000cb468` | 4 |
+| wedged (4) | `000cb468` / `000cb434` | **6** |
+
+The list is **not empty** when wedged — the same values as working. The
+handler is not sitting in that loop.
+
+The reachability analysis that pointed there is also weaker than it looked:
+it follows only direct `jal` edges inside the sound library, and this code
+uses function pointers, so "only four blocking sites are reachable" is an
+underestimate rather than a proof.
+
+## Where it actually stands
+
+The handler path is mapped and both command branches are identified. The one
+stable discriminator in the sound driver's data remains the counter at
+`0x099f58` — **4 in all three working captures, 6 in all four wedged** — and
+what it counts is still unknown. That is the next thread to pull, and it is a
+measurement, not a theory.
