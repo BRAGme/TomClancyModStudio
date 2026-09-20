@@ -318,6 +318,9 @@ def apply_data(root, edits, store, progress=None):
     pending = {}
     counts = {}
     scopes = {}
+    #: key -> the bytes this run started from, captured the first time the key
+    #: is read and kept until the write loop decides whether it is needed.
+    shipped = {}
 
     def say(msg):
         if progress:
@@ -333,21 +336,12 @@ def apply_data(root, edits, store, progress=None):
                 continue
             if key in pending:
                 plain = pending[key]
-                fresh = False
             else:
                 plain = store.original(key)
-                fresh = plain is None
-                if fresh:
+                if plain is None:
                     plain = root.read(key)
+                shipped.setdefault(key, plain)
             new, n = op(plain, edit.params)
-            # Remember AFTER the op, and only when it moved something. An edit
-            # whose selector is broad -- the hunt counts match every .LIN on
-            # the disc and change a fifth of them -- would otherwise copy 300
-            # MB into the backup folder to protect files it never touched.
-            # Correctness is unaffected: a file that was not changed is still
-            # the shipped one, so there is nothing to put back.
-            if fresh and new != plain:
-                store.remember(key, plain)
             if len(new) != len(plain) and root.packed(key):
                 raise DataEditError(
                     "%s: %s changed the file length, which neither a glob nor "
@@ -370,6 +364,22 @@ def apply_data(root, edits, store, progress=None):
             continue
         if len(plain) >= _CHATTY_BYTES or n % 25 == 0 or n == len(queued):
             say("  packing %d/%d  %s" % (n, len(queued), key))
+        # Remember here, immediately before the write, and nowhere else.
+        #
+        # Two earlier placements were both wrong. Remembering when an edit
+        # SELECTED a key copied 300 MB of level packages to protect files no
+        # edit touched. Moving it to "after the op, if the op changed
+        # something" fixed the waste and introduced a hole: a key matched by
+        # two edits takes the `key in pending` branch the second time, so a
+        # file left alone by the first edit and changed by the second was
+        # written with no backup at all -- and `ini_values` and `scale_ini`
+        # both select R6GameSettings.ini, so that pairing is not hypothetical.
+        #
+        # At this line both questions are already answered: the bytes differ
+        # from the disc, so a backup is needed, and `shipped` holds what the
+        # run started from. `Store.remember` ignores a key it already has, so
+        # a second run costs nothing.
+        store.remember(key, shipped[key])
         root.write(key, plain)
         written += 1
 

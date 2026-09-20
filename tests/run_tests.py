@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -43,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tcxbox import (dataedit, engine, globfile, hunt, model,  # noqa: E402
                     rsb, transforms, umd, xbe, xiso, xpr)
 from tcxbox.detect import identify, scan                          # noqa: E402
+from tcxbox.model import FileEdit                                  # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -557,6 +559,89 @@ def test_card_summaries(games):
     return "every help and caution opens with a usable one-line summary"
 
 
+class _MemoryRoot:
+    """Just enough of `gamedir.Root` to drive `apply_data` in memory."""
+
+    def __init__(self, files):
+        self.files = dict(files)
+
+    def match(self, rx):
+        pat = re.compile(rx, re.I)
+        return [k for k in sorted(self.files) if pat.search(k)]
+
+    def read(self, key):
+        return self.files[key]
+
+    def write(self, key, data):
+        self.files[key] = data
+
+    def packed(self, _key):
+        return False
+
+    def flush(self):
+        pass
+
+
+def test_every_written_file_is_backed_up(_games):
+    """Whatever an apply rewrites, it must first have remembered.
+
+    This is a regression test with a specific history. Backing a file up when
+    an edit SELECTED it copied 300 MB of level packages to protect files no
+    edit touched. Moving it to "after the op, if the op changed something"
+    fixed the waste and opened a hole: a key matched by TWO edits takes the
+    already-pending branch on the second, so a file the first edit left alone
+    and the second changed was written with no backup. `ini_values` and
+    `scale_ini` both select R6GameSettings.ini, so that pairing ships.
+
+    Nothing in the suite noticed, because every other check applies and
+    reverts through the same store and a file that was never remembered is
+    also never restored -- it just silently stays modified.
+    """
+    saved = dict(dataedit.OPS)
+    dataedit.OPS["_test_noop"] = lambda plain, _p: (plain, 0)
+    dataedit.OPS["_test_bump"] = lambda plain, _p: (plain.replace(b"A", b"B"), 1)
+    try:
+        cases = [
+            ("one edit that changes it", ["_test_bump"]),
+            ("a no-op edit, then one that changes it",
+             ["_test_noop", "_test_bump"]),
+            ("a changing edit, then a no-op", ["_test_bump", "_test_noop"]),
+        ]
+        for label, ops in cases:
+            where = tempfile.mkdtemp(prefix="tcxms-backup-")
+            try:
+                store = dataedit.Store(where)
+                root = _MemoryRoot({"/A.INI": b"AAAA", "/B.INI": b"AAAA"})
+                edits = [FileEdit(op, r"/A\.INI$", {}, "") for op in ops]
+                dataedit.apply_data(root, edits, store)
+                must(root.files["/A.INI"] == b"BBBB",
+                     "%s: the file was not rewritten" % label)
+                must(store.original("/A.INI") == b"AAAA",
+                     "%s: the file was rewritten with no backup of its "
+                     "original bytes" % label)
+                must(store.original("/B.INI") is None,
+                     "%s: a file no edit selected was backed up anyway"
+                     % label)
+            finally:
+                shutil.rmtree(where, ignore_errors=True)
+        # and a selected-but-unchanged file must cost nothing
+        where = tempfile.mkdtemp(prefix="tcxms-backup-")
+        try:
+            store = dataedit.Store(where)
+            root = _MemoryRoot({"/A.INI": b"ZZZZ"})
+            dataedit.apply_data(root, [FileEdit("_test_bump", r"\.INI$", {}, "")],
+                                store)
+            must(store.keys() == [],
+                 "a file an edit selected but did not change was backed up")
+        finally:
+            shutil.rmtree(where, ignore_errors=True)
+    finally:
+        dataedit.OPS.clear()
+        dataedit.OPS.update(saved)
+    return ("a rewritten file is always remembered first, and an unchanged "
+            "one never is")
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -917,6 +1002,8 @@ def main(argv):
           lambda: test_card_summaries(games))
     check("every campaign list fits its disc",
           lambda: test_campaign_lists(games))
+    check("whatever an apply rewrites, it backed up first",
+          lambda: test_every_written_file_is_backed_up(games))
     check("hunt spawn counts re-pack into the same bytes",
           lambda: test_hunt_counts(games))
 
