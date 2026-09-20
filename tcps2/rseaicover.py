@@ -41,6 +41,17 @@ spots there are, because it lives in the name table; and matching
 "actionspot" loosely sweeps in `R6ACTION_GotoActionSpot`, which is an AI
 action node rather than a position. The three shooting ranges place none.
 
+`ANCHOR` is the FILE form and will not match RAM
+-----------------------------------------------
+
+Searching EE RAM for `ANCHOR` finds nothing, and that is expected rather than
+a result. UE2 serialises the variable reference as a compact index on disc and
+expands it to a 32-bit pointer when the package loads, so in memory the
+statement reads `97 01 <ptr:4> 2c <threshold>` -- a different width and
+different bytes. To confirm the ladder on the console, match that instead and
+look for a run of seven. Done on Meatpacking A Terrorist Hunt: the heavy
+ladder sits at EE `0x00c3619f`, the same region as the Parade check.
+
 Why the edit is safe to make
 ----------------------------
 
