@@ -290,6 +290,7 @@ def test_no_option_is_a_noop(games):
         profile = det.profile
         if not profile.build_data:
             continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
         with Root(det.path) as root:
             for setting in profile.settings:
                 if not setting.enabled:
@@ -307,7 +308,7 @@ def test_no_option_is_a_noop(games):
                     values = profile.normalise(
                         _with_gates_open(profile, {setting.key: value}))
                     edits = profile.build_data(values)
-                    if edits and _edits_change_anything(root, edits):
+                    if edits and _edits_change_anything(root, edits, store):
                         moved += 1
                 if not moved:
                     raise AssertionError(
@@ -352,7 +353,7 @@ def _other_values(setting):
     return []
 
 
-def _edits_change_anything(root, edits):
+def _edits_change_anything(root, edits, store=None):
     """True if running these edits over the game's own files moves a byte.
 
     The op functions are the same ones `apply_data` dispatches through, so a
@@ -364,7 +365,13 @@ def _edits_change_anything(root, edits):
         if op is None:
             continue
         try:
-            plain = root.read(key)
+            # Through the backup where there is one. Black Arrow's disc is
+            # carrying the very PS2 aim values this option writes, so reading
+            # the disc would report the option as doing nothing -- which is
+            # exactly how the tool once talked itself out of a feature that
+            # worked. The question is always "does this change the SHIPPED
+            # bytes", never "does it change what happens to be there now".
+            plain = (store.original(key) if store else None) or root.read(key)
             out, _n = op(plain, edit.params)
         except Exception:                        # noqa: BLE001
             continue
@@ -640,6 +647,57 @@ def test_every_written_file_is_backed_up(_games):
         dataedit.OPS.update(saved)
     return ("a rewritten file is always remembered first, and an unchanged "
             "one never is")
+
+
+def test_aim_records_match_the_discs(games):
+    """`Aim.stock` has to be what the disc ships, read through the backup.
+
+    Black Arrow is why. Its Aim record claimed Rainbow Six 3's eleven control
+    points for four commits, because the census that decided it read a disc
+    that had the old aiming option applied -- an option whose whole job was to
+    write Rainbow Six 3's points over Black Arrow's. The measurement found
+    what the tool had put there and called it the shipped value.
+
+    So this reads through `Store.original` wherever a backup exists, which is
+    the disc as it was before this tool first touched it, and falls back to
+    the disc only when it has never been edited.
+    """
+    from tcxbox.games import r6engine
+    checked = 0
+    for det in games:
+        card = [st for st in det.profile.settings
+                if st.key.endswith("_aim_curve")]
+        if not card:
+            continue
+        aim = None
+        for name in ("R63_AIM", "BA_AIM", "GRAW_AIM"):
+            rec = getattr(r6engine, name)
+            if [st for st in det.profile.settings
+                    if st.key.endswith("_aim_curve") and st.table == rec.table]:
+                aim = rec
+                break
+        must(aim is not None,
+             "%s has an aiming card but no Aim record matches its table"
+             % det.profile.short)
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            key = root.match(r"R6GAMESETTINGS\.INI$")[0]
+            plain = store.original(key) or root.read(key)
+        names = ["m_afRotationControlPoints[%d]" % n for n in range(11)]
+        have = transforms.read_ini_values(plain, names)
+        disc = [have[n] for n in names]
+        want = [str(v) for v in aim.stock]
+        must(disc == want,
+             "%s: the Aim record says the disc ships %s but it ships %s%s"
+             % (det.profile.short, ", ".join(want[:4]) + ", ...",
+                ", ".join(disc[:4]) + ", ...",
+                "" if not engine.has_backup(det.path)
+                else " (compared through the backup, so this is the shipped "
+                     "value and not something the tool wrote)"))
+        checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d aiming record(s) match the control points their disc actually "
+            "ships" % checked)
 
 
 def test_clamps(_games):
@@ -1004,6 +1062,8 @@ def main(argv):
           lambda: test_campaign_lists(games))
     check("whatever an apply rewrites, it backed up first",
           lambda: test_every_written_file_is_backed_up(games))
+    check("each aiming record matches its disc",
+          lambda: test_aim_records_match_the_discs(games))
     check("hunt spawn counts re-pack into the same bytes",
           lambda: test_hunt_counts(games))
 

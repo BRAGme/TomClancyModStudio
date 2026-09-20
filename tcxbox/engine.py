@@ -70,8 +70,15 @@ def backup_dir_for(game_path) -> str:
 
 
 def has_backup(game_path) -> bool:
-    return os.path.exists(os.path.join(backup_dir_for(game_path),
-                                       dataedit.MANIFEST))
+    """Has this game been edited and not yet put back?
+
+    An EMPTY manifest counts as no backup. A restore removes the file now, but
+    discs edited by an older build still have one sitting there with nothing in
+    it, and answering "yes, modded" for a game that is byte-for-byte stock is
+    wrong in both directions: it offers a Restore that has nothing to do, and
+    it makes the image-versus-folder check skip a disc it could have compared.
+    """
+    return bool(dataedit.Store(backup_dir_for(game_path)).keys())
 
 
 def _warnings(profile, values):

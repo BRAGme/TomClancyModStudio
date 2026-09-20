@@ -76,27 +76,26 @@ class Aim:
     `config` properties and `R6GAMESETTINGS.INI` carries the values, so editing
     the ini is the whole mechanism.
 
-    This is a per-game record rather than a module constant because the answer
-    is per-game, and assuming otherwise shipped a broken option once: the card
-    was written from GRAW's numbers and rendered for Rainbow Six 3 too, where
-    it offered to install values the disc already had.
+    A per-game record, even though all three Xbox discs turned out to share a
+    curve, because the things around the curve are not shared: the dead zone,
+    the scoped multiplier and GRAW's Y sensitivity all differ, and so does
+    which PS2 disc is the one to compare against.
 
-      * `stock`    -- what this game's Xbox disc ships.
-      * `alts`     -- {name: curve} this tool offers. Authored, not derived: a
-                      formula that suits one game's range flatters the other.
-      * `ps2`      -- {ini key: value} off the PS2 release, or None when the
-                      two discs agree or there is no PS2 release.
-      * `table`    -- rows for the card, both columns measured.
-      * `same`     -- rows for the "nothing to change" card, when `ps2` is None
-                      because the discs already agree.
+      * `stock`     -- what this game's Xbox disc ships.
+      * `alts`      -- {name: curve} this tool offers. Authored, not derived.
+      * `ps2`       -- {ini key: value} off the PS2 release to port, or None.
+      * `table`     -- rows for the curve card.
+      * `ps2_table` -- rows for the PS2 card. Both columns measured off stock
+                       discs; see `XBOX_STOCK` for what happens when they are
+                       not.
     """
 
-    def __init__(self, stock, alts, ps2=None, table=(), same=()):
+    def __init__(self, stock, alts, ps2=None, table=(), ps2_table=()):
         self.stock = stock
         self.alts = alts
         self.ps2 = ps2
         self.table = table
-        self.same = same
+        self.ps2_table = ps2_table
 
 
 def _curve_table(stock, alts):
@@ -114,132 +113,137 @@ def _curve_table(stock, alts):
     return tuple(rows)
 
 
-# -- Rainbow Six 3 and Black Arrow ------------------------------------------
-#: Both ship the same eleven points, and so does the Rainbow Six 3 PS2 disc:
-#: its own `R6GAMESETTINGS.INI` inside `vokes0.img` (17,267 bytes) carries
-#: these numbers, `m_fDeadZone=0.1`, `m_fSmoothingTime=0.20`,
-#: `m_fAimDamping=0.8`, `m_fRotationZoomingMultiplier=0.7` and 0.70/0.60
-#: sensitivity -- all identical to the Xbox copy inside `xboxdynamic.umd`
-#: (16,690 bytes). Of the 250 keys the two share, 15 differ and none is an aim
-#: key. There is nothing to port.
-R63_STOCK = (1, 6, 12, 18, 24, 30, 50, 80, 120, 140, 270)
-
-#: Same top speed, no cliff. The shipped ratios run 6.0, 2.0, 1.5, 1.33, 1.25,
-#: 1.67, 1.6, 1.5, 1.17, 1.93 -- the curve eases off through the middle and
-#: then nearly doubles in the last tenth. This is a steady 1.53x per step.
-R63_SMOOTH = (1, 6, 9, 14, 21, 33, 50, 76, 116, 177, 270)
-
-#: Half the stick spent below 30 deg/s, top speed untouched. For overshooting.
-R63_PRECISION = (1, 4, 8, 13, 20, 30, 46, 74, 120, 185, 270)
-
-#: Turn rate exactly proportional to deflection -- the literal reading of
-#: "1:1". Not obviously what anyone wants: a tenth of a push turns at 28 deg/s
-#: instead of 6, so small corrections get harder. Offered because it is the
-#: thing the words describe.
-R63_LINEAR = (1, 28, 55, 82, 109, 135, 162, 189, 216, 243, 270)
-
-R63_ALTS = {"smooth": R63_SMOOTH, "precision": R63_PRECISION,
-            "linear": R63_LINEAR}
-
-R63_SAME = (
-    ("", "Xbox", "PS2", ""),
-    ("turn curve", "same", "same", "all eleven points"),
-    ("dead zone", "0.1", "0.1", ""),
-    ("smoothing", "0.20", "0.20", "seconds"),
-    ("aim damping", "0.8", "0.8", "when auto-aim has a target"),
-    ("zoomed turn", "0.7", "0.7", "multiplier while scoped"),
-    ("sensitivity", "0.70 / 0.60", "0.70 / 0.60", "X / Y"),
-    ("aim lock-on", "absent", "present", "PS2 only -- see below"),
-)
-
-R63_AIM = Aim(R63_STOCK, R63_ALTS, ps2=None,
-              table=_curve_table(R63_STOCK, R63_ALTS), same=R63_SAME)
-
-#: Black Arrow never had a PS2 release, so it gets the curve options and no
-#: comparison at all.
-BA_AIM = Aim(R63_STOCK, R63_ALTS, ps2=None,
-             table=_curve_table(R63_STOCK, R63_ALTS))
-
-# -- Ghost Recon: Advanced Warfighter ---------------------------------------
-#: GRAW is the game where the platforms really do diverge, and it is where the
-#: numbers below came from originally. Xbox, out of `/System/R6GAMESETTINGS.INI`
-#: on the disc: the eleven points are exactly 2.7 * n^2, so the curve
-#: accelerates the whole way and half a push already asks for 67.5 deg/s. PS2,
-#: out of the same file inside `vokes0.img` (18,486 bytes) on the GRAW PS2
-#: disc: 35 deg/s at half, and close to straight. 49 of the 254 keys the two
-#: discs share differ, and all 18 aim keys are among them.
-GRAW_STOCK = ("0.0", "2.7", "10.8", "24.3", "43.2", "67.5", "97.2", "132.3",
+# -- what every Xbox build ships -------------------------------------------
+#: All three Xbox discs carry the SAME eleven control points, and they are
+#: exactly 2.7 * n^2: 0, 2.7, 10.8, 24.3, 43.2, 67.5, 97.2, 132.3, 172.8,
+#: 230.7, 320. Measured on stock data in every case -- Rainbow Six 3 and GRAW
+#: from discs this tool had not edited, Black Arrow through its own pre-edit
+#: backup.
+#:
+#: **This file once said otherwise, and the way it got there is worth keeping.**
+#: A census read Rainbow Six 3's disc AFTER the tool had applied its own PS2
+#: aiming option to it, found the PS2 numbers sitting in the Xbox ini, and
+#: concluded the two platforms agreed. A working option was then deleted and
+#: replaced with a card explaining that there was nothing to port. Both were
+#: wrong. `engine.has_backup` answers "is this disc stock" in one call, and
+#: asking it costs nothing next to retracting a feature that worked.
+XBOX_STOCK = ("0.0", "2.7", "10.8", "24.3", "43.2", "67.5", "97.2", "132.3",
               "172.8", "230.7", "320.0")
 
 #: Even ramp to the same top speed -- takes the explosion out of the last third
 #: without giving up the ability to spin round.
-GRAW_SMOOTH = (0, 3, 7, 13, 23, 40, 64, 100, 155, 225, 320)
+XBOX_SMOOTH = (0, 3, 7, 13, 23, 40, 64, 100, 155, 225, 320)
 
-#: Deliberately slow through the first half. GRAW's stock curve is steep from
+#: Deliberately slow through the first half. The shipped curve is steep from
 #: the very first tenth, so this is the larger change of the two.
-GRAW_PRECISION = (0, 1, 3, 6, 11, 20, 36, 66, 120, 200, 320)
+XBOX_PRECISION = (0, 1, 3, 6, 11, 20, 36, 66, 120, 200, 320)
 
-GRAW_LINEAR = (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320)
+#: Turn rate exactly proportional to deflection -- the literal reading of
+#: "1:1". Not obviously what anyone wants: a tenth of a push turns at 32 deg/s
+#: instead of 2.7, so small corrections get harder. Offered because it is the
+#: thing the words describe.
+XBOX_LINEAR = (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320)
 
-GRAW_ALTS = {"smooth": GRAW_SMOOTH, "precision": GRAW_PRECISION,
-             "linear": GRAW_LINEAR}
+XBOX_ALTS = {"smooth": XBOX_SMOOTH, "precision": XBOX_PRECISION,
+             "linear": XBOX_LINEAR}
 
-#: Every aim key off the GRAW PS2 disc, including the two that are not part of
-#: the curve: smoothing is near zero there (0.01 against 0.15), and the zoom
-#: multiplier is BELOW one where Xbox's is 2.5 -- the Xbox build turns two and
-#: a half times FASTER while scoped, which is the single oddest number on
-#: either disc and most of why the scope is hard to hold.
-GRAW_PS2_AIM = {
-    "m_afRotationControlPoints[0]": 1,
-    "m_afRotationControlPoints[1]": 4,
-    "m_afRotationControlPoints[2]": 8,
-    "m_afRotationControlPoints[3]": 15,
-    "m_afRotationControlPoints[4]": 24,
-    "m_afRotationControlPoints[5]": 35,
-    "m_afRotationControlPoints[6]": 48,
-    "m_afRotationControlPoints[7]": 60,
-    "m_afRotationControlPoints[8]": 80,
-    "m_afRotationControlPoints[9]": 110,
-    "m_afRotationControlPoints[10]": 180,
-    "m_fRotationControlPoint": 90,
-    "m_fRotationZoomingMultiplier": 0.9,
-    "m_fSmoothingTime": "0.01",
-    "m_fAimDamping": 0.8,
-    "m_fDeadZone": 0.1,
-    "m_fXSensitivityMultiplier": "0.60",
-    "m_fYSensitivityMultiplier": "0.52",
-}
+#: The three Xbox discs differ from each other in only three numbers, none of
+#: them on the curve: the dead zone (Rainbow Six 3 0.40, Black Arrow and GRAW
+#: 0.35), the scoped multiplier (1.0, 1.0, and GRAW's odd 2.5) and GRAW's Y
+#: sensitivity of 0.10 against everyone else's 0.60.
+XBOX_DEAD_ZONE = {"r63_": "0.40", "ba_": "0.35", "graw_": "0.35"}
 
-#: Split out of `GRAW_PS2_AIM` by the "keep the dead zone" choice. A tenth was
+
+def _ps2_aim(points, control, zoom, smoothing, damping, dead, sens_x=None,
+             sens_y=None):
+    """A PS2 disc's aim table as a dict of ini writes."""
+    out = {"m_afRotationControlPoints[%d]" % n: v
+           for n, v in enumerate(points)}
+    out.update({"m_fRotationControlPoint": control,
+                "m_fRotationZoomingMultiplier": zoom,
+                "m_fSmoothingTime": smoothing,
+                "m_fAimDamping": damping,
+                AIM_DEADZONE: dead})
+    if sens_x is not None:
+        out["m_fXSensitivityMultiplier"] = sens_x
+    if sens_y is not None:
+        out["m_fYSensitivityMultiplier"] = sens_y
+    return out
+
+
+#: Split out of a PS2 table by the "keep the dead zone" choice. A tenth was
 #: chosen when PS2 sticks were new; a worn Xbox stick can drift inside it, and
-#: 0.35 is a long way to come down in one step.
+#: 0.40 is a long way to come down in one step.
 AIM_DEADZONE = "m_fDeadZone"
 
-GRAW_PS2_TABLE = (
-    ("stick", "Xbox", "PS2", ""),
-    ("at rest", "0.0", "1", "deg/s"),
-    ("1/10", "2.7", "4", ""),
-    ("2/10", "10.8", "8", ""),
-    ("3/10", "24.3", "15", ""),
-    ("4/10", "43.2", "24", ""),
-    ("half", "67.5", "35", "<- the one you feel"),
-    ("6/10", "97.2", "48", ""),
-    ("7/10", "132.3", "60", ""),
-    ("8/10", "172.8", "80", ""),
-    ("9/10", "230.7", "110", ""),
-    ("full", "320.0", "180", ""),
-    ("", "", "", ""),
-    ("dead zone", "0.35", "0.10", "share of travel that does nothing"),
-    ("zoomed turn", "2.5", "0.9", "multiplier while scoped"),
-    ("smoothing", "0.15", "0.01", "seconds"),
-    ("aim damping", "0.65", "0.80", ""),
-    ("max rate", "160", "90", "deg/s the vertical is scaled against"),
-    ("sensitivity X", "0.70", "0.60", ""),
-    ("sensitivity Y", "0.10", "0.52", ""),
-)
+#: Rainbow Six 3 PS2, out of `R6GAMESETTINGS.INI` inside `vokes0.img`. Verified
+#: against that disc's own pre-edit backup, which matches it key for key.
+R63_PS2_AIM = _ps2_aim((1, 6, 12, 18, 24, 30, 50, 80, 120, 140, 270),
+                       90, 0.7, "0.20", 0.8, 0.1)
 
-GRAW_AIM = Aim(GRAW_STOCK, GRAW_ALTS, ps2=GRAW_PS2_AIM,
-               table=_curve_table(GRAW_STOCK, GRAW_ALTS))
+#: Ghost Recon Advanced Warfighter PS2, same file inside `vokes0.img` (18,486
+#: bytes). That disc has never been edited, so the live bytes are the shipped
+#: ones.
+GRAW_PS2_AIM = _ps2_aim((1, 4, 8, 15, 24, 35, 48, 60, 80, 110, 180),
+                        90, 0.9, "0.01", 0.8, 0.1, "0.60", "0.52")
+
+
+def _ps2_table(ps2_points, xbox_dead, ps2_dead, xbox_zoom, ps2_zoom,
+               ps2_smoothing, ps2_damping, extra=()):
+    """The two-column comparison a PS2 aiming card shows.
+
+    Both columns are read off discs. The stick rows are labelled by how far the
+    stick is pushed rather than by array index: `m_afRotationControlPoints[5]`
+    means nothing, "half" means something.
+    """
+    rows = [("stick", "Xbox", "PS2", "")]
+    for n, label in enumerate(("at rest", "1/10", "2/10", "3/10", "4/10",
+                               "half", "6/10", "7/10", "8/10", "9/10",
+                               "full")):
+        rows.append((label, XBOX_STOCK[n], str(ps2_points[n]),
+                     "deg/s" if n == 0 else
+                     ("<- the one you feel" if n == 5 else "")))
+    rows += [
+        ("", "", "", ""),
+        ("dead zone", xbox_dead, ps2_dead, "share of travel that does nothing"),
+        ("zoomed turn", xbox_zoom, ps2_zoom, "multiplier while scoped"),
+        ("smoothing", "0.15", ps2_smoothing, "seconds"),
+        ("aim damping", "0.65", ps2_damping, ""),
+        ("max rate", "160", "90", "deg/s the vertical is scaled against"),
+    ]
+    rows += list(extra)
+    return tuple(rows)
+
+
+R63_PS2_TABLE = _ps2_table((1, 6, 12, 18, 24, 30, 50, 80, 120, 140, 270),
+                           "0.40", "0.10", "1.0", "0.7", "0.20", "0.80",
+                           extra=(("sensitivity", "0.70 / 0.60",
+                                   "0.70 / 0.60", "X / Y -- identical"),))
+
+BA_PS2_TABLE = _ps2_table((1, 6, 12, 18, 24, 30, 50, 80, 120, 140, 270),
+                          "0.35", "0.10", "1.0", "0.7", "0.20", "0.80",
+                          extra=(("sensitivity", "0.70 / 0.60",
+                                  "0.70 / 0.60", "X / Y -- identical"),))
+
+GRAW_PS2_TABLE = _ps2_table((1, 4, 8, 15, 24, 35, 48, 60, 80, 110, 180),
+                            "0.35", "0.10", "2.5", "0.9", "0.01", "0.80",
+                            extra=(("sensitivity X", "0.70", "0.60", ""),
+                                   ("sensitivity Y", "0.10", "0.52", "")))
+
+R63_AIM = Aim(XBOX_STOCK, XBOX_ALTS, ps2=R63_PS2_AIM,
+              table=_curve_table(XBOX_STOCK, XBOX_ALTS),
+              ps2_table=R63_PS2_TABLE)
+
+#: Black Arrow had no PS2 release of its own. It runs the same engine on the
+#: same curve, so Rainbow Six 3's PS2 table is still the thing to bring across
+#: and the card says whose it is.
+BA_AIM = Aim(XBOX_STOCK, XBOX_ALTS, ps2=R63_PS2_AIM,
+             table=_curve_table(XBOX_STOCK, XBOX_ALTS),
+             ps2_table=BA_PS2_TABLE)
+
+GRAW_AIM = Aim(XBOX_STOCK, XBOX_ALTS, ps2=GRAW_PS2_AIM,
+               table=_curve_table(XBOX_STOCK, XBOX_ALTS),
+               ps2_table=GRAW_PS2_TABLE)
 
 
 #: The auto-aim the Xbox build DOES have. Rainbow Six 3 PS2's magnetic lock-on
@@ -455,17 +459,22 @@ def _aim_cards(prefix, aim):
                 table=aim.table),
         Setting(prefix + "deadzone", "Stick dead zone", CHOICE, "stock", FEEL,
                 choices=[
-                    Choice("stock", "As shipped", ""),
-                    Choice("0.05", "Tighter", "0.05 -- reacts sooner."),
-                    Choice("0.10", "Tight", "0.10."),
-                    Choice("0.20", "Wider", "0.20."),
-                    Choice("0.35", "Widest", "0.35 -- for a drifting stick."),
+                    Choice("stock", "As shipped",
+                           "0.40 on Rainbow Six 3, 0.35 on the other two."),
+                    Choice("0.10", "PlayStation 2 (0.10)",
+                           "What every PS2 disc here ships."),
+                    Choice("0.20", "0.20", ""),
+                    Choice("0.30", "0.30", ""),
+                    Choice("0.40", "0.40", "For a stick that drifts."),
                 ],
                 confidence="applied",
                 help="m_fDeadZone: the share of stick travel that does "
-                     "nothing at all. Tightening it makes the smallest "
-                     "corrections register, at the cost of letting a worn "
-                     "stick drift on its own.",
+                     "nothing at all. The Xbox builds spend a third to two "
+                     "fifths of the stick here and the PS2 discs a tenth, "
+                     "which is most of why a small correction on Xbox has to "
+                     "start with a shove. Tightening it makes the smallest "
+                     "movements register, at the cost of letting a worn stick "
+                     "drift on its own.",
                 caution="If the view creeps while you are not touching the "
                         "stick, this went the wrong way -- go wider."),
     ]
@@ -489,36 +498,10 @@ def _aim_cards(prefix, aim):
                  "multiplier is below one where this disc's is 2.5 -- the "
                  "Xbox build turns two and a half times FASTER while you are "
                  "looking down a scope.",
-            table=aim.table if not aim.ps2 else GRAW_PS2_TABLE,
+            table=aim.ps2_table,
             caution="The PS2 dead zone is 0.10 against this disc's 0.35. On a "
                     "worn controller that can let the stick drift on its own "
                     "-- if it does, use the stock dead zone choice."))
-    if aim.same:
-        out.append(Setting(
-            prefix + "aim_vs_ps2", "Xbox aiming against PS2", CHOICE, "stock",
-            FEEL, choices=[Choice("stock", "Nothing to change here", "")],
-            enabled=False,
-            disabled_reason="Nothing to apply. The two discs already ship "
-                            "identical aim tables, and the keys that make the "
-                            "difference do not exist in this build.",
-            help="If you came here looking for the PS2 aiming: it is already "
-                 "here. Both discs ship the same eleven control points and "
-                 "the same dead zone, smoothing, damping, zoom multiplier and "
-                 "sensitivity. Of the 250 keys the two copies of "
-                 "R6GAMESETTINGS.INI share, 15 differ, and none of them is an "
-                 "aim key.\n\n"
-                 "What the PS2 disc has and this one does not is a magnetic "
-                 "lock-on: fMaxAutoAimDistance, SpeedBaseX and SpeedBaseY, "
-                 "fAngleInNormal and fAngleInZoom, and four fLockSpeedLimit "
-                 "keys, which drag the reticle toward a target inside a cone. "
-                 "Those names appear nowhere in this disc's Engine.u or "
-                 "default.xbe, so the Xbox build cannot be told to do it and "
-                 "writing the keys into the ini would be ignored. That, not "
-                 "sensitivity, is why the PS2 version is easier to put a "
-                 "crosshair on someone with.\n\n"
-                 "The nearest thing available here is the Precision curve, "
-                 "plus a tighter dead zone.",
-            table=aim.same))
     return out
 
 

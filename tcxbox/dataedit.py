@@ -286,8 +286,31 @@ class Store:
             json.dump(self.index, fh, indent=1)
 
     def forget_all(self):
+        """Drop every remembered original, and the saved bytes with them.
+
+        This used to empty the index and write the empty manifest back, which
+        left two things behind: the saved originals -- 141 MB on a Rainbow Six
+        3 disc whose level packages had been edited -- and the manifest file
+        itself, which is what `engine.has_backup` looks for. So a disc that had
+        just been restored to the byte still reported as modded, the
+        image-versus-folder check went on skipping it as "already modded", and
+        the space never came back.
+
+        Only blobs named in the index are removed, and only after the restore
+        that called this has already finished, so nothing is deleted that
+        might still be needed.
+        """
+        for key in list(self.index):
+            try:
+                os.remove(self._blob(key))
+            except OSError:
+                pass
         self.index = {}
-        self.save()
+        for path in (self.path, os.path.join(self.folder, "orig"), self.folder):
+            try:
+                os.remove(path) if os.path.isfile(path) else os.rmdir(path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
