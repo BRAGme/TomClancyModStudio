@@ -958,3 +958,57 @@ re-reads the final partial chunk of `/ISLAND_A_SS.LIN` indefinitely.
 
 Not established: why that particular read never completes, given the same
 file is read successfully on a disc without the edit.
+
+---
+
+# The tail is normal: the last hypothesis fails too
+
+Sampled a WORKING Island split-screen load every 0.9s through the load and
+into gameplay (26 captures). The streaming offsets march sequentially through
+the same file:
+
+```
+00090000  00110000  00170000  001b0000  00350000  00400000  00460000  00520000
+```
+
+and then, one capture later, the driver is on a different stream entirely
+(`01f99800`). So the file completed between those two captures. The only
+chunks between `0x520000` and the end at `0x54467E` are `0x530000` and the
+`0x540000` tail — **the working load read them.**
+
+Not caught in a capture, because the gap is 0.9s and those two reads are far
+quicker. But the sequence brackets it: it read up to two chunks from the end,
+then the stream was finished.
+
+**So reaching the final partial chunk is normal behaviour, done on every
+successful load.** "The edit makes it ask for something only in the tail" is
+dead. The hanging load is not doing anything the working load does not also
+do; it simply does not come back from it.
+
+## Closing status
+
+Six explanations have been tested and refuted in this file: a stalled SPU DMA,
+an exhausted record pool, a missing sound bank, an unbound RPC server, a
+"work pending" flag claiming phantom work, and now the short final chunk.
+Three structural readings were wrong on top of that. Every one of them looked
+right before it was measured.
+
+What is established stands unchanged and is worth keeping:
+
+* the edited bytes are delivered intact, and are not the fault
+* the RPC path is correct end to end: marshalling, registration, server
+  record, handler pointer, packet contents
+* the IOP sound driver stays alive throughout, transferring
+* the load runs normally for 7.5 seconds and about 20 MB of work, then stops
+  in a single step
+* at that instant the streaming buffer freezes and the driver re-reads the
+  final chunk of `/ISLAND_A_SS.LIN` indefinitely
+* that same chunk is read successfully on a disc without the edit
+
+What is not established is why that read does not complete. Static analysis
+and savestate sampling have both been taken as far as they go. Anything
+further needs single-step execution on the IOP — a real debugger attached at
+the moment of the collapse — which this setup cannot provide.
+
+The practical position is unchanged and now rests on understanding rather
+than superstition: `ss_man_down` and `canon_team` stay withdrawn.
