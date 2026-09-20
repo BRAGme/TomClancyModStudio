@@ -789,3 +789,65 @@ that hangs, and find the first capture where the state diverges.
 
 That is the honest next step, and it needs a boot rather than more static
 reading.
+
+---
+
+# THE TIMELINE: the load runs fine, then retries one chunk for ever
+
+Sampled a hanging Island Estate split-screen load every 1.5s from the moment
+it started (slots 40-53), against the working series captured the same way
+(slots 30-35). Disc audited off the disc first: 7 overlay words, all
+split-screen fixes, 3 data files, `COMMON_SS.LIN` only.
+
+```
+slot  level         flags qactive  EE churn / 1.5s
+40    Entry         4     1        -
+41    island_a      4     0        4,014,720
+42    island_a      6     0        4,499,264
+43    Island_a_ss   4     0        6,614,144
+44    Island_a_ss   4     0        6,099,456
+45    Island_a_ss   4     0        6,419,904     <- last healthy
+46    Island_a_ss   6     1          481,728     <- THE COLLAPSE
+47    Island_a_ss   6     1            3,200
+48-53 Island_a_ss   6     1        ~2,000        <- dead
+```
+
+**The load runs normally for seven and a half seconds and about 20 MB of work,
+then stops dead in a single 1.5s step**, with the RPC queue's `active` flag
+going 0 -> 1 at exactly that step. The request that never returns is issued
+AT the collapse; it was not pending all along.
+
+## What is frozen, and what is not
+
+The 16 bytes that changed across the collapse point at one thing:
+
+```
+099fa4   ffffffff -> 03864000    the streaming buffer address
+```
+
+Through the healthy phase that address advances at every capture --
+`005cc000`, `006dc000`, `034c4000`, `036b4000` -- and from the collapse it
+reads `03864000` in **eight consecutive captures over twelve seconds**.
+
+Meanwhile the SPU transfer state at `0x099a78` **oscillates** after the
+collapse: RUNNING, idle, RUNNING, RUNNING, idle... with the handle changing
+between `0106ff55` and `01076651`. Transfers really are starting and
+completing.
+
+**So the driver is not stalled. It is alive, transferring, and re-transferring
+the SAME buffer indefinitely without ever advancing to the next chunk.**
+
+## Two earlier claims corrected by this
+
+**The stalled SPU DMA is confirmed NOT the cause** — the earlier refutation
+was right, and the timeline shows why: transfers cycle throughout the hang.
+
+**The 4-versus-6 flags discriminator is retired.** `flags` reads 6 at slot 42,
+mid-load, in a perfectly healthy stretch, and returns to 4. It is a normal
+transient, and the apparent "stable discriminator" was an artifact of only
+ever sampling end states. `pend` and `fhandle` never move in either series, so
+they were never relevant either.
+
+That is three leads closed by one properly sampled timeline, which is the
+argument for sampling through a failure rather than photographing its
+aftermath.
