@@ -632,3 +632,61 @@ stable discriminator in the sound driver's data remains the counter at
 `0x099f58` — **4 in all three working captures, 6 in all four wedged** — and
 what it counts is still unknown. That is the next thread to pull, and it is a
 measurement, not a theory.
+
+---
+
+# Update: 0x00099f58 is the streaming thread's flag word, and bit 1 is stuck
+
+Not a counter. It is a flag word belonging to `FUN_00094954`, the sound
+driver's service thread, whose first act is to test it:
+
+```c
+if ((DAT_00099f58 & 1) != 0) { DAT_00099f58 &= ~1; return 0; }   // bit 0 = exit
+```
+
+Every access to it was located by resolving `lui` + offset pairs: **5 writes,
+12 reads**, all inside `0x094c00`–`0x095b00`, and all within that thread's own
+code:
+
+```
+094cec  and v0,v1,-3     CLEARS bit 1
+094d30  ori v0,v0,0x2    SETS bit 1   (and sets a local flag to 1)
+094d4c  ori v0,v0,0x2    SETS bit 1   (same)
+095330  and v1,a0,-2     clears bit 0, the exit request
+```
+
+So bit 1 is set and cleared by the thread itself — a "work still pending"
+flag. And the measured values say it never clears:
+
+| | value | bit 1 |
+|---|---|---|
+| works (3 captures) | **4** = `0b100` | clear |
+| wedged (4 captures) | **6** = `0b110` | **set** |
+
+## What that thread does
+
+The same loop seeks and reads in 16 KB chunks:
+
+```c
+FUN_0008fb08(DAT_00099f94, *(uint *)(pcVar7 + 0x28) & 0xffffc000, 0);   // seek
+iVar4 = FUN_0008faf8(DAT_00099f94, (&PTR_DAT_00099f9c)[...], 0x4000);   // read
+```
+
+`DAT_00099f94` is a file handle. This is the **bank streaming loop** — which
+is exactly the work the stuck RPC command asked for, and matches the request
+payloads seen earlier (`\PistolUSP.bfz`, `.SB1`).
+
+## Where this leaves it
+
+The chain now reads: the sound engine asks the IOP to load a bank; the RPC
+handler hands the work to the streaming thread; the streaming thread's
+"pending" bit is set and never cleared; the handler never returns; the EE
+waits on its semaphore for ever.
+
+**Not yet proven** is why the pending work never completes — whether the file
+read blocks, or the loop's completion condition is never met. That is the next
+measurement: the file handle `DAT_00099f94` and the chunk state at
+`0x00099f84` / `0x00099fac`, compared across the captures.
+
+Given four attractive answers have already been refuted here by exactly this
+kind of check, that comparison should be made before anything is claimed.
