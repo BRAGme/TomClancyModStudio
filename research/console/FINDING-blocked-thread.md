@@ -899,3 +899,62 @@ rather than only its end state: why the load runs normally for 7.5 seconds and
 why nothing about the edited bytes is wrong. The edits change WHICH bank is
 asked for. A bank whose length leaves this particular remainder hits a tail
 case the streaming loop does not get past.
+
+---
+
+# The file, identified exactly — and the predictive idea refuted
+
+## Which file
+
+The hang freezes at offset `0x540000` with a clamped length of `0x4680`. The
+clamp decompiled from the EE side is `(size - offset + 15) & ~15`. Searching
+the disc for a file that produces that:
+
+```
+/ISLAND_A_SS.LIN   5,523,070 bytes = 0x54467E
+0x54467E - 0x540000 = 0x467E
+(0x467E + 15) & ~15 = 0x4680      <- the frozen length, to the byte
+```
+
+**The file is the Island split-screen level package**, and on the patched disc
+it is **stock and unmodified** — the audit showed only `COMMON_SS.LIN`
+differs. The `.SB1` and `.bfz` names seen in the IOP request buffer are sound
+banks living INSIDE the level package, which is why a sound-engine request
+becomes a chunked read of this file.
+
+## The predictive idea, and why it fails
+
+If a short final chunk were the trigger, bank sizes would predict which edits
+hang, and the tool could warn before anyone booted. Checked across the level
+packages:
+
+```
+/AIRPORT_A_SS.LIN    tail 4040   short
+/ALCATRAZ_A_SS.LIN   tail dbe0   short
+/ISLAND_A_SS.LIN     tail 4680   short
+```
+
+**Every level package has a short, unaligned tail.** So the remainder is not a
+discriminator — the working disc reads files with the same property and does
+not hang. The idea is dead as stated.
+
+More importantly, the control disc loads THIS SAME FILE, at the same size,
+with the same tail, and completes. So reaching the tail cannot be sufficient
+on its own.
+
+What remains plausible but unproven: the working load never needs a bank in
+that final chunk, while the patched one does — the working captures only
+reached offset `0x400000` before the level came up. Testing that means
+sampling a working load long enough to see whether it ever reads `0x540000`
+at all.
+
+## Where this leaves the whole investigation
+
+Established, with measurements: the edits are delivered intact; the RPC path,
+registration, server and packet are all correct; the IOP sound driver stays
+alive; the load runs normally for 7.5 seconds and 20 MB and then stops in one
+step; at that instant the streaming buffer address freezes and the driver
+re-reads the final partial chunk of `/ISLAND_A_SS.LIN` indefinitely.
+
+Not established: why that particular read never completes, given the same
+file is read successfully on a disc without the edit.
