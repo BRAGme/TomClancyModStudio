@@ -690,3 +690,55 @@ measurement: the file handle `DAT_00099f94` and the chunk state at
 
 Given four attractive answers have already been refuted here by exactly this
 kind of check, that comparison should be made before anything is claimed.
+
+---
+
+# The measurement: the flag claims work that does not exist
+
+The whole streaming-thread state block, all seven captures:
+
+| address | meaning | works (3) | wedged (4) |
+|---|---|---|---|
+| `0x099f58` | flags | **4** (`0b100`) | **6** (`0b110`) |
+| `0x099f84` | pending work list | `0` | **`0`** |
+| `0x099f94` | file handle | `ffffffff` | **`ffffffff`** |
+| `0x099f88` | free list | `000cb258` | `000cb258` |
+| `0x099f5c` | semaphore | `01072217` | `01072217` |
+
+**The flags word is the ONLY stable discriminator in the block.** Everything
+else that differs — `0x099f78`, `0x099f98`, `0x099fa4/a8`, `0x099fac` — varies
+per capture rather than by wedged-versus-working, so none of them is the
+fault.
+
+## What that combination means
+
+Measured, not inferred:
+
+* bit 1 of the flags — the thread's own "work still pending" bit — is set in
+  all four wedged captures and clear in all three working ones
+* the pending work list is **empty**, in the wedged captures too
+* the file handle is **invalid** (`ffffffff`), in the wedged captures too
+* the free list is healthy and the semaphore id is unchanged
+
+So the streaming thread is claiming outstanding work while holding no work
+item and no open file. Its loop waits on `FUN_0008fd04(DAT_00099f5c)`, then
+drains `0x099f84` — which is empty — so there is nothing for it to do and
+nothing that will clear the bit.
+
+**Inferred from that:** it is a lost wakeup, or a flag set by a producer whose
+enqueue never happened. Either way the bit can never clear by itself, the RPC
+handler that waits on it never returns, and the EE waits on its semaphore for
+ever.
+
+## What this rules out, finally
+
+Not the bytes being edited. Not the LIN container, the package rebuild, the
+chunk packing or the declared sizes — all of which were tested and cleared
+over five earlier attempts. Not a missing bank, not an unbound RPC server, not
+a dead sound driver, not an exhausted pool, not a stalled SPU DMA. The edits
+are delivered intact and the request is well-formed; the sound driver's own
+bookkeeping goes inconsistent and the wait never ends.
+
+That is why "the bytes are provably correct and the console still will not
+load them" was true every time it was written. It was true. The fault was
+never in the bytes.
