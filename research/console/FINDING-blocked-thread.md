@@ -257,3 +257,68 @@ not complete an otherwise normal request** — and the IOP is idle, not busy.
 The next thing to check is whether the IOP-side sound RPC server is bound and
 alive at that moment, since an unbound or dead server would park every caller
 exactly like this regardless of which command it sent.
+
+---
+
+# Update: is the IOP server bound? Not the fault — but not fully answered either
+
+## What was checked
+
+`0x005cccd0` holds a POINTER; the `sceSifClientData` is at `0x006ed990`.
+Dumped whole across seven captures — three working, four wedged — every field
+is identical except:
+
+| field | working | wedged |
+|---|---|---|
+| `+0x00` packet in flight | `00000000` | `20657880` |
+| `+0x08` semaphore id | `14` | `14` / `13` |
+| `+0x14` | `0009e178` | `0009e178` — **the same** |
+
+`+0x14` is an IOP address and it is **identical in wedged and working
+captures**, so whatever the EE is bound to, it is bound to the same thing when
+it works and when it hangs. **An unbound server is not the fault.**
+
+## The in-flight packet, and an independent confirmation
+
+`+0x00` is the in-flight packet: `0x20657880`, the uncached view of EE
+`0x00657880`. Read there, the layout matches ps2sdk's `SifRpcPktHeader_t`
+exactly — a 16-byte `sif_cmd_header`, then `rec_id`, `pkt_addr`, `rpc_id` —
+because `+0x14` reads back `20657880`, its own address.
+
+That gives a **second, independent reading of the command word**, from a
+different structure than the register context:
+
+```
++0x20 command   80020010 (canon_team)      80020012 (ss_man_down)
++0x24 send size 00000020                   00000010
++0x28 recv buf  006f0d00                   00000000
++0x2c recv size 00000010                   00000000
+```
+
+Every value agrees with what the blocked thread's `s` registers held. The
+command-word identification is now confirmed twice over.
+
+`rec_id` at `+0x10` reads **4 in both working captures and 5 in all four
+wedged ones** — the packet is outstanding rather than completed. That
+confirms the RPC is stuck; it does not explain why.
+
+## A wrong turn, recorded
+
+`+0x14` was read as the server-record pointer, and the IOP memory at
+`0x0009e178` dumped expecting a `SifRpcServerData`. It is not one — it is a
+buffer, holding the request payload as text: `\PistolUSP.bfz` and `.SB1` for
+`canon_team`, `WRD...enu.bfz` for `ss_man_down`. Useful in itself (the sound
+RPC is a bank load BY NAME, `.SB1` being the DARE bank extension) but it is
+not a server struct, so "the server is bound" cannot be concluded from it.
+
+## Honest status
+
+**Answered:** the binding is not the discriminator. The EE is talking to the
+same IOP address when it works and when it hangs, the packet is addressed
+there in both, and the command itself is ordinary and correctly marshalled.
+
+**Not answered:** whether the IOP-side server object still exists and its
+thread is alive and servicing. That needs the IOP's RPC service registry,
+which has not been located — the address in the client data leads to a
+buffer, not the registry. Until that is found, "the IOP never answers" is
+where the evidence stops.
