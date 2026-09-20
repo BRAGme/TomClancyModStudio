@@ -38,7 +38,11 @@ D3D_TOGGLES = (
      "Ships on. Off gives the harder mip transitions the PS2 build has."),
     ("UseCubemaps", "Cube map reflections", "Ships on."),
     ("UseCompressedLightmaps", "Compressed lightmaps",
-     "Ships on. Off is more memory for smoother lighting gradients."),
+     "Ships on, and leaving it on is the safe choice. Off trades memory for "
+     "smoother lighting gradients, and memory is the thing an original Xbox "
+     "has least of: on a large outdoor map, in a mode that also wants network "
+     "buffers, turning this off is a plausible way to make a level stop "
+     "finishing its load. If one hangs, put this back before anything else."),
     ("UseVSync", "Vertical sync", "Ships off."),
     ("UseTripleBuffering", "Triple buffering", "Ships off."),
     ("HighDetailActors", "High detail actors", "Ships on."),
@@ -206,12 +210,16 @@ def _mode_cards(prefix):
                      "The disc argues this is a choice rather than a limit: "
                      "_Debug.ini, the developers' own map, ships with every "
                      "flag true.",
-                caution="Experimental, and the risk is specific. A mode needs "
-                        "the spawn points it uses: Terrorist Hunt places "
-                        "terrorists from a map's own spawn list, and a "
-                        "multiplayer map that has none will start empty. "
-                        "Nothing here can corrupt a save -- if a map is no "
-                        "use in a mode, it is simply no use."),
+                caution="Experimental, and the risk is specific. A mode "
+                        "needs the spawn points it uses: Terrorist Hunt "
+                        "places terrorists from a map's own spawn list, and a "
+                        "multiplayer map that has none may start empty -- or "
+                        "wait on the loading screen for terrorists that never "
+                        "arrive. This card used to say the worst case was a "
+                        "map being no use in a mode; a level that never "
+                        "finishes loading is the worse case it missed. "
+                        "Nothing here can damage the disc: Restore game is "
+                        "byte for byte."),
         Setting(prefix + "silenced", "Silenced loadout on every mission",
                 CHOICE, "stock", MODES,
                 choices=[Choice("stock", "As shipped", ""),
@@ -255,8 +263,12 @@ def _mode_edits(prefix, v):
 LEVEL_FILES = r"/SYSTEM/(?!.*_SKINS)[^/]+\.LIN$"
 
 #: choice -> factor for the hunt-count dial.
-HUNT_STEPS = {"less": 0.5, "more": 1.5, "double": 2.0, "triple": 3.0,
-              "max": 6.0}
+#: Triple and six-times were here and are gone. Six times is what stopped
+#: Mountain Highway loading in System Link, and triple is the same mistake
+#: with a smaller number: the class default these multiply governs every zone
+#: on every map that does not carry its own count, so a modest-looking factor
+#: is a large change everywhere at once.
+HUNT_STEPS = {"less": 0.5, "more": 1.5, "double": 2.0}
 
 
 def _hunt_cards(prefix):
@@ -266,9 +278,8 @@ def _hunt_cards(prefix):
                 choices=[Choice("stock", "As shipped", ""),
                          Choice("less", "Half", ""),
                          Choice("more", "Half again", ""),
-                         Choice("double", "Double", ""),
-                         Choice("triple", "Triple", ""),
-                         Choice("max", "Six times", "Clamped at 100 a zone.")],
+                         Choice("double", "Double",
+                                "The most the engine reliably takes.")],
                 confidence="experimental",
                 help="The spawn counts on every deployment zone -- the actor "
                      "Terrorist Hunt fills a map from, and the one a wave "
@@ -283,12 +294,17 @@ def _hunt_cards(prefix):
                      "A zone that ships zero stays zero -- zero means the "
                      "zone contributes nobody, and no multiplier changes "
                      "that.",
-                caution="Experimental: verified as bytes, not watched in "
-                        "game. It is also the one option here that backs up "
-                        "whole level packages -- about 140 MB on Rainbow Six "
-                        "3, 53 MB on Black Arrow -- because that is what a "
-                        "level is. Counts are clamped to 100, and Restore "
-                        "game puts the packages back byte for byte."),
+                caution="Too many terrorists and a level stops finishing "
+                        "its load -- six times was offered here once and "
+                        "hung Mountain Highway in System Link, so the range "
+                        "now stops at double and every count is clamped to "
+                        "12, the largest number either disc authors. If a "
+                        "map hangs on the loading screen, this is the first "
+                        "thing to put back.\n\n"
+                        "It is also the one option here that backs up whole "
+                        "level packages -- about 140 MB on Rainbow Six 3, 53 "
+                        "MB on Black Arrow -- because that is what a level "
+                        "is. Restore game puts them back byte for byte."),
     ]
 
 

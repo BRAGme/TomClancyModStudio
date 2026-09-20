@@ -63,11 +63,21 @@ DEFAULT_SIBS = ("m_bAllowLeave", "m_bIsTargetable", "Texture")
 #: geometry that happened to sit behind the right name index.
 SANE = (0, 400)
 
-#: What the counts are clamped to after scaling. The engine's own biggest
-#: shipped zone is twelve; a hundred is far past anything the AI budget was
-#: built for and is the point past which this stops being a number worth
-#: writing.
-CEILING = 100
+#: What the counts are clamped to after scaling, and the number is the discs'
+#: own: twelve is the largest count any zone on either disc authors.
+#:
+#: It was a hundred, and a hundred was wrong. Six times turned Rainbow Six 3's
+#: deployment-zone class default from 1 into 6, which is applied to every zone
+#: on every map that does not override it -- Mountain Highway has six such
+#: zones and a map built for a handful of terrorists was asked for thirty-six,
+#: with a wave default of twenty-four behind them. The level stopped finishing
+#: its load. Nothing was corrupt; the numbers were written correctly and the
+#: engine could not satisfy them.
+#:
+#: So the ceiling is now the highest number a level designer on this engine
+#: ever asked for. Past that this is not tuning, it is guessing with someone
+#: else's evening.
+CEILING = 12
 
 
 class HuntError(Exception):

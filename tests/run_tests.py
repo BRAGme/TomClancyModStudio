@@ -449,9 +449,15 @@ def test_hunt_counts(games):
     for det in games:
         if not any(st.key.endswith("_hunt_count") for st in det.profile.settings):
             continue
+        # Read through the backup where there is one. A disc this tool has
+        # already edited is not stock, and on one that was scaled past the
+        # current ceiling a factor of 1.0 legitimately clamps DOWN -- correct
+        # behaviour, but not the identity this check is about. Testing the
+        # shipped bytes keeps the check meaningful on a modded machine.
+        store = dataedit.Store(engine.backup_dir_for(det.path))
         with Root(det.path) as root:
             for key in root.match(r"/SYSTEM/(?!.*_SKINS)[^/]+\.LIN$"):
-                raw = root.read(key)
+                raw = store.original(key) or root.read(key)
                 n, total = hunt.census(raw)
                 if not n:
                     continue
