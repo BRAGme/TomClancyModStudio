@@ -742,3 +742,50 @@ bookkeeping goes inconsistent and the wait never ends.
 That is why "the bytes are provably correct and the console still will not
 load them" was true every time it was written. It was true. The fault was
 never in the bytes.
+
+---
+
+# CORRECTION: bit 1 is a cache-hit flag, not "work pending"
+
+The previous section read bit 1 of `0x00099f58` as "work still pending" and
+concluded that the thread was claiming work it did not have. **That is wrong.**
+Reading the branches that actually set and clear it:
+
+```c
+        DAT_00099f58 = DAT_00099f58 & 0xfffffffd;   // CLEARED after a real read
+        ...
+      else if ((puVar10 == 0) && (-1 < iVar8)) {
+        DAT_00099fac = (byte)iVar8;
+        DAT_00099f58 = DAT_00099f58 | 2;            // SET when no read was done
+      }
+      else {
+        DAT_00099f58 = DAT_00099f58 | 2;            // SET when no read was done
+      }
+      ...
+      if ((DAT_00099f58 & 2) != 0) goto LAB_00094f18;   // take the buffered path
+```
+
+Bit 1 means **"this chunk came from a buffer, not from disc"** — a cache-hit
+flag. The thread sets it precisely in the branches where it skipped the read.
+
+So `4` versus `6` says the last streaming operation was served from the buffer
+in the wedged captures and from a real read in the working ones. That is
+consistent with a stall, but it is a **symptom**, not the fault, and the
+earlier reading inverted its meaning.
+
+What survives the correction: bit 1 is written only by this thread, in its own
+loop, at `0x094d30` and `0x094d4c`, and cleared at `0x094cec`. Nothing outside
+the thread touches it. The 4-versus-6 split is still a perfectly stable
+discriminator across all seven captures and both bugs — it is the meaning that
+was misread, not the measurement.
+
+## Why a breakpoint was not used
+
+PCSX2's debugger is GUI-only, and driving it is out of scope here. PINE has no
+breakpoint opcode, and its memory reads go through `vtlb_ramRead`, which is
+EE-side — it cannot read IOP RAM at all. So the dynamic evidence has to come
+from savestate sampling: capture repeatedly through a load that works and one
+that hangs, and find the first capture where the state diverges.
+
+That is the honest next step, and it needs a boot rather than more static
+reading.
