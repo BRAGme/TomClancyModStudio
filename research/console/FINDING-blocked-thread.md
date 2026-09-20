@@ -199,3 +199,61 @@ Not proven: which request, and why the IOP does not answer it. The next step
 is the blocked thread's own arguments — `uStack_48` (the command word) and the
 send size are on its stack at a known offset from `sp = 0x01ff12a0`
 (`ss_man_down`) and `0x01ff2b10` (`canon_team`).
+
+---
+
+# Update: the stuck command word, read off the blocked thread
+
+| | `ss_man_down` | `canon_team` |
+|---|---|---|
+| command (`fno`) | **`0x80020012`** | **`0x80020010`** |
+| send buffer | `0x006f0c80` | `0x006f0c80` |
+| send size | `0x10` | `0x20` |
+| receive buffer | `0` (no reply wanted) | `0x006f0d00` |
+| WaitSema semaphore | `0x13` | `0x14` |
+
+## How it was read, and why the first attempt was wrong
+
+The first attempt located `FUN_0050d790`'s frame from a return address on the
+stack and read `frame+0x78` (where `sw a0,0x78(sp)` puts the command). It gave
+`0` — and the same frozen thread reported the return address at two different
+places four seconds apart, which a stopped thread cannot do. Those were stale
+copies, stack litter, not the live frame. A zero read from the wrong place is
+not a measurement.
+
+The registers are the right source, because `FUN_00117fe8` moves its arguments
+into callee-saved `s` registers, which survive the wait. The EE kernel pushes
+a 32-entry, 128-bit-stride register context at the blocked thread's `sp`;
+`zero` reads 0 and `ra` reads `0x001181a0` — the return from the `WaitSema`
+call site — which confirms the base and stride.
+
+Identified by three values that were already known independently: `s1 =
+0x006ed990` is the `sceSifClientData` (matches `DAT_005cccd0`), `s5 =
+0x006f0c80` is the send buffer (matches `addiu a3,a3,0xc80`), leaving `s6` as
+`fno`.
+
+**The clincher is the size arithmetic.** The marshaller `FUN_0050e9e0` sets
+send/receive sizes per command — `0x80020012` gets 8 and 0, `0x80020010` gets
+`0x14` and 4 — and `FUN_0050d790` then rounds each up to 16:
+
+```c
+uStack_58 = uStack_58 + 0xf & 0xfffffff0;
+```
+
+`8 -> 0x10` and `0x14 -> 0x20`, which is exactly what the live `s2` holds in
+each capture. And `ss_man_down`'s zero receive size explains its `s4 = 0`
+against `canon_team`'s `0x006f0d00`. Every value agrees.
+
+## What it means
+
+Both are ordinary `0x20000`-class sound commands, marshalled by the same
+function, differing only in the low byte. Neither is malformed. Note
+especially that `ss_man_down`'s command asks for **no reply at all** — receive
+size 0 — and the thread is still parked in `WaitSema`, because mode 0 makes
+`sceSifCallRpc` wait for the RPC to complete whether or not it returns data.
+
+So the question is no longer "what did it ask for". It is **why the IOP does
+not complete an otherwise normal request** — and the IOP is idle, not busy.
+The next thing to check is whether the IOP-side sound RPC server is bound and
+alive at that moment, since an unbound or dead server would park every caller
+exactly like this regardless of which command it sent.
