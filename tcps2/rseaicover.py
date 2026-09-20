@@ -29,6 +29,18 @@ offsets, carrying exactly the shipped thresholds -- so the sites are found by
 signature and nothing here hardcodes an offset. The returned enum values
 confirm the reading: 1 ActionSpot, 2 AimedFire, 3 SprayFire, 4 RunAway.
 
+Where it can show
+-----------------
+
+Only `R6ActionSpot` exports are places to stand. Counted across the
+split-screen level packages they run 16 (Office Complex B) to 57 (Trieste A),
+807 in all -- so the earlier "28-38 a map" was too narrow at both ends. Two
+traps in counting them, both hit here before the number came out right: the
+property name `m_aActionSpot` appears exactly ONCE per package however many
+spots there are, because it lives in the name table; and matching
+"actionspot" loosely sweeps in `R6ACTION_GotoActionSpot`, which is an AI
+action node rather than a position. The three shooting ranges place none.
+
 Why the edit is safe to make
 ----------------------------
 
@@ -164,8 +176,13 @@ def cards(prefix: str, group: str) -> list:
                         "loads; nobody has yet watched whether they actually "
                         "use the cover.\n\n"
                         "Cover only helps where the level gives them "
-                        "somewhere to go: a map ships 28-38 action spots and "
-                        "an enemy only looks 20 m for one. Raising \"How far "
-                        "they look for cover\" with this is the pair.",
+                        "somewhere to go, and that varies more than it "
+                        "looks: counting placed R6ActionSpot exports, the "
+                        "split-screen maps run from 16 (Office Complex B) "
+                        "to 57 (Trieste A), and an enemy only looks about "
+                        "20 m for one. Trieste A and Old City B have the "
+                        "most to work with; Office Complex B and Mountain "
+                        "Highway A the least. Shooting ranges have none at "
+                        "all, so this does nothing in training.",
                 confidence="applied", touches="data"),
     ]
