@@ -322,3 +322,67 @@ thread is alive and servicing. That needs the IOP's RPC service registry,
 which has not been located — the address in the client data leads to a
 buffer, not the registry. Until that is found, "the IOP never answers" is
 where the evidence stops.
+
+---
+
+# Update: the request REACHES the IOP and is never serviced
+
+## The solid finding
+
+The RPC packet is present in IOP RAM at `0x00005e58` in every wedged capture
+and absent in every working one:
+
+| capture | packet in IOP low memory |
+|---|---|
+| SP in-game (works) | no |
+| SS loading (works) | no |
+| SS loading, earlier (works) | no |
+| `canon_team` wedged | **yes**, `0x005e5c` |
+| `canon_team` +4s | **yes** |
+| `ss_man_down` wedged | **yes**, `0x005e5c` |
+| `ss_man_down` +4s | **yes** |
+
+Four of four wedged, zero of three working, across BOTH bugs. And it is
+unmistakably the same request the EE sent — every field matches the EE-side
+packet and the blocked thread's registers:
+
+```
+005e58  psize      00002000 / 00001000
+005e5c  dest buff  0009e178
+005e68  rec_id     00000005      (outstanding)
+005e6c  pkt_addr   20657880
+005e74  client     006ed990
+005e78  COMMAND    80020010 / 80020012
+005e7c  send size  00000020 / 00000010
+005e80  recv buff  006f0d00 / 00000000
+```
+
+**So the EE sends it, the IOP receives it, and it is never completed** — while
+the IOP sits idle, 429 bytes of 8 MB changing. This is not a lost message and
+not a busy IOP. The request arrives and nothing services it.
+
+## The registry was NOT found, and the attempts are recorded
+
+Three structural identifications were tried and all three were wrong. They are
+written down so nobody repeats them:
+
+1. **EE client data `+0x14`** (`0x0009e178`) read as the server-record
+   pointer. It is a BUFFER — the IOP memory there holds the request payload as
+   text (`\PistolUSP.bfz`, `.SB1`).
+2. **IOP words pointing at that buffer** read as `SifRpcServerData_t` records.
+   They are copies of the RPC packet, not server records.
+3. **`0x00005e38+0x08`** read as a `SifRpcDataQueue_t` link because it differs
+   between working (`1`) and wedged (`0x0001ce3c`). `0x0001ce3c` contains MIPS
+   code — `addiu v0,zero,1`, `lw ra,0x84(sp)`, `jr ra` — and is byte-identical
+   in the working capture, because code does not change. It is a code address,
+   most likely a saved return, not a queue link.
+
+The pattern in all three: a plausible ps2sdk layout was assumed and the bytes
+were read through it. Each time the data said otherwise, and each time the
+tell was the same — a field that "should" be a pointer resolving to something
+that is not the right kind of object.
+
+**Blind layout-matching against IOP structures has reached its limit here.**
+The next tool is the IOP's own module list, or disassembling the IOP image as
+its own target, rather than another guess at a struct offset reached through
+an EE pointer.
