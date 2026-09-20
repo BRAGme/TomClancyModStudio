@@ -129,3 +129,73 @@ nearly every prologue and MIPS32 stops there, giving 8,864 "functions" of 4
 and 8 bytes. With `chaoticgd/ghidra-emotionengine-reloaded` (language
 `r5900:LE:32:default`) the same image yields 10,085 functions with real sizes
 and real cross-references. Everything above depends on that.
+
+---
+
+# Update 2026-09-20: both hangs are ONE bug, in the sound engine's IOP RPC
+
+`ss_man_down` and `canon_team` were treated as two faults that happened to
+look alike. They are the same fault.
+
+## The test
+
+Phase-independent, because the two wedge at different points — `ss_man_down`
+with the level buffer still reading `menu`, `canon_team` after `Island_a_ss`.
+What is comparable is the SHAPE of the stall: which kernel call each blocked
+thread sits in, and which subsystems its stack walks through.
+
+| capture | 5th WaitSema thread | sound frames in its stack |
+|---|---|---|
+| `ss_man_down` wedged | kernel `0001ac58` | `0050d9bc`, `0050e370` |
+| `canon_team` wedged | kernel `0001ac58` | `0050d9bc`, `0050e534` |
+| control, loading | **absent** | **none, in any thread** |
+
+Same kernel slot, the same sound frame `0x0050d9bc` in both, and the working
+disc has no blocked sound thread at all. The two edits enter through
+different callers — `0050e370` against `0050e534` — which is why one wedges
+before the level is named and the other after. Same bug, different trigger.
+
+## What the call actually is
+
+`FUN_0050d790` decompiles to a SIF RPC wrapper:
+
+```c
+do { lVar1 = FUN_001181e0(0x5cccd0); } while (lVar1 != 0);   // channel busy?
+FlushCache(0);                                                // let the IOP see it
+FUN_00117fe8(DAT_005cccd0, uStack_48, 0, 0x6f0c80, uStack_58, uVar4, uStack_54, 0);
+```
+
+That argument list is `sceSifCallRpc(clientData, fno, mode, sendBuf, sendSize,
+recvBuf, recvSize, endFunc)` with **mode 0 — blocking**. So `FUN_00117fe8` is
+`sceSifCallRpc`, which is why it is built from CreateSema / WaitSema /
+DeleteSema, and `FUN_0050d790` is "send a sound command to the IOP and wait".
+The command is a packed word dispatched on `& 0xfff0000`.
+
+**So the level load stalls on a blocking sound RPC to the IOP, and the IOP is
+idle at the same moment — 429 bytes of 8 MB changing.**
+
+## What was ruled OUT along the way
+
+**It is not a missing sound bank.** The obvious reading of `ss_man_down` is
+that it skips `Init()`, whose only job is `AddSoundBankName("X_Voices_Price")`,
+so the bank is never registered. Measured instead of assumed: the voice-bank
+names are resident identically in the wedged and working split-screen
+captures — same counts, same addresses, for `X_Voices_Price`, `_Weber`,
+`_Loiselle`. Bank residency is not the discriminator.
+
+**The specific stuck request is NOT identified.** The send buffer at the fixed
+address `0x006f0c80` is reused, so it holds the last request written rather
+than the stalled one — the wedged `canon_team` capture and the working control
+both hold near-identical `PistolUSP` requests, with identical
+`sceSifClientData` at `0x005cccd0`. Anyone continuing should get the request
+from the blocked thread's own frame, not from that buffer.
+
+## Where that leaves it
+
+Proven: one bug, not two; it is in the sound engine; it is a blocking IOP RPC
+that does not come back; the working disc never blocks there.
+
+Not proven: which request, and why the IOP does not answer it. The next step
+is the blocked thread's own arguments — `uStack_48` (the command word) and the
+send size are on its stack at a known offset from `sp = 0x01ff12a0`
+(`ss_man_down`) and `0x01ff2b10` (`canon_team`).
