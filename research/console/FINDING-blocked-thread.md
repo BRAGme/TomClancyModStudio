@@ -451,3 +451,64 @@ The registry hunt is not finished. The IOP image is now a Ghidra target in its
 own right (MIPS:LE:32, base 0), which is the tool that was missing: with
 `LGAUD.IRX` and `sifcmd` located, the RPC registration can be found in code
 rather than guessed at from EE-side pointers.
+
+---
+
+# Update: the sound RPC service, found — and it is bound in every capture
+
+## The registration
+
+IRX modules declare their imports in tables with magic `0x41E00000`, a
+**20-byte** header (name at `+0x0c`, stubs from `+0x14`), then 8-byte stubs of
+`j <target>` / `li $0, <function id>`. That makes every imported call findable
+exactly. In `sifcmd`: 14 is `InitRpc`, 15 `BindRpc`, 16 `CallRpc`,
+**17 `RegisterRpc`**, 19 `SetRpcQueue`.
+
+Twenty-one `sceSifRegisterRpc` call sites exist in the image. The sound one is
+identified without ambiguity, because `a3` is the server buffer and the buffer
+was already known:
+
+```
+call 0008efec   a1 = 12345678   a3 = 0009e178   <- the sound service
+```
+
+`0x0008efec` is inside `Sound_Device_Library` / `PsIIlibsd` (`0x088690`), so
+the service is registered by the sound device library. **The service id is
+`0x12345678`** — a placeholder, which is worth noting for what it says about
+the module.
+
+## The server record, in all seven captures
+
+Searching for that sid finds the `SifRpcServerData_t` at IOP `0x007e169c`, at
+the same address in every capture:
+
+```
+sid   12345678
+func  0008f00c    the handler, in the sound library
+buff  0009e178
+size  0x20 (canon_team) / 0x10 (ss_man_down)
+...   client 006ed990, pkt 20657880, command 80020010 / 80020012
+```
+
+**The server is registered, bound, and its handler pointer is intact in the
+wedged captures exactly as in the working ones.** The record even holds the
+in-flight request.
+
+`0x007e169c` is also the value in the EE client data at `+0x24` — the server
+pointer was in there all along. Earlier attempts tested `+0x14` and `+0x1c`
+and missed it, which is what sent three structural guesses astray.
+
+## What is now excluded
+
+* the server is not unbound
+* the server record is not missing or corrupted
+* the handler pointer is intact
+* the request reaches the IOP (packet present, 4/4 wedged, 0/3 working)
+* the IOP sound driver is alive (SPU transfer handles change between captures)
+
+Everything on the path exists and is correct. The request is delivered to a
+registered server with a valid handler, and is not completed.
+
+**What is left** is the server's own thread: whether the RPC loop that should
+dispatch to `0x0008f00c` is running, blocked or dead. That is an IOP thread
+question, and it is the next thing to look at.
