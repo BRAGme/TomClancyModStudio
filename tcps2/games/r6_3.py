@@ -31,7 +31,7 @@ from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
-                rsedeadpath, rsefov, rsemandown, rseviewmodel, rserpg, rseshadow, rsesidearm,
+                rsedeadpath, rsefov, rsemandown, rseteam, rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
                 rsewheel)
 
@@ -802,6 +802,7 @@ def _build_settings():
         rseviewmodel.card("", "Split Screen"),
         rseviewmodel.turn_card("", "Split Screen"),
         rsefov.card("", "Split Screen"),
+        rseteam.card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -1136,6 +1137,11 @@ def build_data(v: dict) -> list:
                             {"primary": g1, "secondary": g2, "match": mine,
                              "per": per},
                             "teammate gadgets"))
+    if v.get("split_rescue_team"):
+        out.append(FileEdit("split_rescue_team",
+                            r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: build the two AI operatives"))
     fov = int(v.get("fov", 90))
     if fov != int(rsefov.STOCK):
         out.append(FileEdit("fov", r"/COMMON(OFF|_SS)?\.LIN$", "",
