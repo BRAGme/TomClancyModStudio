@@ -87,21 +87,43 @@ handler plus two free words on the pawn, which is a bigger job than this.
 
 from __future__ import annotations
 
-#: `lwc1 $fN, 0x4e8($s0)` / `0x4ec($s0)` -- the pawn's own left-stick mirror
-_F3_LEFT_X = 0xC60304E8
-_F2_LEFT_Y = 0xC60204EC
+#: MEASURED, and it replaces an earlier wrong answer. The game ALREADY keeps
+#: the left stick per player, in two pairs eight bytes apart:
+#:
+#:     gp-0x72ec / gp-0x72e8   pair A -- player 1
+#:     gp-0x72e4 / gp-0x72e0   pair B -- player 2
+#:
+#: With player 1 moving, pair A reads -1.0 and pair B reads 0.0. With player 2
+#: moving, pair B reads -1.0 and pair A reads 0.0. The sway routine reads pair
+#: A unconditionally, which is the whole defect.
+#:
+#: The first attempt pointed the reads at the pawn's own mirror at `+0x4e8`
+#: instead. That is right for player 1 and WRONG for player 2, whose mirror
+#: holds 0x80000000 -- negative zero -- when player 2 is moving. It removed
+#: the cross-talk by giving player 2 no sway at all. The mirror is not a
+#: usable source; the second global pair is.
+#:
+#: `pawn+0x4d0` is the player index, 0 and 1 in all seven savestates, and the
+#: pairs are exactly 8 bytes apart, so `gp + index * 8` selects. `$s0` is the
+#: owning pawn -- confirmed by the failed attempt, which read player 2's own
+#: `+0x4e8` and got player 2's value.
+SWAY_CAVE_BODY = (
+    0x8E0104D0,      # lw    $at, 0x4d0($s0)     player index
+    0x000108C0,      # sll   $at, $at, 3         times eight
+    0x003C0821,      # addu  $at, $at, $gp       gp + index*8
+    0xC4238D14,      # lwc1  $f3, 0x8d14($at)    that player's X
+    0x03E00008,      # jr    $ra
+    0xC4228D18,      # lwc1  $f2, 0x8d18($at)    delay slot: that player's Y
+)
 
-#: (va, stockWord, newWord). Both copies of the routine are patched: slot
-#: 0x170 is what the split-screen gate path calls, slot 0x174 is the same
-#: code reached from elsewhere, and leaving one behind would make the
-#: behaviour depend on which weapon class is in hand.
-LEFT_STICK = (
-    (0x003F4BE8, 0xC7838D14, _F3_LEFT_X),   # delay slot of beq zero,zero
-    (0x003F4BF0, 0xC7838D14, _F3_LEFT_X),
-    (0x003F4BF4, 0xC7828D18, _F2_LEFT_Y),
-    (0x003F5518, 0xC7838D14, _F3_LEFT_X),   # delay slot of beq zero,zero
-    (0x003F5520, 0xC7838D14, _F3_LEFT_X),
-    (0x003F5524, 0xC7828D18, _F2_LEFT_Y),
+#: Where both arms of each routine converge, which is why one hook covers
+#: both paths. The two `beq $zero, $zero` that jump here land exactly ON the
+#: hook, so execution arrives at the `jal` either way. `$ra` is saved by both
+#: prologues at `+0xb0(sp)`, so the `jal` is free to clobber it, and the
+#: delay slot is the untouched right-stick load -- a load, not a branch.
+SWAY_HOOKS = (
+    (0x003F5524, 0xC7828D18),     # vtable slot 0x170
+    (0x003F4BF4, 0xC7828D18),     # vtable slot 0x174, identical code
 )
 
 #: `mtc1 $zero, $fN` -- kills the right-stick channel for everyone
@@ -116,13 +138,22 @@ CENTRE_RIGHT = (
 )
 
 
-def words(right_too: bool = False):
+def words(right_too: bool = False, freed: bool = True):
     """[(va, word, stockWord, note)] for the sway fix."""
-    out = [(va, new, stock, "split screen: weapon sway follows its own player")
-           for va, stock, new in LEFT_STICK]
+    from . import rsedeadpath
+
+    cave = rsedeadpath.claim("sway_stick", freed)
+    out = []
+    for k, word in enumerate(SWAY_CAVE_BODY):
+        va = cave + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "weapon sway: pick the stick belonging to this player"))
+    jal = 0x0C000000 | ((cave >> 2) & 0x03FFFFFF)
+    for site, stock in SWAY_HOOKS:
+        out.append((site, jal, stock, "weapon sway: hook the stick read"))
     if right_too:
         out += [(va, new, stock,
-                 "split screen: centre the right-stick sway channel")
+                 "weapon sway: centre the turn channel")
                 for va, stock, new in CENTRE_RIGHT]
     return out
 

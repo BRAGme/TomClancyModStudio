@@ -91,6 +91,9 @@ SLOTS = {
     # the add.s instead means the cave body is identical for all four --
     # scale f0, return -- so they share it.
     "wheel_label": (4, 3),         # mul.s / jr / nop
+    # The weapon-sway stick selector. Six words, shared by both copies
+    # of the sway routine because the body does not depend on which.
+    "sway_stick": (7, 6),          # lw / sll / addu / lwc1 / jr / lwc1
 }
 
 

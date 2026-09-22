@@ -153,13 +153,9 @@ HUD_STOCK = {
     0x0019B1B0: 0x342117EC,
     0x0019B1B4: 0x02011021,
     0x0019B1B8: 0x00431021,
-    0x003F4BE8: 0xC7838D14,
-    0x003F4BF0: 0xC7838D14,
     0x003F4BF4: 0xC7828D18,
     0x003F4BF8: 0xC7818D24,
     0x003F4BFC: 0xC7808D28,
-    0x003F5518: 0xC7838D14,
-    0x003F5520: 0xC7838D14,
     0x003F5524: 0xC7828D18,
     0x003F5528: 0xC7818D24,
     0x003F552C: 0xC7808D28,
@@ -910,7 +906,7 @@ def build_edits(v: dict) -> list:
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
         if v.get("split_sway"):
             for va, value, _stock, note in rseviewmodel.words(
-                    right_too=bool(v.get("split_sway_turn"))):
+                    right_too=bool(v.get("split_sway_turn")), freed=True):
                 w(va, value, note)
     scope = bool(v.get("split_scope"))
     fit = scope and bool(v.get("split_scope_fit"))
@@ -919,7 +915,7 @@ def build_edits(v: dict) -> list:
         for va, value in rsescope.SCOPE_GUARD:
             w(va, value, "split screen: let the scope overlay draw, but only "
                          "once the renderer exists")
-    elif fit or labels:
+    elif fit or labels or (v.get("viewmodel") and v.get("split_sway")):
         # Something wants the cave but the scope option is off, so the dead
         # path still has its entry. Point that branch at the function's own
         # epilogue instead: split screen still branches away and still draws
