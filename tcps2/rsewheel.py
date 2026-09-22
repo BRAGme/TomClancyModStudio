@@ -202,7 +202,114 @@ def card(prefix, group):
              "only when the game is NOT split screen, and its fallback fires "
              "only in a network mode this console never reports. This points "
              "that fallback at the mode split screen actually runs in.",
-        caution="Watched in split screen on Mountain Highway. The wheel's contents -- the weapon icons and the four labels -- scale with the ring now instead of being laid out for a full-height screen, which is a visible improvement. What it does NOT fix is the wheel as a whole: it is drawn at one fixed position that does not follow the viewport, so it spans the split and clips into the other player's half. Measured from a wheel-open savestate: the two per-viewport canvases are geometrically identical -- both 640x224, clip 640x224, centre (320,112) -- and NEITHER carries a screen Y origin, every candidate field reading zero. So the canvas cannot say which half to draw into; that offset comes from the renderer's viewport state and the wheel does not get it. Fixing it means moving the draw into the per-viewport pass or offsetting it by the viewport Y at G+0x40a04, neither of which is a hook on one instruction. Turn this on for the tidier contents; it is an improvement, not a finished fix.",
+        caution="Watched working in split screen on Oil Refinery: the wheel "
+                "opens and is usable for both players. It is drawn from the "
+                "framebuffer rather than the per-viewport rectangle, so it "
+                "spills past your half and wants cropping -- that is what "
+                "\"Keep the wheel's labels inside your half\" is for.\n\n"
+                "It cannot touch single player -- that path "
+                "ticks through the first branch and jumps past the byte this "
+                "changes. The only thing given up is online play WITH split "
+                "screen, which needs servers that no longer exist.")
+
+
+# ---------------------------------------------------------------------------
+# what a TAP of L1 does, which split screen also changes
+# ---------------------------------------------------------------------------
+
+#: `R6PlayerController.CycleWeapon` takes the same call down two arms and
+#: passes a different count on each::
+#:
+#:     if ( Level.Game != None && Level.Game.m_bIsSplitScreen )
+#:           ... 2c 04      IntConstByte 4 -- steps through all four slots
+#:     else  ... 2c 02      IntConstByte 2 -- primary and secondary only
+#:
+#: So a tap of L1 in single player toggles the two guns, and in split screen
+#: walks the whole inventory including the gadgets. With the wheel restored
+#: that is the wrong half of the pair: the wheel is for reaching a gadget, and
+#: the tap is for getting back to your rifle in a hurry.
+#:
+#: 24 bytes, and unique: one occurrence in each of the three COMMON containers
+#: at plain offset 0x1088cf. The `2c 02` of the other arm appears eight times
+#: across the file, which is why the anchor carries the jump targets and the
+#: head of the next arm with it rather than matching the constant alone.
+CYCLE_ANCHOR = bytes.fromhex(
+    "393f"                  # the conversion that feeds the call
+    "2c04"                  # IntConstByte 4   <-- the byte this changes
+    "1616"                  # EndFunctionParms x2
+    "069900"                # Jump 0x99 -- over the else arm
+    "077600"                # JumpIfNot 0x76 -- the else arm's own guard
+    "97" "19010b050004" "015e02" "2616"
+)
+
+CYCLE_CONST_AT = 3
+CYCLE_SPLIT = 4
+CYCLE_SINGLE = 2
+
+
+def cycle_find(plain: bytes) -> int:
+    """The offset of the split-screen cycle count, or raise."""
+    head = CYCLE_ANCHOR[:CYCLE_CONST_AT]
+    tail = CYCLE_ANCHOR[CYCLE_CONST_AT + 1:]
+    at = plain.find(head)
+    while at >= 0:
+        const = at + CYCLE_CONST_AT
+        if plain[const] in (CYCLE_SPLIT, CYCLE_SINGLE) and \
+                plain[const + 1:const + 1 + len(tail)] == tail:
+            if plain.find(head, at + 1) >= 0:
+                # another candidate: make sure it is not a second real match
+                nxt, more = at, 0
+                while True:
+                    nxt = plain.find(head, nxt + 1)
+                    if nxt < 0:
+                        break
+                    c2 = nxt + CYCLE_CONST_AT
+                    if plain[c2] in (CYCLE_SPLIT, CYCLE_SINGLE) and \
+                            plain[c2 + 1:c2 + 1 + len(tail)] == tail:
+                        more += 1
+                if more:
+                    raise WheelError("the split-screen cycle count appears "
+                                     "%d times; refusing to guess" % (more + 1))
+            return const
+        at = plain.find(head, at + 1)
+    raise WheelError("the split-screen cycle count is not in this file")
+
+
+def cycle_restore(plain: bytes, enable: bool = True):
+    """Make a tap of L1 in split screen toggle two weapons, or put it back."""
+    at = cycle_find(plain)
+    want = CYCLE_SINGLE if enable else CYCLE_SPLIT
+    if plain[at] == want:
+        return plain, 0
+    out = bytearray(plain)
+    out[at] = want
+    if len(out) != len(plain):
+        raise WheelError("the cycle edit changed the file length")
+    return bytes(out), 1
+
+
+def cycle_reads(plain: bytes) -> bool:
+    return plain[cycle_find(plain)] == CYCLE_SINGLE
+
+
+def cycle_card(prefix, group):
+    from .model import BOOL, Setting
+
+    return Setting(
+        prefix + "split_cycle", "Tapping L1 switches weapons, not gadgets",
+        BOOL, False, group, confidence="verified", touches="data",
+        help="In single player a tap of L1 toggles your primary and secondary; "
+             "in split screen the same tap walks the whole inventory, gadgets "
+             "included. The game passes a different count down the two arms of "
+             "one function -- four in split screen, two otherwise. This gives "
+             "split screen the same two the rest of the game uses, which is "
+             "what you want once the wheel is back: hold for a gadget, tap to "
+             "get your rifle up.",
+        caution="Watched working in split screen on Oil Refinery: a tap of L1 "
+                "switches between primary and secondary instead of cycling "
+                "gadgets.\n\nWithout the wheel restored as well, this "
+                "would leave no quick way to reach a gadget at all -- so turn "
+                "the wheel option on with it.",
         requires={prefix + "split_wheel": [True]})
 
 
@@ -315,5 +422,5 @@ def label_card(prefix, group):
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
         confidence="applied", touches="words",
-        caution="Watched in split screen on Mountain Highway: the four labels now scale with the ring instead of sitting where a full-height screen put them, so they no longer drop past the bottom of your half. That part works. What it does NOT fix is where the wheel is drawn. Player 2 holding L1 gets the wheel in PLAYER 1's half. Measured from a savestate with the wheel open: the two per-viewport canvases are geometrically identical -- both 640x224, clip 640x224, centre (320,112) -- and NEITHER carries a screen Y origin, every candidate field reading zero. So the canvas cannot say which half to draw into; that offset comes from the renderer's viewport state, and the wheel is drawn at the framebuffer origin rather than inside the per-viewport pass. Fixing it means moving the draw into that pass or offsetting it by the viewport Y at G+0x40a04, neither of which is a hook on one instruction. Turn this on if you want the labels tidy; it is an improvement, not a finished fix.",
+        caution="Watched in split screen on Mountain Highway. The wheel's contents -- the weapon icons and the four labels -- scale with the ring now instead of being laid out for a full-height screen, which is a visible improvement. What it does NOT fix is the wheel as a whole: it is drawn at one fixed position that does not follow the viewport, so it spans the split and clips into the other player's half. Measured from a wheel-open savestate: the two per-viewport canvases are geometrically identical -- both 640x224, clip 640x224, centre (320,112) -- and NEITHER carries a screen Y origin, every candidate field reading zero. So the canvas cannot say which half to draw into; that offset comes from the renderer's viewport state and the wheel does not get it. Fixing it means moving the draw into the per-viewport pass or offsetting it by the viewport Y at G+0x40a04, neither of which is a hook on one instruction. Turn this on for the tidier contents; it is an improvement, not a finished fix.",
         requires={prefix + "split_wheel": [True]})
