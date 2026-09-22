@@ -1196,7 +1196,7 @@ def run(args, work):
 
     print("\n[dead-path cave]")
     from tcps2 import rsedeadpath, rsescope, rsewheel
-    check("the slots do not overlap", rsedeadpath.check_layout() == 13)
+    check("the slots do not overlap", rsedeadpath.check_layout() == 53)
     check("a cave slot is refused while the entry branch is live",
           _raises(lambda: rsedeadpath.claim("scope_height", False),
                   rsedeadpath.DeadPathError))
@@ -1205,7 +1205,7 @@ def run(args, work):
            + rsescope.owner_words() + rseviewmodel.words(True))
     addrs = [x[0] for x in hud]
     check("no two HUD words fight over an address",
-          len(set(addrs)) == len(addrs) == 54)
+          len(set(addrs)) == len(addrs) == 107)
     check("every HUD word is inside the overlay",
           all(0x00100000 <= a < 0x00653980 for a in addrs))
     check("every HUD word declares the stock the profile holds",

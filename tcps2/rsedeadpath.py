@@ -60,7 +60,7 @@ from __future__ import annotations
 #: The block runs well past this; 24 is what has been read and checked
 #: instruction by instruction, and nothing needs more than 16.
 CAVE = 0x0019B15C
-CAVE_WORDS = 24
+CAVE_WORDS = 64
 
 #: What the game ships in the first 16 words, so every write is asserted
 #: against the real thing rather than assumed to be padding.
@@ -71,6 +71,16 @@ STOCK_WORDS = (
     0x00000000, 0x24040001, 0x0C064808, 0x0000282D,
     0x3C010004, 0x02010821, 0x8C2309FC, 0x3C010004,
     0x00031880, 0x342117EC, 0x02011021, 0x00431021,
+    0x8C440000, 0x8C990000, 0x8F3900A4, 0x0320F809,
+    0x00000000, 0x0040A02D, 0x0200202D, 0x0280282D,
+    0x0000302D, 0x0000382D, 0x0C06A474, 0x0000402D,
+    0x0040282D, 0x0200202D, 0x0000302D, 0x0000382D,
+    0x0000402D, 0x27898DAC, 0x0C06A124, 0x0000502D,
+    0x8F868DAC, 0x24020080, 0x0002183C, 0x24020089,
+    0x00431825, 0x24020042, 0x24C50010, 0xAF858DAC,
+    0xFCC30000, 0xFCC20008, 0x8E990000, 0x8F390024,
+    0x0320F809, 0x0280202D, 0x8E990000, 0x2456FFFF,
+    0x8F390028, 0x0320F809, 0x0280202D, 0xFFB30000,
 )
 
 #: The block's only entry, and the word that sends it to the epilogue
@@ -85,15 +95,21 @@ FREE_BRANCH = 0x14A001BA
 #: hand-picked cave address invites.
 SLOTS = {
     "scope_height": (0, 4),        # lui / addu / jr / lw
-    # One slot, not four. The first design hooked the instruction that built
-    # the draw's argument, which is a different word per label, so each label
-    # needed its own cave to put its own word back. Hooking the nop before
-    # the add.s instead means the cave body is identical for all four --
-    # scale f0, return -- so they share it.
-    "wheel_label": (4, 3),         # mul.s / jr / nop
-    # The weapon-sway stick selector. Six words, shared by both copies
-    # of the sway routine because the body does not depend on which.
-    "sway_stick": (7, 6),          # lw / sll / addu / lwc1 / jr / lwc1
+    # The wheel's label text. It scales the Y, then adds the viewport's own
+    # origin, because the canvas the wheel draws into carries its SIZE but
+    # never its ORIGIN -- which is why the wheel lands in the top half
+    # whoever opened it.
+    "wheel_label": (4, 11),        # mul.s / read VPY / add / jr
+    "sway_stick": (15, 6),         # lw / sll / addu / lwc1 / jr / lwc1
+    # The wheel's label boxes. Tail-jumps into the 2D primitive so $ra
+    # still returns straight to the wheel.
+    "wheel_box": (21, 11),
+    # The wheel's ring, four quadrant sprites off one Y in $f23.
+    "wheel_ring": (32, 10),
+    # The weapon icons. They pass a DESIGN-space Y that the sprite
+    # call multiplies by the scale, so this one divides the viewport
+    # offset by that scale before adding it.
+    "wheel_icon": (42, 11),
 }
 
 

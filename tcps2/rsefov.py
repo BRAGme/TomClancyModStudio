@@ -72,18 +72,18 @@ class FovError(Exception):
     pass
 
 
-def sites(plain: bytes) -> list:
-    """[(packageBase, offset, value)] for every DefaultFOV default."""
+def sites(plain: bytes, prop: str = "DefaultFOV") -> list:
+    """[(packageBase, offset, value)] for every default of one property."""
     out = []
     for base, _pkg in upackage.packages(plain):
         try:
             names, _imports, _exports = upackage.tables(plain, base)
         except Exception:                                             # noqa: BLE001
             continue
-        if "DefaultFOV" not in names:
+        if prop not in names:
             continue
         try:
-            found = upackage.float_properties(plain, names, "DefaultFOV")
+            found = upackage.float_properties(plain, names, prop)
         except Exception:                                             # noqa: BLE001
             continue
         for off, value, _nb in found:
@@ -92,38 +92,53 @@ def sites(plain: bytes) -> list:
 
 
 def _live(plain):
-    """The subclass site -- the one the player actually gets."""
-    found = sites(plain)
-    if len(found) != 2:
+    """The subclass's DefaultFOV and DesiredFOV -- the pair that reaches the
+    player.
+
+    BOTH matter, which the first version of this got wrong. Writing
+    DefaultFOV alone changed nothing on hardware: the camera follows
+    DesiredFOV, and the two sit seven bytes apart in the same class-default
+    block. They are returned together so neither can be edited without the
+    other again.
+    """
+    default = sites(plain, "DefaultFOV")
+    desired = sites(plain, "DesiredFOV")
+    if len(default) != 2:
         raise FovError("expected 2 DefaultFOV defaults, found %d -- this is "
-                       "not the build this was measured on" % len(found))
-    first, second = found
-    if abs(first[2] - BASE_STOCK) > 0.01:
+                       "not the build this was measured on" % len(default))
+    if abs(default[0][2] - BASE_STOCK) > 0.01:
         raise FovError("the base class default reads %.3f, not the %.1f this "
-                       "build should have" % (first[2], BASE_STOCK))
-    return second
+                       "build should have" % (default[0][2], BASE_STOCK))
+    pkg = default[1][0]
+    mine = [r for r in desired if r[0] == pkg]
+    if len(mine) != 1:
+        raise FovError("expected 1 DesiredFOV in the subclass package, found "
+                       "%d" % len(mine))
+    return [mine[0], default[1]]
 
 
 def reads(plain: bytes) -> float:
-    """What the live default currently says."""
-    return _live(plain)[2]
+    """What the live defaults currently say."""
+    return _live(plain)[0][2]
 
 
 def apply(plain: bytes, degrees: int):
-    """Rewrite the live DefaultFOV. Returns (bytes, changed)."""
+    """Rewrite both live defaults. Returns (bytes, changed)."""
     import struct
 
     if not MINIMUM <= degrees <= MAXIMUM:
         raise FovError("%d degrees is outside the %d..%d this writes"
                        % (degrees, MINIMUM, MAXIMUM))
-    _base, off, value = _live(plain)
-    if abs(value - degrees) < 0.01:
-        return plain, 0
     out = bytearray(plain)
-    struct.pack_into("<f", out, off, float(degrees))
+    changed = 0
+    for _base, off, value in _live(plain):
+        if abs(value - degrees) < 0.01:
+            continue
+        struct.pack_into("<f", out, off, float(degrees))
+        changed += 1
     if len(out) != len(plain):
         raise FovError("the field-of-view edit changed the file length")
-    return bytes(out), 1
+    return bytes(out), changed
 
 
 def card(prefix, group):
@@ -147,4 +162,4 @@ def card(prefix, group):
                 "split screen the campaign gets the same view.\n\n"
                 "Not play-tested. 90 is stock. The engine demonstrably "
                 "handles 25.7 through 90 already, because that is what "
-                "aiming a scope does to the same field.")
+                "aiming a scope does to the same field." + '\n\nFirst attempt wrote DefaultFOV alone and changed nothing on hardware. The camera follows DesiredFOV; the two are seven bytes apart in the same class-default block and both are written now.')

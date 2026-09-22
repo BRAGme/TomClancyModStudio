@@ -389,13 +389,77 @@ LABEL_HOOKS = (0x0043888C, 0x00438C0C, 0x00438F88, 0x00439304)
 LABEL_STOCK = NOP
 
 
-def label_words(freed=True):
-    """[(va, word, stockWord, note)] for scaling the four labels.
+#: Reading the current viewport's Y origin. `G` is gp-relative, and the
+#: rect it owns is too far for a 16-bit displacement, so it takes four.
+#: Self-checked against a savestate: *(gp-0x716c) = 0x00fe73e0 and
+#: *(G+0x40a04) = 224 for the bottom half, 0 for the top and 0 in single
+#: player -- so every add below is +0.0 outside split screen.
+def _read_vpy(fpr):
+    return (
+        0x8F818E94,                      # lw      $at, 0x8e94($gp)   $at = G
+        0x3C020004,                      # lui     $v0, 0x4
+        0x00220821,                      # addu    $at, $at, $v0
+        0x8C210A04,                      # lw      $at, 0xa04($at)    viewport Y
+        0x44810000 | (fpr << 11),        # mtc1    $at, $fN
+        0x00000000,                      # nop
+        0x46800020 | (fpr << 11) | (fpr << 6),   # cvt.s.w $fN, $fN
+    )
 
-    One cave serves all four, because hooking the nop makes the body the
-    same everywhere: scale $f0, return. $f21 is the viewport scale the ring
-    already uses, set by `div.s $f21, $f1, $f0` at 0x0043807c; it is
-    callee-saved and nothing rewrites it before any hook.
+
+JR_RA = 0x03E00008
+NOP = 0x00000000
+
+#: `mul.s $f0, $f0, $f21` -- the scale that was already here and works
+MUL_F0_BY_F21 = 0x46150002
+
+#: (hookSite, stockWord) for the four label-text sites. Unchanged: each is
+#: the `nop` before the `add.s` that finishes the Y, so the add lands in the
+#: `jal`'s delay slot and the spill that follows stores the corrected value.
+LABEL_HOOKS = (0x0043888C, 0x00438C0C, 0x00438F88, 0x00439304)
+LABEL_STOCK = NOP
+
+#: The eight `jal 0x003496d0` that draw the label boxes, two per label and
+#: mutually exclusive. The cave tail-jumps into the primitive rather than
+#: returning, so `$ra` still points back into the wheel.
+BOX_HOOKS = (0x0043873C, 0x004387D0, 0x00438AC4, 0x00438B58,
+             0x00438E34, 0x00438EC8, 0x004391BC, 0x00439250)
+BOX_STOCK = 0x0C0D25B4                  # jal 0x003496d0
+BOX_TARGET = 0x003496D0
+
+#: The ring's Y, `lwc1 $f23, 0x4c($v1)` at 0x00438068. $f23 is referenced
+#: only at 0x004380d8/150/194, all after this, and f20-f31 are callee-saved
+#: so it survives the intervening calls. The hook goes in the free `nop` at
+#: 0x00438080 -- NOT 0x00438084, which would put the `jal` in the delay slot
+#: of the `jal 0x00469520` that follows.
+#: The four weapon icons inside the ring. These call the same sprite
+#: primitive as the ring quadrants, but pass a DESIGN-space Y in $f13 that
+#: the callee multiplies by the scale in $f15 -- and at all four sites
+#: $f15 is a copy of $f21, the wheel's own Y scale. So the viewport offset
+#: has to be divided by that scale before it is added, or it lands scaled
+#: twice.
+#:
+#: The cave tail-jumps into the sprite call, so $ra still returns to the
+#: wheel. It clobbers $f0, which is safe by the ABI rather than by luck:
+#: the hook sits immediately before a call, and f0-f11 are caller-saved, so
+#: nothing live can be in them at a call boundary. f16-f23 are ALL in use in
+#: this function, so there was no free callee-saved register to borrow.
+ICON_HOOKS = (0x00438284, 0x004382C4, 0x00438404, 0x00438448)
+ICON_STOCK = 0x0C11A628                 # jal 0x004698a0
+ICON_TARGET = 0x004698A0
+
+RING_HOOK = 0x00438080
+RING_STOCK = NOP
+
+
+def label_words(freed=True):
+    """[(va, word, stockWord, note)] for the whole wheel fix.
+
+    Three caves. The canvas the wheel draws into carries the viewport's SIZE
+    but never its ORIGIN -- 0x002ef0b4 writes vp+0x90/0x94 into Canvas
+    SizeX/SizeY and nothing writes vp+0xa8/0xac -- and the 2D primitive
+    library hard-codes the frame origin (29184.0 and 27648.0, which are
+    (2048-320)*16 and (2048-224)*16 for a full 640x448 frame). So every
+    element needs the viewport Y added back.
 
     `freed` carries the caller's confirmation that the dead path's entry
     branch is gone; see `rsedeadpath`.
@@ -403,15 +467,51 @@ def label_words(freed=True):
     from . import rsedeadpath
 
     out = []
-    cave = rsedeadpath.claim("wheel_label", freed)
-    for k, word in enumerate((MUL_F0_BY_F21, JR_RA, NOP)):
-        va = cave + k * 4
+
+    text = rsedeadpath.claim("wheel_label", freed)
+    body = (MUL_F0_BY_F21,) + _read_vpy(1) + (0x46010000, JR_RA, NOP)
+    for k, word in enumerate(body):
+        va = text + k * 4
         out.append((va, word, rsedeadpath.stock(va),
-                    "wheel labels: scale the label Y by the viewport"))
-    jal = 0x0C000000 | ((cave >> 2) & 0x03FFFFFF)
+                    "wheel: scale the label Y and put it in this viewport"))
+
+    box = rsedeadpath.claim("wheel_box", freed)
+    body = _read_vpy(0) + (0x46006B40, 0x46007BC0,
+                           0x08000000 | ((BOX_TARGET >> 2) & 0x03FFFFFF), NOP)
+    for k, word in enumerate(body):
+        va = box + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: put the label boxes in this viewport"))
+
+    icon = rsedeadpath.claim("wheel_icon", freed)
+    body = _read_vpy(0) + (
+        0x46150003,                      # div.s   $f0, $f0, $f21
+        0x46006B40,                      # add.s   $f13, $f13, $f0
+        0x08000000 | ((ICON_TARGET >> 2) & 0x03FFFFFF),
+        NOP)
+    for k, word in enumerate(body):
+        va = icon + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: put the weapon icons in this viewport"))
+
+    ring = rsedeadpath.claim("wheel_ring", freed)
+    body = _read_vpy(0) + (0x4600BDC0, JR_RA, NOP)
+    for k, word in enumerate(body):
+        va = ring + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: put the ring in this viewport"))
+
+    jal = lambda t: 0x0C000000 | ((t >> 2) & 0x03FFFFFF)
     for i, site in enumerate(LABEL_HOOKS):
-        out.append((site, jal, LABEL_STOCK,
-                    "wheel labels: hook label %d" % (i + 1)))
+        out.append((site, jal(text), LABEL_STOCK,
+                    "wheel: hook label %d" % (i + 1)))
+    for i, site in enumerate(BOX_HOOKS):
+        out.append((site, jal(box), BOX_STOCK,
+                    "wheel: hook label box %d" % (i + 1)))
+    for i, site in enumerate(ICON_HOOKS):
+        out.append((site, jal(icon), ICON_STOCK,
+                    "wheel: hook weapon icon %d" % (i + 1)))
+    out.append((RING_HOOK, jal(ring), RING_STOCK, "wheel: hook the ring"))
     return out
 
 
