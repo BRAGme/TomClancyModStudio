@@ -37,8 +37,14 @@ engine actually runs: the scope drives the same field to 25.714, which is
 90/3.5 where 3.5 is that weapon's zoom, and `R6GAMESETTINGS.INI` carries a
 comment reading "FOV==90 ---> full speed" for the turn rate.
 
-This rewrites the subclass value. Four bytes, in place, so the package length
-never moves and the container is untouched.
+TWO fields have to move, not one. `DesiredFOV` sits seven bytes before
+`DefaultFOV` in the same subclass block, also at 90.0, and it is the one the
+camera follows -- writing `DefaultFOV` alone was measured on hardware and
+changed nothing. Both are written, and `_live` returns them as a pair so they
+cannot be separated again.
+
+Eight bytes, in place, so the package length never moves and the container is
+untouched.
 
 The site is found by walking the packages rather than by a stored offset, for
 the same reason every other edit here is: an offset is only true for the build
@@ -147,7 +153,7 @@ def card(prefix, group):
     return Setting(
         prefix + "fov", "Field of view", INT, int(STOCK), group,
         minimum=MINIMUM, maximum=MAXIMUM, unit="degrees",
-        confidence="untested", touches="data",
+        confidence="verified", touches="data",
         help="The first-person weapon looks large in split screen because it "
              "is projected with the same camera as the world, into a viewport "
              "half the height. The weapon has no field of view of its own on "
@@ -162,4 +168,4 @@ def card(prefix, group):
                 "split screen the campaign gets the same view.\n\n"
                 "Not play-tested. 90 is stock. The engine demonstrably "
                 "handles 25.7 through 90 already, because that is what "
-                "aiming a scope does to the same field." + '\n\nFirst attempt wrote DefaultFOV alone and changed nothing on hardware. The camera follows DesiredFOV; the two are seven bytes apart in the same class-default block and both are written now.')
+                "aiming a scope does to the same field." + ' Watched working in split screen on Mountain Highway at 110: the view widens and the weapon comes back with it. Writing DefaultFOV alone did nothing, which is how DesiredFOV was found -- both are written now and the two are returned as a pair so neither can be edited without the other again.' + '\n\nFirst attempt wrote DefaultFOV alone and changed nothing on hardware. The camera follows DesiredFOV; the two are seven bytes apart in the same class-default block and both are written now.')
