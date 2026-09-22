@@ -421,5 +421,6 @@ def label_card(prefix, group):
     return Setting(
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
-        confidence="untested", touches="words",
+        confidence="applied", touches="words",
+        caution="Watched in split screen on Mountain Highway: the four labels now scale with the ring instead of sitting where a full-height screen put them, so they no longer drop past the bottom of your half. That part works. What it does NOT fix is where the wheel is drawn. Player 2 holding L1 gets the wheel in PLAYER 1's half. Measured from a savestate with the wheel open: the two per-viewport canvases are geometrically identical -- both 640x224, clip 640x224, centre (320,112) -- and NEITHER carries a screen Y origin, every candidate field reading zero. So the canvas cannot say which half to draw into; that offset comes from the renderer's viewport state, and the wheel is drawn at the framebuffer origin rather than inside the per-viewport pass. Fixing it means moving the draw into that pass or offsetting it by the viewport Y at G+0x40a04, neither of which is a hook on one instruction. Turn this on if you want the labels tidy; it is an improvement, not a finished fix.",
         requires={prefix + "split_wheel": [True]})
