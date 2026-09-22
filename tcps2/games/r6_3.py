@@ -751,6 +751,7 @@ def _build_settings():
         rsescope.viewport_card("", "Split Screen"),
         rsescope.owner_card("", "Split Screen"),
         rseviewmodel.card("", "Split Screen"),
+        rseviewmodel.turn_card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -908,7 +909,8 @@ def build_edits(v: dict) -> list:
     if v.get("viewmodel"):
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
         if v.get("split_sway"):
-            for va, value, _stock, note in rseviewmodel.words():
+            for va, value, _stock, note in rseviewmodel.words(
+                    right_too=bool(v.get("split_sway_turn"))):
                 w(va, value, note)
     scope = bool(v.get("split_scope"))
     fit = scope and bool(v.get("split_scope_fit"))

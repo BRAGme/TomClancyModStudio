@@ -156,3 +156,14 @@ def card(prefix, group):
                 "orientation has a second carrier and this is only half the "
                 "defect.",
         requires={prefix + "viewmodel": [True]})
+
+
+def turn_card(prefix, group):
+    from .model import BOOL, Setting
+
+    return Setting(
+        prefix + "split_sway_turn", "Turning does not sway the weapon",
+        BOOL, False, group, confidence="untested", touches="words",
+        help="The weapon is meant to lean when you MOVE. It also leans when you TURN, because the same routine mixes in the right stick -- and that channel has no per-player copy, so in split screen one player turning leans the other player's weapon as well. This centres the turn channel: the weapon stops responding to the look stick, for both players and in single player too.",
+        caution='Four words on the disc, no cave, every stock word checked against the image first. This is the half of the sway fix that could not be done by pointing at a per-player value, because the right stick has no per-player copy anywhere in the image -- the game only ever stores it to one global. So the cross-talk is removed by removing the effect rather than by separating it. That means it changes single player too: turning will no longer lean your weapon there either. Whether that reads as a fix or a loss is a matter of taste, which is why it is its own switch rather than part of the sway option. Giving player 2 a correct turn sway instead would need a cave in the input handler plus two free words on the pawn, which is a larger job than this.',
+        requires={prefix + "split_sway": [True]})
