@@ -447,6 +447,12 @@ ICON_HOOKS = (0x00438284, 0x004382C4, 0x00438404, 0x00438448)
 ICON_STOCK = 0x0C11A628                 # jal 0x004698a0
 ICON_TARGET = 0x004698A0
 
+#: the four `mov.s $f15, $f14` that give each ring quadrant its
+#: vertical scale of 1.0; they become `mov.s $f15, $f26`
+RING_SCALE = (0x004380E4, 0x0043811C, 0x00438158, 0x0043819C)
+RING_SCALE_STOCK = 0x460073C6
+MOV_F15_F26 = 0x4600D3C6
+
 RING_HOOK = 0x00438080
 RING_STOCK = NOP
 
@@ -483,7 +489,7 @@ def label_words(freed=True):
         out.append((va, word, rsedeadpath.stock(va),
                     "wheel: put the label boxes in this viewport"))
 
-    icon = rsedeadpath.claim("wheel_icon", freed)
+    icon = rsedeadpath.claim("wheel_indicator", freed)
     body = _read_vpy(0) + (
         0x46150003,                      # div.s   $f0, $f0, $f21
         0x46006B40,                      # add.s   $f13, $f13, $f0
@@ -494,12 +500,49 @@ def label_words(freed=True):
         out.append((va, word, rsedeadpath.stock(va),
                     "wheel: put the weapon icons in this viewport"))
 
+    # The ring is the one element the game does NOT scale by the canvas.
+    # Its four quadrants pass 1.0 for both axes, and the sprite call
+    # multiplies position AND size by that, so the ring comes out at its
+    # native texture size anchored to the canvas centre at +0x4c, while
+    # every other element is design space times SizeY/480. Those agree at
+    # 640x448 and disagree by two in a 224-tall half, which is why the
+    # icons end up inside the ring rather than around it.
+    #
+    # So the ring gets its own scale, SizeY/448 -- exactly 1.0 in single
+    # player, so nothing moves there -- and its Y is rebuilt in 448 space
+    # (centre 224) instead of taken from the canvas centre. The viewport
+    # offset is divided by that scale because the callee multiplies the
+    # position by it.
+    #
+    # $f1 holds (float)SizeY from the cvt.s.w at 0x00438078, two
+    # instructions before the hook, and $f26 is untouched by this function
+    # and callee-saved, so it survives the calls before the quadrants.
     ring = rsedeadpath.claim("wheel_ring", freed)
-    body = _read_vpy(0) + (0x4600BDC0, JR_RA, NOP)
+    body = (
+        0x3C0143E0,      # lui     $at, 0x43e0        448.0f
+        0x4481D000,      # mtc1    $at, $f26
+        0x00000000,      # nop
+        0x461A0E83,      # div.s   $f26, $f1, $f26    fK = SizeY / 448
+        0x3C014360,      # lui     $at, 0x4360        224.0f
+        0x4481B800,      # mtc1    $at, $f23          the centre in 448 space
+        0x8F818E94,      # lw      $at, 0x8e94($gp)   G
+        0x3C020004,      # lui     $v0, 0x4
+        0x00220821,      # addu    $at, $at, $v0
+        0x8C210A04,      # lw      $at, 0xa04($at)    viewport Y
+        0x44810000,      # mtc1    $at, $f0
+        0x00000000,      # nop
+        0x46800020,      # cvt.s.w $f0, $f0
+        0x461A0003,      # div.s   $f0, $f0, $f26     screen Y -> 448 space
+        JR_RA,
+        0x4600BDC0,      # add.s   $f23, $f23, $f0    delay slot
+    )
     for k, word in enumerate(body):
         va = ring + k * 4
         out.append((va, word, rsedeadpath.stock(va),
-                    "wheel: put the ring in this viewport"))
+                    "wheel: scale the ring to the viewport"))
+    for site in RING_SCALE:
+        out.append((site, MOV_F15_F26, RING_SCALE_STOCK,
+                    "wheel: ring vertical scale at %#x" % site))
 
     jal = lambda t: 0x0C000000 | ((t >> 2) & 0x03FFFFFF)
     for i, site in enumerate(LABEL_HOOKS):
@@ -524,3 +567,58 @@ def label_card(prefix, group):
         confidence="applied", touches="words",
         caution="Watched in split screen on Mountain Highway. The wheel's contents -- the weapon icons and the four labels -- scale with the ring now instead of being laid out for a full-height screen, which is a visible improvement. What it does NOT fix is the wheel as a whole: it is drawn at one fixed position that does not follow the viewport, so it spans the split and clips into the other player's half. Measured from a wheel-open savestate: the two per-viewport canvases are geometrically identical -- both 640x224, clip 640x224, centre (320,112) -- and NEITHER carries a screen Y origin, every candidate field reading zero. So the canvas cannot say which half to draw into; that offset comes from the renderer's viewport state and the wheel does not get it. Fixing it means moving the draw into the per-viewport pass or offsetting it by the viewport Y at G+0x40a04, neither of which is a hook on one instruction. Turn this on for the tidier contents; it is an improvement, not a finished fix.",
         requires={prefix + "split_wheel": [True]})
+
+
+#: Stopping one player's wheel from drawing into the other player's half.
+#:
+#: The per-interaction gate is CORRECT and is not the problem. `m_bShowMenu`
+#: is `+0x44` bit `0x10` on the interaction, and exactly one of the two holds
+#: it at a time. `R6InteractionInventoryMnu.PostRender` tests it before
+#: calling the native at all.
+#:
+#: The leak is one level up. The frame driver at `0x002f140c` hands the
+#: interaction master THIS viewport's canvas, and the master at `0x003431d0`
+#: then loops over **every** viewport in `Client->Viewports` and runs each
+#: one's `LocalInteractions` into that single canvas. So on viewport 0's pass
+#: it also runs player 2's interactions -- whose gate legitimately passes --
+#: into player 1's canvas.
+#:
+#: The lists themselves are right: `PSX2Viewport0.LocalInteractions` holds
+#: Mnu0/Circ0/Map0 and `PSX2Viewport1` holds Mnu1/Circ1/Map1, each with the
+#: matching `ViewportOwner`.
+#:
+#: So the native gates itself on `canvas->Viewport == this->ViewportOwner`.
+#: Both fields are already proven in this function -- it reads `canvas+0x84`
+#: four instructions later -- and doing it here covers BOTH dispatchers and
+#: both callers of the rose, without touching the minimap or the console.
+OWNER_HOOK = 0x00438000
+OWNER_STOCK = 0x8FA32A14                # lw $v1, 0x2a14($sp)
+OWNER_CONTINUE = 0x00438008
+OWNER_BAIL = 0x00439360                 # the function's own epilogue
+
+
+def owner_words(freed=True):
+    """[(va, word, stockWord, note)] for the per-viewport gate."""
+    from . import rsedeadpath
+
+    cave = rsedeadpath.claim("wheel_owner", freed)
+    body = (
+        OWNER_STOCK,          # lw   $v1, 0x2a14($sp)   the displaced load
+        0x8E020030,           # lw   $v0, 0x30($s0)     this->ViewportOwner
+        0x10400004,           # beq  $v0, $zero, +4     null owner -> continue
+        0x8C610084,           # lw   $at, 0x84($v1)     canvas->Viewport
+        0x10220002,           # beq  $at, $v0, +2       mine -> continue
+        0x00000000,           # nop
+        0x08000000 | ((OWNER_BAIL >> 2) & 0x03FFFFFF),
+        0x00000000,           # nop  (and the continue target)
+        0x08000000 | ((OWNER_CONTINUE >> 2) & 0x03FFFFFF),
+        0x00000000,           # nop
+    )
+    out = []
+    for k, word in enumerate(body):
+        va = cave + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: draw only into the viewport that owns it"))
+    out.append((OWNER_HOOK, 0x08000000 | ((cave >> 2) & 0x03FFFFFF),
+                OWNER_STOCK, "wheel: hook the owner test"))
+    return out

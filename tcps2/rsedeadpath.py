@@ -60,7 +60,7 @@ from __future__ import annotations
 #: The block runs well past this; 24 is what has been read and checked
 #: instruction by instruction, and nothing needs more than 16.
 CAVE = 0x0019B15C
-CAVE_WORDS = 64
+CAVE_WORDS = 96
 
 #: What the game ships in the first 16 words, so every write is asserted
 #: against the real thing rather than assumed to be padding.
@@ -81,6 +81,14 @@ STOCK_WORDS = (
     0xFCC30000, 0xFCC20008, 0x8E990000, 0x8F390024,
     0x0320F809, 0x0280202D, 0x8E990000, 0x2456FFFF,
     0x8F390028, 0x0320F809, 0x0280202D, 0xFFB30000,
+    0x2443FFFF, 0xFFB60008, 0x3C020004, 0xFFA30010,
+    0x34430A00, 0xFFA00018, 0x02032021, 0xFFA00020,
+    0x34430A04, 0xFFA00028, 0x34420A08, 0x02031821,
+    0x02021021, 0x8C420000, 0x04410003, 0x00023843,
+    0x24420001, 0x00023843, 0x3C020004, 0x8C850000,
+    0x34420A0C, 0x8C660000, 0x02021021, 0x02A0482D,
+    0x8C480000, 0x0220502D, 0x0240582D, 0x0C067130,
+    0x0200202D, 0x3C010004, 0x02010821, 0x8C220A08,
 )
 
 #: The block's only entry, and the word that sends it to the epilogue
@@ -105,11 +113,22 @@ SLOTS = {
     # still returns straight to the wheel.
     "wheel_box": (21, 11),
     # The wheel's ring, four quadrant sprites off one Y in $f23.
-    "wheel_ring": (32, 10),
+    # 16 words: it also has to BUILD the ring scale, because the ring
+    # is the one element the game draws at native texture size.
+    "wheel_ring": (63, 16),
     # The weapon icons. They pass a DESIGN-space Y that the sprite
     # call multiplies by the scale, so this one divides the viewport
     # offset by that scale before adding it.
-    "wheel_icon": (42, 11),
+    # NOT the weapon icons. These four sprite calls draw the blinking
+    # marker on the SELECTED direction, and only its up and down cases;
+    # left and right go through a different primitive. The weapon icons
+    # are the eight box calls, which "wheel_box" already covers.
+    "wheel_indicator": (42, 11),
+    # Stop one player's wheel drawing into the other's half. The
+    # engine dispatcher renders EVERY viewport's interaction list into
+    # EACH viewport's canvas, so the per-player gate is honoured and
+    # then ignored one level up.
+    "wheel_owner": (53, 10),
 }
 
 

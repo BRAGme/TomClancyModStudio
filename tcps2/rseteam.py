@@ -97,7 +97,7 @@ def reads(plain: bytes) -> bool:
 
 
 def apply(plain: bytes, enable: bool = True):
-    """Point the rescue test at its own arm, or put it back.
+    """Run the rescue arm everywhere AND spawn somewhere that exists.
 
     Returns (bytes, changed). Two bytes move and the length never does.
     """
@@ -110,7 +110,8 @@ def apply(plain: bytes, enable: bool = True):
     out[BRANCH + 2] = (want >> 8) & 0xFF
     if len(out) != len(plain):
         raise TeamError("the team edit changed the file length")
-    return bytes(out), 1
+    out, more = spots_apply(bytes(out), enable)
+    return out, 1 + more
 
 
 def card(prefix, group):
@@ -120,23 +121,95 @@ def card(prefix, group):
         prefix + "split_rescue_team", "Build the two AI operatives",
         BOOL, False, group, confidence="broken", touches="data",
         enabled=False,
-        disabled_reason='Tested on hardware and it HANGS on any map but Trieste, so it is withdrawn. Island Estate wedges in split screen, in Practice Mode as well as Terrorist Hunt, so it is the map and not the gametype. m_brescureRainbow is set in exactly ONE of 96 map INIs -- Trieste is the only level authored for the rescue, and the only one that places the cover spots this arm spawns at. What the test did buy is worth more than the option. The hang state matches the known wedge EXACTLY: IOP streaming frozen at off=0x540000 len=0x4680, the final partial chunk of the level .LIN. That is the same freeze as ss_man_down, canon_team and all four earlier teammate attempts. This edit is TWO BYTES with no re-assembly and no inserted control flow, which kills the theory that the bytecode edits were to blame. Six failures are one bug, and its trigger is now a two-byte switch rather than a frozen savestate. It also refutes the residency theory from the other direction: Trieste builds the same operatives in split screen and runs fine, so it is not the operative class load either. What separates them is that Trieste has somewhere valid to put them.',
+        disabled_reason="Tested twice on hardware and withdrawn. Version one unlocked the rescue arm and hung on every map but Trieste. Version two also pointed both spawns at m_CoverSpots[0], the spot the game itself null-checks and single player trusts everywhere -- and Island wedged identically, off=0x540000 len=0x4680, the same frozen re-read of the level .LIN's final chunk. So the spawn point is NOT the cause either. That is the fourth explanation this wedge has survived. Refuted by measurement, in order: the bytecode edits (this is two bytes with no re-assembly), the operative class load (Trieste builds the same operatives and runs), the gametype (Practice hangs too), and now the spawn point. Six separate edits reproduce it and Trieste is the sole exception. What it is worth keeping for: the wedge now has a switchable trigger. Yesterday it could only be reached through a frozen savestate. Anyone picking this up can turn it on and off in four bytes, which is the right position from which to attack it with a debugger.",
         help="Split screen builds a two-man team and stops. The engine can "
              "build AI Rainbow operatives in split screen -- Trieste proves "
              "it on the retail disc -- but the code that does it is behind a "
              "mission flag that only Trieste sets. This points that test at "
              "the arm it guards, so the arm runs on every split-screen "
-             "level.",
-        caution="EXPERIMENTAL. Two bytes, no re-assembly, and it reuses the "
-                "game's own rescue arm rather than jumping into the "
-                "single-player builder -- which is what the four withdrawn "
-                "attempts did, and that builder relies on a member counter "
-                "that split screen pins to 1, so they would have written "
-                "every operative on top of player 2 even had they "
-                "loaded.\n\n"
-                "What is not known is whether every map places the two cover "
-                "spots the arm spawns them at. Trieste does. A map that does "
-                "not will take the \"invalid spawning point\" path, and what "
-                "that does during a split-screen load is exactly what this "
-                "is for. Expect some maps to misbehave, and use RESTORE DISC "
-                "if one does.")
+             "level.")
+
+
+# ---------------------------------------------------------------------------
+# spawning them somewhere that exists on every map
+# ---------------------------------------------------------------------------
+
+#: The split-screen rescue arm spawns at `m_CoverSpots[1]` and `[2]`. Those
+#: two are only DERIVED, at mem 0x025c, and only when `m_CoverSpots[0]` is
+#: not None::
+#:
+#:     0x024f  if (m_CoverSpots[0] != None) {
+#:     0x025c      m_CoverSpots[1] = m_CoverSpots[0].m_CoverGroup[0]
+#:     0x0276      m_CoverSpots[2] = m_CoverSpots[0].m_CoverGroup[1]
+#:             }
+#:     0x02b9  CreateTeamMember(2, m_CoverSpots[1], False, ...)
+#:     0x0300  CreateTeamMember(3, m_CoverSpots[2], False, ...)
+#:
+#: So on a map without a cover GROUP behind spot 0, both spawn into nothing.
+#: The single-player arm never does this: it uses `m_CoverSpots[0]` at mem
+#: 0x0378 and falls all the way back to `teamStartingPoint` at 0x056d.
+#:
+#: Pointing both calls at `m_CoverSpots[0]` is two ONE-byte edits, because
+#: the index sits inside the array expression and the replacement is the
+#: same width:
+#:
+#:     1a 26 01 28   ArrayElement(IntOne,         m_CoverSpots)  -> 25 IntZero
+#:     1a 2c 02 01 28  ArrayElement(IntConstByte 2, m_CoverSpots) -> 00
+#:
+#: No re-assembly, no length change. Both operatives then share one spot,
+#: which is ugly, but spot 0 is the one the game itself null-checks and the
+#: one the single-player arm trusts on every map.
+#:
+#: Each signature occurs TWICE -- once in the split-screen arm and once in
+#: the single-player arm at mem 0x054f/0x0300. Only the FIRST is touched.
+SPOT2_SIG = bytes.fromhex("1b7101" "2c02" "1a26" "0128")
+SPOT2_AT = 6            # the IntOne byte inside the signature
+SPOT2_ONE, SPOT2_ZERO = 0x26, 0x25
+
+SPOT3_SIG = bytes.fromhex("1b7101" "2c03" "1a2c02" "0128")
+SPOT3_AT = 7            # the IntConstByte operand
+SPOT3_TWO, SPOT3_ZERO = 0x02, 0x00
+
+
+def _spot(plain, sig, at, stock, want):
+    """Offset of the SPLIT-SCREEN arm's index byte, patched or not.
+
+    Each signature occurs twice -- the split-screen arm first, then the
+    single-player arm. Searching for the shipped form alone is wrong once
+    the first has been patched, because `find` then lands on the SECOND,
+    which is the single-player copy and must never be touched. So both
+    forms are searched and the earliest wins.
+    """
+    shipped = bytearray(sig)
+    shipped[at] = stock
+    patched = bytearray(sig)
+    patched[at] = want
+    hits = [i for i in (plain.find(bytes(shipped)), plain.find(bytes(patched)))
+            if i >= 0]
+    if not hits:
+        raise TeamError("neither the shipped nor the patched spawn "
+                        "expression is in this file")
+    return min(hits) + at
+
+
+def spots_read(plain: bytes) -> bool:
+    """True if both calls already spawn at m_CoverSpots[0]."""
+    a = _spot(plain, SPOT2_SIG, SPOT2_AT, SPOT2_ONE, SPOT2_ZERO)
+    b = _spot(plain, SPOT3_SIG, SPOT3_AT, SPOT3_TWO, SPOT3_ZERO)
+    return plain[a] == SPOT2_ZERO and plain[b] == SPOT3_ZERO
+
+
+def spots_apply(plain: bytes, enable: bool = True):
+    """Point both rescue-arm spawns at m_CoverSpots[0], or put them back."""
+    out = bytearray(plain)
+    changed = 0
+    for sig, at, stock, zero in ((SPOT2_SIG, SPOT2_AT, SPOT2_ONE, SPOT2_ZERO),
+                                 (SPOT3_SIG, SPOT3_AT, SPOT3_TWO, SPOT3_ZERO)):
+        i = _spot(plain, sig, at, stock, zero)
+        want = zero if enable else stock
+        if out[i] != want:
+            out[i] = want
+            changed += 1
+    if len(out) != len(plain):
+        raise TeamError("the spawn-point edit changed the file length")
+    return bytes(out), changed
