@@ -353,8 +353,6 @@ def cycle_card(prefix, group):
 #:
 #: `$ra` is free to clobber at that point: the very next instruction is
 #: `jalr $ra, $t9`, which overwrites it anyway.
-LABEL_CAVE = 0x005BA0B8
-
 #: `mul.s $f0, $f0, $f21` -- fmt 16 (single), ft $f21, fs $f0, fd $f0, funct 2
 MUL_F0_BY_F21 = 0x46150002
 JR_RA = 0x03E00008
@@ -368,25 +366,32 @@ LABEL_HOOKS = (
 )
 
 
-def label_words():
-    """[(va, word, stockWord, note)] for the label-scaling cheat.
+def label_words(freed=True):
+    """[(va, word, stockWord, note)] for scaling the four labels.
 
-    Returns the cave first and the hooks last, so a reader sees the code being
-    laid down before anything jumps into it. Order does not matter to a pnach,
-    which writes the whole set every frame.
+    Each hook is one word, so each needs three of its own in the cave: the
+    multiply, the return, and the instruction it displaced sitting in the
+    return's delay slot. The four cannot share a cave because each carries a
+    different stack block.
+
+    `$ra` is free to clobber here. `jal` sets it to hook+8, the cave returns
+    there, and the instruction waiting at hook+8 is `jalr $ra, $t9`, which
+    overwrites it before anything reads it. The delay slot at hook+4 is
+    `lw $t9, 0x18($t9)` -- a load, so nothing branches inside a delay slot.
+
+    `freed` carries the caller's confirmation that the dead path's entry
+    branch is gone; see `rsedeadpath`.
     """
+    from . import rsedeadpath
+
     out = []
     for i, (site, original) in enumerate(LABEL_HOOKS):
-        base = LABEL_CAVE + i * 12
-        out.append((base, MUL_F0_BY_F21, 0,
-                    "wheel labels: scale label %d by the viewport" % (i + 1)))
-        out.append((base + 4, JR_RA, 0, "wheel labels: return"))
-        out.append((base + 8, original, 0,
-                    "wheel labels: the instruction the hook replaced"))
-    for i, (site, original) in enumerate(LABEL_HOOKS):
-        base = LABEL_CAVE + i * 12
-        jal = 0x0C000000 | ((base >> 2) & 0x03FFFFFF)
-        out.append((site, jal, original,
+        cave = rsedeadpath.claim("wheel_label_%d" % i, freed)
+        for k, word in enumerate((MUL_F0_BY_F21, JR_RA, original)):
+            va = cave + k * 4
+            out.append((va, word, rsedeadpath.stock(va),
+                        "wheel labels: cave for label %d" % (i + 1)))
+        out.append((site, 0x0C000000 | ((cave >> 2) & 0x03FFFFFF), original,
                     "wheel labels: hook label %d" % (i + 1)))
     return out
 
@@ -397,8 +402,7 @@ def label_card(prefix, group):
     return Setting(
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
-        confidence="broken", touches="cheat",
-        enabled=False, disabled_reason="Its cave is carried in a cheat file, and that is what breaks it. A mode-1 pnach rewrites the cave every frame while the game ZEROES that memory between writes, so there is a window in every frame where the hook exists and the cave does not -- the hook then jal's into a run of nops and the EE runs off into garbage. Caught on a savestate: the hooks were live at 0x004388a8 with the cave at 0x005ba0b8 reading all zeroes, and the EE was parked in the kernel exception handler at 0x8001046c. Writing the cave to the DISC instead does not help -- the same savestate shows it zeroed there too, which is what the module always said and what a commit in this repo briefly got wrong.\n\nThe fix is a cave in memory the game preserves, and there is one: the scope draw's dead path at 0x0019b15c. It is real overlay code, so it survives, and the scope guard removed its only entry.",
+        confidence="untested", touches="words",
         help="With the wheel restored, its ring scales to your half of the "
              "screen but the four item names do not -- they stay where a "
              "full-height screen would put them, so the lower ones spill into "

@@ -31,7 +31,8 @@ from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
-                rsemandown, rserpg, rseshadow, rsesidearm, rsescope,
+                rsedeadpath, rsemandown, rserpg, rseshadow, rsesidearm,
+                rsescope,
                 rsewheel)
 
 BASE = 0x00100000
@@ -90,6 +91,67 @@ RESEARCH_LEFTOVERS = dict(
     + [(0x0017F530, 0x27BDFCF0), (0x0017F534, 0xFFBF0090)]
 )
 STOCK.update(RESEARCH_LEFTOVERS)
+
+#: The dead-path cave and every site the two split-screen HUD fixes
+#: touch. These used to be cheat words, which never went through
+#: STOCK at all; on the disc each one is asserted against the shipped
+#: word before it is written, like every other patch site here.
+HUD_STOCK = {
+    0x0019AE40: 0x14A000C6,
+    0x0019AF34: 0x8E0207C4,
+    0x0019AF38: 0x04410003,
+    0x0019AF3C: 0x00023843,
+    0x0019AF40: 0x24420001,
+    0x0019AF44: 0x00023843,
+    0x0019AF48: 0x8E0807C8,
+    0x0019AF68: 0x8E0207C4,
+    0x0019AF6C: 0x04410003,
+    0x0019AF70: 0x0002B043,
+    0x0019AF74: 0x24420001,
+    0x0019AF78: 0x0002B043,
+    0x0019AFD0: 0x8E0807C8,
+    0x0019B0A8: 0x8E0207C4,
+    0x0019B0AC: 0x04410003,
+    0x0019B0B0: 0x00023843,
+    0x0019B0B4: 0x24420001,
+    0x0019B0B8: 0x00023843,
+    0x0019B0BC: 0x8E0807C8,
+    0x0019B0DC: 0x8E0207C4,
+    0x0019B0E0: 0x04410003,
+    0x0019B0E4: 0x0002B043,
+    0x0019B0E8: 0x24420001,
+    0x0019B0EC: 0x0002B043,
+    0x0019B144: 0x8E0807C8,
+    0x0019B15C: 0x342117E8,
+    0x0019B160: 0x02011821,
+    0x0019B164: 0x00651821,
+    0x0019B168: 0x90630000,
+    0x0019B16C: 0x106000EF,
+    0x0019B170: 0x00000000,
+    0x0019B174: 0x348417EC,
+    0x0019B178: 0x00051880,
+    0x0019B17C: 0x02042021,
+    0x0019B180: 0x00831821,
+    0x0019B184: 0x8C630000,
+    0x0019B188: 0x106000E8,
+    0x0019B18C: 0x00000000,
+    0x0019B190: 0x24040001,
+    0x0019B194: 0x0C064808,
+    0x0019B198: 0x0000282D,
+    0x0019B19C: 0x3C010004,
+    0x0019B1A0: 0x02010821,
+    0x0019B1A4: 0x8C2309FC,
+    0x0019B1A8: 0x3C010004,
+    0x0019B1AC: 0x00031880,
+    0x0019B1B0: 0x342117EC,
+    0x0019B1B4: 0x02011021,
+    0x0019B1B8: 0x00431021,
+    0x004388A8: 0x27A62990,
+    0x00438C28: 0x27A629B0,
+    0x00438FA4: 0x27A629D0,
+    0x00439320: 0x27A629F0,
+}
+STOCK.update(HUD_STOCK)
 
 BODY_TIMERS = {
     "stock": None,
@@ -826,10 +888,26 @@ def build_edits(v: dict) -> list:
 
     if v.get("viewmodel"):
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
-    if v.get("split_scope"):
+    scope = bool(v.get("split_scope"))
+    fit = scope and bool(v.get("split_scope_fit"))
+    labels = bool(v.get("split_wheel")) and bool(v.get("split_wheel_labels"))
+    if scope:
         for va, value in rsescope.SCOPE_GUARD:
             w(va, value, "split screen: let the scope overlay draw, but only "
                          "once the renderer exists")
+    elif fit or labels:
+        # Something wants the cave but the scope option is off, so the dead
+        # path still has its entry. Point that branch at the function's own
+        # epilogue instead: split screen still branches away and still draws
+        # nothing, exactly as stock, and the block is free.
+        w(rsedeadpath.ENTRY, rsedeadpath.FREE_BRANCH,
+          "split screen: retire the branch into the dead path")
+    if fit:
+        for va, value, _stock, note in rsescope.viewport_words(freed=True):
+            w(va, value, note)
+    if labels:
+        for va, value, _stock, note in rsewheel.label_words(freed=True):
+            w(va, value, note)
     if v.get("split_shadows"):
         w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
           "split screen: let the shadow pass run")
@@ -1068,19 +1146,9 @@ def build_pnach(v: dict) -> list:
                             "map-wide spawn points: hijack the point picker"))
         out += [WordEdit(va, word, 0, "map-wide spawn points: cave")
                 for va, word in CAVE_WORDS]
-    if v.get("split_scope_fit") and v.get("split_scope"):
-        # Gated on the disc edit as well as its own tick. `requires` only
-        # greys the widget out; the stored value survives, and a pnach is
-        # re-applied every frame -- so without this an untick left eight
-        # hooks writing themselves into the scope draw forever.
-        # Its own cave, clear of both the spawn-point one and the wheel
-        # labels', so any combination of the three can be on at once.
-        out += [WordEdit(va, word, stock, note)
-                for va, word, stock, note in rsescope.viewport_words()]
-    if v.get("split_wheel_labels"):
-        # Its own cave, well clear of the spawn-point one, so both can be on.
-        out += [WordEdit(va, word, stock, note)
-                for va, word, stock, note in rsewheel.label_words()]
+    # The two split-screen HUD caves used to be emitted here. They are
+    # disc words now, living in the scope draw's dead path -- see
+    # rsedeadpath for why a cheat file could not hold them.
     return out
 
 

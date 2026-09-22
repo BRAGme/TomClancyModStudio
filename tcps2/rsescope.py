@@ -208,24 +208,41 @@ def card(prefix, group):
 #: (`sd $ra, 0xb0($sp)`) so `jal` is free to clobber it; and `$at` is dead at
 #: every site. It is a cheat rather than a disc edit for the same reason as the
 #: wheel labels -- the only free memory is not preserved across a level load.
-VIEWPORT_CAVE = 0x005BA0E8
+#: Where the cave lives now. See `rsedeadpath` for why the run of zeroes at
+#: 0x005ba0b8 could not hold it: the game clears that memory, so the hooks
+#: jumped into nops and the EE ran off into the kernel exception handler.
+#:
+#: Most of this no longer needs a cave at all. Each width read is the head of
+#: a FIVE-word divide-by-two idiom, which is room enough to build the address
+#: inline:
+#:
+#:     lui   $at, 0x0004
+#:     addu  $at, $s0, $at        ; $at = G + 0x40000
+#:     lw    $v0, 0x0a08($at)     ; the viewport's own width
+#:     sra   RD,  $v0, 1
+#:     nop
+#:
+#: and that leaves `$at` holding `G + 0x40000` afterwards. Two of the four
+#: height reads sit immediately after a width site, so they are one word each
+#: with no setup:  `lw $t0, 0x0a0c($at)`.
+#:
+#: The other two are a call away from any width site, where `$at` is long
+#: gone -- `$at` is scratch and a callee may use it freely -- so those two go
+#: through the cave.
+VIEWPORT_W, VIEWPORT_H = 0x0A08, 0x0A0C
 
 #: register numbers
 _AT, _V0, _A3, _T0, _S0, _S6 = 1, 2, 7, 8, 16, 22
-
-#: low half of the viewport rectangle's width and height offsets
-VIEWPORT_W, VIEWPORT_H = 0x0A08, 0x0A0C
-
-#: one width cave per destination register, then the shared height cave
-_WIDTH_CAVE = {_A3: VIEWPORT_CAVE, _S6: VIEWPORT_CAVE + 24}
-_HEIGHT_CAVE = VIEWPORT_CAVE + 48
 
 #: (site, destinationRegister) -- the five-word divide-by-two idiom
 WIDTH_HOOKS = ((0x0019AF34, _A3), (0x0019AF68, _S6),
                (0x0019B0A8, _A3), (0x0019B0DC, _S6))
 
-#: (site,) -- a single `lw $t0, 0x7c8($s0)`
-HEIGHT_HOOKS = (0x0019AF48, 0x0019AFD0, 0x0019B0BC, 0x0019B144)
+#: height reads that follow a width site, so `$at` is still good
+HEIGHT_NEAR = (0x0019AF48, 0x0019B0BC)
+
+#: height reads too far from one, which need the cave
+HEIGHT_FAR = (0x0019AFD0, 0x0019B144)
 
 JR_RA = 0x03E00008
 NOP = 0x00000000
@@ -233,10 +250,6 @@ NOP = 0x00000000
 
 def _lui(rt, imm):
     return (0x0F << 26) | (rt << 16) | (imm & 0xFFFF)
-
-
-def _ori(rt, rs, imm):
-    return (0x0D << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF)
 
 
 def _addu(rd, rs, rt):
@@ -273,30 +286,39 @@ def width_stock(rd):
 HEIGHT_STOCK = _lw(_T0, _S0, 0x07C8)
 
 
-def viewport_words():
-    """[(va, word, stockWord, note)] for the viewport-fitting cheat."""
+def viewport_words(freed=True):
+    """[(va, word, stockWord, note)] for fitting the overlay to the viewport.
+
+    `freed` says the caller has already emitted whatever makes the dead path
+    unreachable -- the guard, or `rsedeadpath.FREE_BRANCH`. It is passed
+    through rather than assumed because a cave in a block split screen can
+    still branch into would be executed as code.
+    """
+    from . import rsedeadpath
+
     out = []
-    for rd, base in sorted(_WIDTH_CAVE.items()):
-        body = (_lui(_AT, 0x0004), _ori(_AT, _AT, VIEWPORT_W),
-                _addu(_AT, _S0, _AT), _lw(_V0, _AT, 0),
-                JR_RA, _sra(rd, _V0, 1))
-        for k, word in enumerate(body):
-            out.append((base + k * 4, word, 0,
-                        "scope: viewport width, halved into r%d" % rd))
-    body = (_lui(_AT, 0x0004), _ori(_AT, _AT, VIEWPORT_H),
-            _addu(_AT, _S0, _AT), JR_RA, _lw(_T0, _AT, 0))
+    cave = rsedeadpath.claim("scope_height", freed)
+    body = (_lui(_AT, 0x0004), _addu(_AT, _S0, _AT), JR_RA,
+            _lw(_T0, _AT, VIEWPORT_H))          # the lw is the jr's delay slot
     for k, word in enumerate(body):
-        out.append((_HEIGHT_CAVE + k * 4, word, 0, "scope: viewport height"))
+        va = cave + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "scope: viewport height cave"))
+
     for site, rd in WIDTH_HOOKS:
         stock = width_stock(rd)
-        out.append((site, _jal(_WIDTH_CAVE[rd]), stock[0],
-                    "scope: hook the width read at %#x" % site))
-        for k in range(1, 5):
-            out.append((site + k * 4, NOP, stock[k],
-                        "scope: retire the framebuffer halving at %#x" % site))
-    for site in HEIGHT_HOOKS:
-        out.append((site, _jal(_HEIGHT_CAVE), HEIGHT_STOCK,
-                    "scope: hook the height read at %#x" % site))
+        built = (_lui(_AT, 0x0004), _addu(_AT, _S0, _AT),
+                 _lw(_V0, _AT, VIEWPORT_W), _sra(rd, _V0, 1), NOP)
+        for k in range(5):
+            out.append((site + k * 4, built[k], stock[k],
+                        "scope: viewport width at %#x" % site))
+
+    for site in HEIGHT_NEAR:
+        out.append((site, _lw(_T0, _AT, VIEWPORT_H), HEIGHT_STOCK,
+                    "scope: viewport height at %#x" % site))
+    for site in HEIGHT_FAR:
+        out.append((site, _jal(cave), HEIGHT_STOCK,
+                    "scope: viewport height via the cave at %#x" % site))
     return out
 
 
@@ -305,8 +327,7 @@ def viewport_card(prefix, group):
 
     return Setting(
         prefix + "split_scope_fit", "Fit the scope overlay to your half",
-        BOOL, False, group, confidence="broken", touches="cheat",
-        enabled=False, disabled_reason='Same cause as the wheel labels, and the same fix pending: the cave lives in memory the game zeroes, so the hooks jal into nothing. The scope itself still works -- this is only the option that fits the overlay to your half.',
+        BOOL, False, group, confidence="untested", touches="words",
         help="With the overlay switched back on it draws at full-screen size "
              "and once per player, because it takes its dimensions from the "
              "whole framebuffer and never looks at the viewport. This points "

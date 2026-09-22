@@ -1145,6 +1145,39 @@ def run(args, work):
     check("a dependency reports as unmet",
           PROFILE.unmet("wave_total", off) == ["Enable wave mode"])
 
+    print("\n[dead-path cave]")
+    from tcps2 import rsedeadpath, rsescope, rsewheel
+    check("the slots do not overlap", rsedeadpath.check_layout() == 16)
+    check("a cave slot is refused while the entry branch is live",
+          _raises(lambda: rsedeadpath.claim("scope_height", False),
+                  rsedeadpath.DeadPathError))
+    hud = rsescope.viewport_words() + rsewheel.label_words()
+    addrs = [x[0] for x in hud]
+    check("no two HUD words fight over an address",
+          len(set(addrs)) == len(addrs) == 44)
+    check("every HUD word is inside the overlay",
+          all(0x00100000 <= a < 0x00653980 for a in addrs))
+    check("every HUD word declares the stock the profile holds",
+          all(STOCK.get(a) == st for a, _w, st, _n in hud))
+    # Freeing the dead path is not optional. With the scope option off, an
+    # option that needs the cave has to retire the branch itself, or split
+    # screen jumps straight into what is now cave code.
+    lab = dict(PROFILE.defaults(), split_wheel=True, split_wheel_labels=True)
+    ent = [e for e in PROFILE.build_edits(lab) if e.va == rsedeadpath.ENTRY]
+    check("labels alone retire the branch into the dead path", len(ent) == 1)
+    check("and do it without changing what split screen does",
+          ent and ent[0].value == rsedeadpath.FREE_BRANCH)
+    both = dict(PROFILE.defaults(), split_scope=True, split_scope_fit=True)
+    ent2 = [e for e in PROFILE.build_edits(both) if e.va == rsedeadpath.ENTRY]
+    check("the scope guard frees it instead when the scope is on",
+          ent2 and ent2[0].value == rsescope.SCOPE_GUARD[0][1])
+    check("nothing on this disc needs a cheat file for the HUD",
+          not PROFILE.build_pnach(dict(PROFILE.defaults(),
+                                       split_scope=True, split_scope_fit=True,
+                                       split_wheel=True,
+                                       split_wheel_labels=True)))
+
+
     print("\n[cheat file]")
     words = PROFILE.build_pnach(dict(PROFILE.defaults(), wave_enable=True))
     check("the cave is 67 words plus a hijack", len(words) == 68)
