@@ -98,6 +98,13 @@ STOCK.update(RESEARCH_LEFTOVERS)
 #: word before it is written, like every other patch site here.
 HUD_STOCK = {
     0x0019AE40: 0x14A000C6,
+    0x0019AE48: 0x82030000,
+    0x0019AE4C: 0x00031EBC,
+    0x0019AE50: 0x00031FFF,
+    0x0019AE54: 0x106001B5,
+    0x0019AE58: 0x348317E0,
+    0x0019AE5C: 0x02031821,
+    0x0019AE60: 0x8C630000,
     0x0019AF34: 0x8E0207C4,
     0x0019AF38: 0x04410003,
     0x0019AF3C: 0x00023843,
@@ -732,6 +739,7 @@ def _build_settings():
         rsescope.card("", "Split Screen"),
         rsedraw.card("", "Split Screen"),
         rsescope.viewport_card("", "Split Screen"),
+        rsescope.owner_card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -904,6 +912,9 @@ def build_edits(v: dict) -> list:
           "split screen: retire the branch into the dead path")
     if fit:
         for va, value, _stock, note in rsescope.viewport_words(freed=True):
+            w(va, value, note)
+    if scope and v.get("split_scope_owner"):
+        for va, value, _stock, note in rsescope.owner_words():
             w(va, value, note)
     if labels:
         for va, value, _stock, note in rsewheel.label_words(freed=True):

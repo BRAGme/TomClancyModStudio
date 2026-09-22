@@ -322,6 +322,9 @@ def viewport_words(freed=True):
     return out
 
 
+CAUTION_OWNER = "Seven words on the disc, no cave, and every stock word checked against the image first. It needs the scope option on, because split screen has to fall through the guard to reach these instructions. Hazards were checked rather than assumed: the new branch's delay slot runs on both paths and is a load through a register the branch has already consumed, with its result dead at the epilogue; the pointer chase is ordered AFTER the texture null check so it only runs when there is a live scope target; a0 holds 0x40000 from 0x0019ae30 with nothing writing it in between; at, v0 and v1 are all dead at the epilogue; and a whole-image scan finds no branch into 0x0019ae48..0x0019ae68. Single player is unaffected -- the same chain resolves there, so it becomes draw-iff-that-player-is-scoped, which is what it already does. Two things are NOT proven and should be watched for: that PC+0x4d8 bit 1 means scope up rather than merely zoomed, and that the bit sets for player 2 at all -- no savestate has player 2 scoping. If it turns out to mean zoomed, a player using iron sights while the other has a scope up would still see the overlay, which is still better than today."
+
+
 def viewport_card(prefix, group):
     from .model import BOOL, Setting
 
@@ -340,3 +343,71 @@ def viewport_card(prefix, group):
                 "640x448, so the reads return exactly what they do now. Not "
                 "play-tested.",
         requires={prefix + "split_scope": [True]})
+
+# ---------------------------------------------------------------------------
+# giving the overlay to the player who actually aimed
+# ---------------------------------------------------------------------------
+
+#: With the overlay drawing and fitted, it still appears in BOTH halves when
+#: one player aims. The reason, measured rather than assumed:
+#:
+#: The draw tests bit 5 of the byte at `G+0`, and `G` is one global object.
+#: That bit is copied from `LevelInfo+0x453` -- also shared -- by the loop at
+#: `0x002f0274`, once per viewport. Six split-screen savestates read `0x22`
+#: when someone is scoped and `0x02` when nobody is, regardless of WHO.
+#:
+#: What makes a fix possible is that the player IS reachable from `$s0`:
+#:
+#:     G+0x40a30  -> the viewport currently being drawn
+#:     V+0x34     -> that viewport's PlayerController
+#:     PC+0x4d8   -> bit 1 is that player's own scope flag
+#:
+#: all three confirmed across six split-screen and five single-player states.
+#: `SetViewport` at `0x001acbb0` writes `G+0x40a30`, and across the whole
+#: 0x1400-byte controller exactly three fields separate scoped from not:
+#: `+0x4d8` and the FOV pair at `+0x530`/`+0x534`.
+#:
+#: A correction that came with it: `G+0x409fc` is not a "split/viewport mode".
+#: It is a 1-BASED VIEWPORT INDEX -- 0 single player, 1 top, 2 bottom -- which
+#: is why `SCOPE_GUARD` testing `< 3` is right for the wrong stated reason.
+#:
+#: The shared bit-5 test is dropped in favour of a null check on the scope
+#: texture latch at `G+0x417e0`, which measured 0 in every non-scope state and
+#: non-null in both scope states. It carries the same "nobody is scoped"
+#: information, and the per-player bit is strictly narrower.
+#:
+#: Seven words, no cave. `0x0019ae64` and `0x0019ae68` are already exactly
+#: what is wanted and stay stock.
+OWNER_PATCH = (
+    (0x0019AE48, 0x82030000, 0x02040821),   # addu at, s0, a0
+    (0x0019AE4C, 0x00031EBC, 0x8C2217E0),   # lw   v0, 0x17e0(at)
+    (0x0019AE50, 0x00031FFF, 0x104001B6),   # beq  v0, zero, 0019b52c
+    (0x0019AE54, 0x106001B5, 0x8C230A30),   # lw   v1, 0xa30(at)   [delay slot]
+    (0x0019AE58, 0x348317E0, 0x8C630034),   # lw   v1, 0x34(v1)
+    (0x0019AE5C, 0x02031821, 0x906304D8),   # lbu  v1, 0x4d8(v1)
+    (0x0019AE60, 0x8C630000, 0x30630002),   # andi v1, v1, 0x2
+)
+
+
+def owner_words():
+    """[(va, word, stockWord, note)] for the per-player scope test."""
+    return [(va, new, stock, "scope: only the player who aimed")
+            for va, stock, new in OWNER_PATCH]
+
+
+def owner_card(prefix, group):
+    from .model import BOOL, Setting
+
+    return Setting(
+        prefix + "split_scope_owner",
+        "...and only for the player who aimed", BOOL, False, group,
+        confidence="untested", touches="words",
+        help="With the overlay switched on it appears in BOTH halves as soon "
+             "as either player aims, because the flag the draw tests lives on "
+             "the shared render object rather than on a player. This walks "
+             "from the viewport being drawn to its own controller and tests "
+             "that player's scope bit instead.",
+        caution=CAUTION_OWNER,
+        requires={prefix + "split_scope": [True]})
+
+
