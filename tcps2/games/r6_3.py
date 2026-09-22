@@ -75,6 +75,9 @@ STOCK = {
     0x00142044: 0x3463CCCD,   # ori v1, v1, 0xCCCD  low half
     0x00142048: 0x4483A800,   # mtc1 v1, $f21       player 2's input dt := 0.05f
     0x0019AE40: 0x14A000C6,   # bnez a1, 0x19b15c   the scope-overlay gate
+    0x0019AE44: 0x3C010004,   # lui at, 0x4        its delay slot, and NOT
+                              #                    filler: the gate's target
+                              #                    opens `ori at, at, 0x17e8`
     0x00446EA8: 0x30420001,   # andi v0, v0, 1      the shadow-pass gate
 }
 
@@ -824,8 +827,9 @@ def build_edits(v: dict) -> list:
     if v.get("viewmodel"):
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
     if v.get("split_scope"):
-        w(rsescope.SCOPE_BRANCH, rsescope.SCOPE_BRANCH_OPEN,
-          "split screen: let the scope overlay draw")
+        for va, value in rsescope.SCOPE_GUARD:
+            w(va, value, "split screen: let the scope overlay draw, but only "
+                         "once the renderer exists")
     if v.get("split_shadows"):
         w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
           "split screen: let the shadow pass run")

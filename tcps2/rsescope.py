@@ -73,8 +73,44 @@ SCOPE_BRANCH = 0x0019AE40
 #: what the game ships there: `bnez $a1, 0x0019b15c`
 SCOPE_BRANCH_STOCK = 0x14A000C6
 
-#: and what turns it into "carry on regardless"
+#: RETIRED. Nopping the branch is what the first version did, and it crashes
+#: a level load. See `SCOPE_GUARD` below. Kept so a disc patched by that build
+#: is recognised and restored rather than mistaken for stock.
 SCOPE_BRANCH_OPEN = 0x00000000
+
+#: The delay slot, and what it is for. `lui $at, 0x4` looks like scheduling
+#: filler and is not: the branch target opens `ori $at, $at, 0x17e8`, so the
+#: dead path consumes the $at this sets. Anything that repurposes this word
+#: has to make sure the dead path is never reached.
+SCOPE_DELAY = 0x0019AE44
+SCOPE_DELAY_STOCK = 0x3C010004
+
+#: Where the function gives up and returns -- the label three other guards in
+#: this same routine already branch to. Restores ra and s0..s7 and returns.
+SCOPE_RETURN = 0x0019B52C
+
+#: The guard that replaces the branch and its delay slot.
+#:
+#:     0019ae40  sltiu $at, $a1, 3          ; both real modes are 0 and 2
+#:     0019ae44  beq   $at, $zero, 0019b52c ; garbage -> return, draw nothing
+#:
+#: Single player (mode 0) and split screen (mode 2) both fall through, so the
+#: feature works and single player is untouched. A load, where G is null or
+#: points at text, takes the branch and draws nothing -- which is what the
+#: stock code achieved by accident.
+#:
+#: It jumps to the epilogue rather than to 0x0019b15c deliberately. The dead
+#: path needs $at == 0x40000 from the old delay slot, and the guard has to
+#: clobber $at to do its compare; going straight to the return sidesteps that
+#: instead of leaving a corrupted address behind.
+#:
+#: The new branch's delay slot is the untouched `lb $v1, 0x0($s0)` at
+#: 0x0019ae48. It runs on both paths, which is harmless: it is a load, $v1 is
+#: dead at the epilogue, and a read through a garbage $s0 is a read of RAM.
+SCOPE_GUARD = (
+    (0x0019AE40, 0x2CA10003),      # sltiu $at, $a1, 3
+    (0x0019AE44, 0x102001B9),      # beq   $at, $zero, 0x0019b52c
+)
 
 #: the render object's split-screen mode, and the fields the draw ought to be
 #: reading. Recorded so the cave that follows does not have to find them again.
@@ -104,6 +140,15 @@ def card(prefix, group):
         caution="Watched working in split screen on Island Estate: the scope "
                 "draws, once in each half, for both players. The diagnosis "
                 "above is confirmed.\n\n"
+                "The first version of this cleared the branch outright, and "
+                "that crashed the emulator during the Mountain Highway load "
+                "with a VIF FIFO assert. The branch is not only the "
+                "split-screen test -- it is also what stops the draw running "
+                "before the renderer exists, which measured savestates show "
+                "it does not for the whole load. It is now a guard that "
+                "admits the two real modes and returns on anything else. "
+                "Island Estate had loaded only because the garbage there "
+                "happened to be survivable.\n\n"
                 "It is not yet a finished fix, and the reason is the one this "
                 "card always predicted. The draw takes its size from the "
                 "framebuffer, which stays 640x448 in split screen, and never "
