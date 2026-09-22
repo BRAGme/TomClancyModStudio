@@ -30,6 +30,7 @@ from tcps2.detect import identify  # noqa: E402
 from tcps2.iso import Iso  # noqa: E402
 from tcps2.soz import SozImage  # noqa: E402
 from tcps2.games.r6_3 import PROFILE, STOCK  # noqa: E402
+from tcps2.games import PROFILES as ALL_PROFILES  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -1144,6 +1145,54 @@ def run(args, work):
           not PROFILE.build_pnach(off))
     check("a dependency reports as unmet",
           PROFILE.unmet("wave_total", off) == ["Enable wave mode"])
+
+    print("")
+    print("[presets]")
+    # Presets are what most people will actually click, so they carry the
+    # same duty of care as the cards. Nothing here was covered before.
+    from gui.presets import PRESETS
+    bad_key, carries_broken, dropped = [], [], []
+    for _pid, rows in PRESETS.items():
+        pro = None
+        for prof in ALL_PROFILES:
+            if prof.id == _pid:
+                pro = prof
+                break
+        if pro is None:
+            continue
+        for name, vals in rows:
+            for k, want in vals.items():
+                st = pro.setting(k)
+                if st is None:
+                    bad_key.append((name, k))
+                    continue
+                if not st.enabled and want != st.default:
+                    carries_broken.append((name, k))
+            eff = pro.effective(dict(pro.defaults(), **vals))
+            for k, want in vals.items():
+                st = pro.setting(k)
+                # A setting whose prerequisite the preset does not meet is
+                # SUPPOSED to be reset -- that is effective() doing its job,
+                # not the preset lying. Only unconditional drops count.
+                if (st is not None and st.enabled and not pro.unmet(k, eff)
+                        and eff.get(k) != want):
+                    dropped.append((name, k, want, eff.get(k)))
+    check("every preset key is a real setting", not bad_key,
+          "%r" % (bad_key[:3],))
+    # A withdrawn option is withdrawn because it broke something. A preset
+    # that still sets it would hand that straight back to the user, and
+    # effective() would silently drop it, so the preset would also be lying
+    # about what it does.
+    check("no preset carries a withdrawn option", not carries_broken,
+          "%r" % (carries_broken[:3],))
+    check("no preset value is silently dropped", not dropped,
+          "%r" % (dropped[:3],))
+    r6 = [v for _pid, rows in PRESETS.items() if _pid == "r6_3_slus20883"
+          for _n, v in rows]
+    check("the split-screen HUD fixes reach the presets",
+          sum(1 for v in r6 if v.get("split_scope_fit")) == len(r6) - 1)
+    check("and Stock is the one that does not",
+          not r6[0].get("split_scope_fit"))
 
     print("\n[dead-path cave]")
     from tcps2 import rsedeadpath, rsescope, rsewheel

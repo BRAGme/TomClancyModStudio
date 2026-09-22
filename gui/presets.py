@@ -9,6 +9,8 @@ Multiply by the number of deployment zones on the map: one on the quiet levels,
 two on Shipyard and Alcatraz, three on Trieste, Oil Refinery and Import/Export.
 """
 
+#: The effects split screen throws away. These are all one-word code edits
+#: that stop the game disabling something when a second viewport exists.
 FX_ON = {
     "viewmodel": True,
     "fx_impact": True,
@@ -18,7 +20,24 @@ FX_ON = {
     "fx_hidden_emitters": True,
 }
 
+#: The HUD split screen throws away, which is a different kind of fix: the
+#: wheel and the L1 tap are data edits, and the scope is a code edit plus a
+#: cave. They were missing from every preset, so "Split-screen fixes only"
+#: quietly delivered the effects and none of the interface -- the wheel stayed
+#: shut and the scope stayed a bare reticule.
+#:
+#: `split_wheel_labels` is deliberately NOT here. It is withdrawn: the cave is
+#: live but the factor it scales by is wrong, so the labels still spill into
+#: the other player's half. A preset must never carry a broken option.
+HUD_ON = {
+    "split_wheel": True,
+    "split_cycle": True,
+    "split_scope": True,
+    "split_scope_fit": True,
+}
+
 FX_OFF = {k: False for k in FX_ON}
+HUD_OFF = {k: False for k in HUD_ON}
 
 
 def _wave(enable, gate, total, size, trigger, hunt=True, mapwide=True):
@@ -30,30 +49,31 @@ def _wave(enable, gate, total, size, trigger, hunt=True, mapwide=True):
 R6_3 = [
     ("Stock — nothing patched",
      dict(_wave(False, "stock", 30, 1, 2, False, False), **FX_OFF,
+          **HUD_OFF,
           decal_ring=32, bodies="stock")),
 
     ("Split-screen fixes only",
-     dict(_wave(False, "stock", 30, 1, 2, False, False), **FX_ON,
+     dict(_wave(False, "stock", 30, 1, 2, False, False), **FX_ON, **HUD_ON,
           decal_ring=32, bodies="stock")),
 
     ("Waves — light  (~3 per zone)",
-     dict(_wave(True, "always", 20, 1, 2), **FX_ON,
+     dict(_wave(True, "always", 20, 1, 2), **FX_ON, **HUD_ON,
           decal_ring=32, bodies="stock")),
 
     ("Waves — standard  (~5 per zone)",
-     dict(_wave(True, "always", 30, 2, 3), **FX_ON,
+     dict(_wave(True, "always", 30, 2, 3), **FX_ON, **HUD_ON,
           decal_ring=64, bodies="15")),
 
     ("Waves — heavy  (~7 per zone)",
-     dict(_wave(True, "always", 60, 3, 4), **FX_ON,
+     dict(_wave(True, "always", 60, 3, 4), **FX_ON, **HUD_ON,
           decal_ring=64, bodies="15")),
 
     ("Waves — flanking  (feeds from behind)",
-     dict(_wave(True, "away", 40, 2, 3), **FX_ON,
+     dict(_wave(True, "away", 40, 2, 3), **FX_ON, **HUD_ON,
           decal_ring=64, bodies="15")),
 
     ("Waves — onslaught  (Shipyard/Alcatraz)",
-     dict(_wave(True, "always", 150, 4, 6), **FX_ON,
+     dict(_wave(True, "always", 150, 4, 6), **FX_ON, **HUD_ON,
           decal_ring=96, bodies="stock")),
 
     # "They always know where you are." Not one switch -- the engine has no
@@ -67,7 +87,7 @@ R6_3 = [
     # sight; what changes is that once you are in it, at any range on any map,
     # they react at once and keep coming for three minutes after you break it.
     ("Hunted — they come looking",
-     dict(_wave(True, "always", 40, 2, 3, hunt=True, mapwide=True), **FX_ON,
+     dict(_wave(True, "always", 40, 2, 3, hunt=True, mapwide=True), **FX_ON, **HUD_ON,
           sight=15000, search_time=180, spotting="sharp", speed="fast",
           fire_delay="snap", terro_skill="up",
           decal_ring=64, bodies="15")),
@@ -245,17 +265,29 @@ PRESETS = {
               gr2_skill="down", gr2_perfect_dist=200, gr2_sight=3000,
               gr2_sens_steps=15, gr2_sens_boost=130)),
     ],
+    # These carried `ld_mag_size` and `ld_fire_rate`, which are not settings
+    # on this profile and never have been -- the real dials are split ally
+    # and enemy. Every one of these presets was silently doing nothing for
+    # those two values, which is what the preset tests now catch.
     "lockdown_slus21144": [
         ("Stock — nothing changed",
-         dict(ld_enemy_skill=0, ld_mag_size=100, ld_fire_rate=100)),
+         dict(ld_enemy_skill=0, ld_ally_mag=100, ld_enemy_mag=100,
+              ld_ally_rate=100, ld_enemy_rate=100)),
         ("Sharper enemies",
-         dict(ld_enemy_skill=3, ld_mag_size=100, ld_fire_rate=100)),
+         dict(ld_enemy_skill=3, ld_ally_mag=100, ld_enemy_mag=100,
+              ld_ally_rate=100, ld_enemy_rate=100)),
         ("Brutal — everyone fights like a mercenary",
-         dict(ld_enemy_skill=8, ld_mag_size=100, ld_fire_rate=100)),
+         dict(ld_enemy_skill=8, ld_ally_mag=100, ld_enemy_mag=100,
+              ld_ally_rate=100, ld_enemy_rate=100)),
         ("Gentler",
-         dict(ld_enemy_skill=-4, ld_mag_size=100, ld_fire_rate=100)),
-        ("Bigger magazines",
-         dict(ld_enemy_skill=0, ld_mag_size=200, ld_fire_rate=100)),
+         dict(ld_enemy_skill=-4, ld_ally_mag=100, ld_enemy_mag=100,
+              ld_ally_rate=100, ld_enemy_rate=100)),
+        # The old name said only "Bigger magazines" over a dial that did not
+        # exist, so there is no behaviour to preserve. Naming the side it
+        # applies to is clearer than guessing the reader meant both.
+        ("Bigger magazines — your squad",
+         dict(ld_enemy_skill=0, ld_ally_mag=200, ld_enemy_mag=100,
+              ld_ally_rate=100, ld_enemy_rate=100)),
     ],
     "ghost_recon_slus20613": GHOST_RECON,
     "jungle_storm_slus20820": JUNGLE_STORM,
