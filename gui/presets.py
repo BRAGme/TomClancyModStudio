@@ -34,6 +34,10 @@ HUD_ON = {
     "split_cycle": True,
     "split_scope": True,
     "split_scope_fit": True,
+    # Without this the overlay appears in BOTH halves the moment either
+    # player aims, so the scope is not really usable in split screen
+    # without it. Verified on hardware alongside the other two.
+    "split_scope_owner": True,
 }
 
 FX_OFF = {k: False for k in FX_ON}

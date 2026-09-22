@@ -31,7 +31,7 @@ from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
-                rsedeadpath, rsemandown, rserpg, rseshadow, rsesidearm,
+                rsedeadpath, rsemandown, rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
                 rsewheel)
 
@@ -153,6 +153,16 @@ HUD_STOCK = {
     0x0019B1B0: 0x342117EC,
     0x0019B1B4: 0x02011021,
     0x0019B1B8: 0x00431021,
+    0x003F4BE8: 0xC7838D14,
+    0x003F4BF0: 0xC7838D14,
+    0x003F4BF4: 0xC7828D18,
+    0x003F4BF8: 0xC7818D24,
+    0x003F4BFC: 0xC7808D28,
+    0x003F5518: 0xC7838D14,
+    0x003F5520: 0xC7838D14,
+    0x003F5524: 0xC7828D18,
+    0x003F5528: 0xC7818D24,
+    0x003F552C: 0xC7808D28,
     0x0043888C: 0x00000000,
     0x00438C0C: 0x00000000,
     0x00438F88: 0x00000000,
@@ -740,6 +750,7 @@ def _build_settings():
         rsedraw.card("", "Split Screen"),
         rsescope.viewport_card("", "Split Screen"),
         rsescope.owner_card("", "Split Screen"),
+        rseviewmodel.card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -896,6 +907,9 @@ def build_edits(v: dict) -> list:
 
     if v.get("viewmodel"):
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
+        if v.get("split_sway"):
+            for va, value, _stock, note in rseviewmodel.words():
+                w(va, value, note)
     scope = bool(v.get("split_scope"))
     fit = scope and bool(v.get("split_scope_fit"))
     labels = bool(v.get("split_wheel")) and bool(v.get("split_wheel_labels"))

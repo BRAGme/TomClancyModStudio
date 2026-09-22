@@ -401,13 +401,13 @@ def owner_card(prefix, group):
     return Setting(
         prefix + "split_scope_owner",
         "...and only for the player who aimed", BOOL, False, group,
-        confidence="untested", touches="words",
+        confidence="verified", touches="words",
         help="With the overlay switched on it appears in BOTH halves as soon "
              "as either player aims, because the flag the draw tests lives on "
              "the shared render object rather than on a player. This walks "
              "from the viewport being drawn to its own controller and tests "
              "that player's scope bit instead.",
-        caution=CAUTION_OWNER,
+        caution=CAUTION_OWNER + ' Watched working in split screen on Mountain Highway: one player aims down sights and gets the overlay, the other half stays clean. So the chain does resolve on hardware and PC+0x4d8 bit 1 does track the player who aimed. What is still not separately proven is whether that bit means scope up or merely zoomed.',
         requires={prefix + "split_scope": [True]})
 
 
