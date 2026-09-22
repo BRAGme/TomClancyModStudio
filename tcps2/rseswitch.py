@@ -156,7 +156,9 @@ CAUTION = (
     "Nothing desynchronises at any setting -- the equip sound is one-shot at "
     "state entry, and both the weapon-lock and changing-weapon flags are "
     "cleared by events that follow the animation rather than race it.\n\n"
-    "Not play-tested. It applies to every mode, because the rate is a single "
+    "Play-tested at 150% in split-screen co-op: the switch is visibly "
+    "smoother and nothing else changed. It applies to every mode, because "
+    "the rate is a single "
     "class default and there is no per-mode copy of it.")
 
 
@@ -166,5 +168,5 @@ def card(prefix, group):
     return Setting(
         prefix + "switch_rate", "Weapon switch animation speed", INT, STOCK,
         group, minimum=MINIMUM, maximum=MAXIMUM, unit="%",
-        confidence="measured", touches="data",
+        confidence="verified", touches="data",
         help=HELP, caution=CAUTION)

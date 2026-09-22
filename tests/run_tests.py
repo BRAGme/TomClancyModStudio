@@ -1309,6 +1309,42 @@ def run(args, work):
           not [e for e in PROFILE.build_data(PROFILE.defaults())
                if e.op == "muzzle"])
 
+    print("\n[L1 tap in split screen]")
+    # Player 2 had a gadget out in co-op and a tap of L1 would not bring his
+    # rifle back. The first version of split_cycle copied single player's
+    # toggle count into the split-screen arm but not single player's
+    # gadget-out branch, so from slot 2 the tap computed (2 + 1) % 2 = 1 and
+    # handed him his pistol. The fix routes split screen into single player's
+    # arm instead of imitating it.
+    from tcps2 import rsewheel as _rw
+    cpad = (bytes(20) + _rw.CYCLE_GUARD + bytes(20)
+            + _rw.CYCLE_ANCHOR + bytes(20))
+    GI = 20 + _rw.GUARD_OPERAND
+    CI = 20 + len(_rw.CYCLE_GUARD) + 20 + _rw.CYCLE_CONST_AT
+    check("stock split screen runs its own arm", not _rw.cycle_reads(cpad))
+    cgot, cn = _rw.cycle_restore(cpad, True)
+    check("the fix moves exactly one byte",
+          cn == 1 and [i for i in range(len(cpad)) if cpad[i] != cgot[i]] == [GI])
+    check("and it is the guard's comparison, now ==",
+          cgot[GI] == _rw.GUARD_FIXED == 0x72)
+    check("the unreachable split-screen count stays at the shipped 4",
+          cgot[CI] == _rw.CYCLE_SPLIT == 4)
+    check("it reads back as routed", _rw.cycle_reads(cgot))
+    check("running it twice changes nothing",
+          _rw.cycle_restore(cgot, True) == (cgot, 0))
+    check("it can be put back", _rw.cycle_restore(cgot, False)[0] == cpad)
+    first = bytearray(cpad)
+    first[CI] = _rw.CYCLE_SINGLE
+    fixed, fn = _rw.cycle_restore(bytes(first), True)
+    check("a disc carrying the first version is repaired to the same bytes",
+          fn == 2 and fixed == cgot)
+    check("a build without the guard is refused",
+          _raises(lambda: _rw.cycle_restore(bytes(20) + _rw.CYCLE_ANCHOR, True),
+                  _rw.WheelError))
+    check("an ambiguous build is refused",
+          _raises(lambda: _rw.cycle_restore(cpad + _rw.CYCLE_GUARD, True),
+                  _rw.WheelError))
+
     print("\n[split-screen squad]")
     from tcps2 import rsesquad, rseteam
     # A real COMMON carries both sites; the option edits both or neither.
@@ -2642,8 +2678,17 @@ def run_split_wheel(args):
                 check("%s: the cycle edit moves exactly one byte" % path[1:],
                       cn == 1 and len(cyc) == len(plain)
                       and sum(a != b for a, b in zip(plain, cyc)) == 1)
-                check("%s: to the 2 the rest of the game uses" % path[1:],
-                      cyc[cat] == rsewheel.CYCLE_SINGLE)
+                check("%s: by routing split screen into single player's arm"
+                      % path[1:],
+                      rsewheel.cycle_reads(cyc)
+                      and cyc[rsewheel.cycle_guard_find(cyc)]
+                      == rsewheel.GUARD_FIXED)
+                check("%s: leaving the now-dead count at the shipped 4"
+                      % path[1:],
+                      cyc[cat] == rsewheel.CYCLE_SPLIT)
+                check("%s: the guard is where it was measured" % path[1:],
+                      rsewheel.cycle_guard_find(plain) == 0x10889B,
+                      "found %#x" % rsewheel.cycle_guard_find(plain))
                 check("%s: and it reverses exactly" % path[1:],
                       rsewheel.cycle_restore(cyc, False)[0] == plain)
                 # the two edits must not tread on each other

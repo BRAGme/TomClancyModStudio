@@ -275,21 +275,92 @@ def cycle_find(plain: bytes) -> int:
     raise WheelError("the split-screen cycle count is not in this file")
 
 
+#: The guard at the head of CycleWeapon, and the reason the count edit above
+#: was only half a fix. The whole function reads::
+#:
+#:     0x0000: if (Level.Game != None && Level.Game.m_bIsSplitScreen)
+#:     0x0031:     SwitchWeapon((m_iCurrentWeapon + 1) % 4)
+#:     0x0054:     return
+#:     0x0057: else if (m_iCurrentWeapon > 1)
+#:     0x006b:     SwitchWeapon(0)                   ; gadget out -> primary
+#:     0x0076: else
+#:                 SwitchWeapon((m_iCurrentWeapon + 1) % 2)
+#:
+#: Single player has a branch the split-screen arm lacks: with a gadget out,
+#: a tap goes straight back to the primary. The first version of this option
+#: changed the split-screen count from 4 to 2, which copied single player's
+#: toggle but not that branch -- so from gadget slot 2, (2 + 1) % 2 is 1 and a
+#: tap handed you your PISTOL, not your rifle. Found in split-screen co-op,
+#: where player 2 had a gadget out and could not get his primary back with L1.
+#: (From slot 3 it happens to land on 0, which is why it looked fine often
+#: enough to be marked verified.)
+#:
+#: So split screen is no longer made to imitate the single-player arm; it is
+#: routed INTO it. `native119` (object `!=`) becomes `native114` (object `==`)
+#: in the first operand, the `&&` short-circuits, and the guard is false.
+#: Single player is unchanged by construction -- its guard was already false,
+#: because m_bIsSplitScreen is -- and so is online. The count in the now
+#: unreachable split-screen arm is put back to the shipped 4.
+#:
+#: Unique in all three COMMON packages, at plain 0x108897; the first twelve
+#: bytes alone already are.
+CYCLE_GUARD = bytes.fromhex(
+    "075700"                        # JumpIfNot -> 0x57, the single-player arm
+    "82"                            # native130  &&
+    "77"                            # native119  != (Object)   <-- changed
+    "19018f05000401a6"              # Level.Game
+    "2a16"                          # None, EndFunctionParms
+    "181900"                        # Skip -- the && short-circuit
+    "1919018f05000401a60600042d")   # Level.Game.m_bIsSplitScreen ...
+GUARD_OPERAND = 4
+GUARD_STOCK = 0x77      # native119, !=
+GUARD_FIXED = 0x72      # native114, ==
+
+
+def cycle_guard_find(plain: bytes) -> int:
+    """Offset of the guard's operator byte, whichever operator it holds."""
+    found = []
+    for op in (GUARD_STOCK, GUARD_FIXED):
+        probe = bytearray(CYCLE_GUARD)
+        probe[GUARD_OPERAND] = op
+        probe = bytes(probe)
+        at = plain.find(probe)
+        while at >= 0:
+            found.append(at)
+            at = plain.find(probe, at + 1)
+    if len(found) != 1:
+        raise WheelError("expected exactly 1 CycleWeapon guard, found %d -- "
+                         "refusing to guess" % len(found))
+    return found[0] + GUARD_OPERAND
+
+
 def cycle_restore(plain: bytes, enable: bool = True):
-    """Make a tap of L1 in split screen toggle two weapons, or put it back."""
-    at = cycle_find(plain)
-    want = CYCLE_SINGLE if enable else CYCLE_SPLIT
-    if plain[at] == want:
-        return plain, 0
+    """Give a tap of L1 in split screen single player's behaviour, or put it
+    back.
+
+    The guard decides the behaviour. The count is always left at the shipped
+    4 -- which also repairs a disc still carrying the first version of this
+    option, whose 2 is what handed player 2 his pistol. Returns
+    (bytes, changed); bytes move in place and the length never does.
+    """
     out = bytearray(plain)
-    out[at] = want
+    changed = 0
+    g = cycle_guard_find(plain)
+    want = GUARD_FIXED if enable else GUARD_STOCK
+    if out[g] != want:
+        out[g] = want
+        changed += 1
+    c = cycle_find(plain)
+    if out[c] != CYCLE_SPLIT:
+        out[c] = CYCLE_SPLIT
+        changed += 1
     if len(out) != len(plain):
         raise WheelError("the cycle edit changed the file length")
-    return bytes(out), 1
+    return bytes(out), changed
 
 
 def cycle_reads(plain: bytes) -> bool:
-    return plain[cycle_find(plain)] == CYCLE_SINGLE
+    return plain[cycle_guard_find(plain)] == GUARD_FIXED
 
 
 def cycle_card(prefix, group):
@@ -298,18 +369,35 @@ def cycle_card(prefix, group):
     return Setting(
         prefix + "split_cycle", "Tapping L1 switches weapons, not gadgets",
         BOOL, False, group, confidence="verified", touches="data",
-        help="In single player a tap of L1 toggles your primary and secondary; "
-             "in split screen the same tap walks the whole inventory, gadgets "
-             "included. The game passes a different count down the two arms of "
-             "one function -- four in split screen, two otherwise. This gives "
-             "split screen the same two the rest of the game uses, which is "
-             "what you want once the wheel is back: hold for a gadget, tap to "
-             "get your rifle up.",
-        caution="Watched working in split screen on Oil Refinery: a tap of L1 "
-                "switches between primary and secondary instead of cycling "
-                "gadgets.\n\nWithout the wheel restored as well, this "
-                "would leave no quick way to reach a gadget at all -- so turn "
-                "the wheel option on with it.",
+        help="In single player a tap of L1 toggles your primary and secondary, "
+             "and with a gadget out it takes you straight back to your "
+             "primary. In split screen the same tap walks the whole inventory, "
+             "gadgets included. This sends split screen through single "
+             "player's own code for the tap, so it does exactly what the rest "
+             "of the game does: hold for a gadget, tap to get your rifle up.",
+        caution="One byte. CycleWeapon tests `Level.Game != None && "
+                "m_bIsSplitScreen` to choose its split-screen arm; flipping "
+                "the `!=` to `==` makes that test false, so split screen "
+                "takes the single-player arm instead. Single player cannot "
+                "change -- its test was already false.\n\n"
+                "The first version of this option got it half right. It "
+                "changed the split-screen arm's count from 4 to 2, which "
+                "copied single player's rifle/pistol toggle but not the "
+                "branch that sends you back to your primary from a gadget. "
+                "From gadget slot 2 that arithmetic lands on 1, so a tap "
+                "handed you your pistol. Player 2 found it in co-op, with a "
+                "gadget out and no way to get his rifle back with L1. This "
+                "version puts that count back to the shipped 4 -- nothing "
+                "reaches it any more -- which also repairs a disc still "
+                "carrying the old edit.\n\n"
+                "Both halves are play-tested. The rifle/pistol toggle was "
+                "watched working on Oil Refinery, and the gadget-to-primary "
+                "branch in split-screen co-op, including the case that "
+                "exposed the bug: a grenade out with the M203 secondary "
+                "empty, where a tap now goes straight to the rifle.\n\n"
+                "Without the wheel restored as well, this would leave no "
+                "quick way to reach a gadget at all -- so turn the wheel "
+                "option on with it.",
         requires={prefix + "split_wheel": [True]})
 
 
