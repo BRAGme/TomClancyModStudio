@@ -119,9 +119,8 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_rescue_team", "Build the two AI operatives",
-        BOOL, False, group, confidence="broken", touches="data",
-        enabled=False,
-        disabled_reason="Tested twice on hardware and withdrawn. Version one unlocked the rescue arm and hung on every map but Trieste. Version two also pointed both spawns at m_CoverSpots[0], the spot the game itself null-checks and single player trusts everywhere -- and Island wedged identically, off=0x540000 len=0x4680, the same frozen re-read of the level .LIN's final chunk. So the spawn point is NOT the cause either. That is the fourth explanation this wedge has survived. Refuted by measurement, in order: the bytecode edits (this is two bytes with no re-assembly), the operative class load (Trieste builds the same operatives and runs), the gametype (Practice hangs too), and now the spawn point. Six separate edits reproduce it and Trieste is the sole exception. What it is worth keeping for: the wedge now has a switchable trigger. Yesterday it could only be reached through a frozen savestate. Anyone picking this up can turn it on and off in four bytes, which is the right position from which to attack it with a debugger.",
+        BOOL, False, group, confidence="untested", touches="data",
+        caution='EXPERIMENTAL, third attempt, and paired with the streaming-budget option -- turn BOTH on. Attempt one unlocked the rescue arm and hung off Trieste. Attempt two also pointed both spawns at m_CoverSpots[0], the spot the game null-checks and single player trusts everywhere, and Island wedged identically. So the spawn point is not the cause either. Four explanations are now refuted by measurement: the bytecode edits (this is four bytes with no re-assembly), the operative class load (Trieste builds the same operatives and runs), the gametype (Practice hangs too) and the spawn point. All four were about the TEAM. The wedge is not a crash -- it is the console frozen re-reading the last chunk of the level file -- so the untested lever is the STREAMING, which is what the budget option is for.',
         help="Split screen builds a two-man team and stops. The engine can "
              "build AI Rainbow operatives in split screen -- Trieste proves "
              "it on the retail disc -- but the code that does it is behind a "
@@ -213,3 +212,38 @@ def spots_apply(plain: bytes, enable: bool = True):
     if len(out) != len(plain):
         raise TeamError("the spawn-point edit changed the file length")
     return bytes(out), changed
+
+
+# ---------------------------------------------------------------------------
+# the streaming budget, the one per-mode number in the overlay
+# ---------------------------------------------------------------------------
+
+#: `0x00472160` reads, in full::
+#:
+#:     lw    $a0, 0x8fb0($gp)     ; g_bSplitScreen
+#:     addiu $v0, $zero, 3
+#:     addiu $v1, $zero, 6
+#:     jr    $ra
+#:     movz  $v0, $v1, $a0        ; delay slot: split ? 3 : 6
+#:
+#: Split screen runs on HALF the streaming slots single player gets, and this
+#: is the only number in the overlay that differs by mode. One caller, at
+#: `0x004ca264`.
+#:
+#: Replacing the `movz` with `daddu $v0, $v1, $zero` returns 6 always. It
+#: sits in the `jr` delay slot, which is safe: the replacement is another
+#: non-branch instruction and the register it writes is the return value.
+BUDGET = 0x00472170
+BUDGET_STOCK = 0x0064100A       # movz  $v0, $v1, $a0
+BUDGET_SIX = 0x0060102D         # daddu $v0, $v1, $zero
+
+
+def budget_card(prefix, group):
+    from .model import BOOL, Setting
+
+    return Setting(
+        prefix + "split_stream_budget",
+        "Give split screen the full streaming budget", BOOL, False, group,
+        confidence="untested", touches="code",
+        help='Split screen runs on three streaming slots where single player gets six, and that is the only number in the whole game that differs by mode. This gives both modes six.',
+        caution="EXPERIMENTAL, and aimed at one specific thing: the load wedge that has defeated six different teammate edits. That wedge is not a crash and not a null dereference -- it is the console frozen re-reading the last chunk of the level file at off=0x540000 len=0x4680, which is exactly what a starved streaming budget plus one extra request during level init would look like. Every explanation refuted so far was about the TEAM -- the bytecode edits, the operative class load, the gametype, the spawn point. None was about the streaming.\n\nOne word, in a jr delay slot, replacing one non-branch instruction with another. Single player already returns 6, so it is a no-op there by construction.\n\nIt raises split screen's streaming memory and bandwidth to what single player already uses. If audio drops out or levels stutter, this is the first thing to turn off.")

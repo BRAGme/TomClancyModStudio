@@ -255,6 +255,7 @@ HUD_STOCK = {
     0x00439304: 0x00000000,
 }
 STOCK.update(HUD_STOCK)
+STOCK[rseteam.BUDGET] = rseteam.BUDGET_STOCK
 
 BODY_TIMERS = {
     "stock": None,
@@ -840,6 +841,7 @@ def _build_settings():
         rseviewmodel.turn_card("", "Split Screen"),
         rsefov.card("", "Split Screen"),
         rseteam.card("", "Split Screen"),
+        rseteam.budget_card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -1021,6 +1023,9 @@ def build_edits(v: dict) -> list:
             w(va, value, note)
         for va, value, _stock, note in rsewheel.owner_words(freed=True):
             w(va, value, note)
+    if v.get("split_stream_budget"):
+        w(rseteam.BUDGET, rseteam.BUDGET_SIX,
+          "split screen: full streaming budget, 6 slots not 3")
     if v.get("split_shadows"):
         w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
           "split screen: let the shadow pass run")
