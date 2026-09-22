@@ -512,8 +512,29 @@ def write_pnach(path, profile, words, crc) -> str:
     return path
 
 
+def _pcsx2_last_used(cheat_dir) -> float:
+    """When the PCSX2 that owns this cheat folder was last run.
+
+    The install actually being launched rewrites its `inis/PCSX2.ini`, so that
+    timestamp ranks installs by use. This is not cosmetic. Without it the
+    order was whatever `os.listdir` happened to return, the save dialog
+    offered a long-unused build first, and the cheat file landed in an
+    emulator the user was not playing on. Wave mode is the option that turns
+    that into a bug report: its map-wide spawn picker is a code cave carried
+    ONLY in the cheat file, so a disc patched for waves without it asks a
+    stock picker for far more spawns than a zone can serve.
+    """
+    root = os.path.dirname(cheat_dir)
+    for path in (os.path.join(root, "inis", "PCSX2.ini"), cheat_dir):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            continue
+    return 0.0
+
+
 def find_pcsx2_cheat_dirs() -> list:
-    """Plausible PCSX2 cheat folders on this machine, best guess first."""
+    """PCSX2 cheat folders on this machine, most recently used first."""
     out, seen = [], set()
 
     def add(p):
@@ -533,4 +554,4 @@ def find_pcsx2_cheat_dirs() -> list:
                     add(os.path.join(base, name, "cheats"))
         except OSError:
             pass
-    return out
+    return sorted(out, key=_pcsx2_last_used, reverse=True)
