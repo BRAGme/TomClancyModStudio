@@ -356,28 +356,46 @@ def cycle_card(prefix, group):
 #: `mul.s $f0, $f0, $f21` -- fmt 16 (single), ft $f21, fs $f0, fd $f0, funct 2
 MUL_F0_BY_F21 = 0x46150002
 JR_RA = 0x03E00008
+NOP = 0x00000000
 
-#: (hookSite, the `addiu $a2, $sp, BLOCK` it replaces)
-LABEL_HOOKS = (
-    (0x004388A8, 0x27A62990),      # top label
-    (0x00438C28, 0x27A629B0),      # right label
-    (0x00438FA4, 0x27A629D0),      # bottom label
-    (0x00439320, 0x27A629F0),      # left label
-)
+#: Where each label's vertical position is FINISHED, and the free `nop`
+#: immediately before it.
+#:
+#: The first version of this hooked `addiu $a2, $sp, BLOCK` at 0x004388a8 and
+#: friends, on the reading that the Y is "computed into $f0 just before each
+#: call". It is, and it is also SPILLED before then:
+#:
+#:     0043888c  nop
+#:     00438890  add.s $f0, $f0, $f1        ; the Y
+#:     00438894  jal   00184170
+#:     00438898  swc1  $f0, 0x29a4($sp)     ; the Y goes to the stack HERE
+#:     004388a8  addiu $a2, $sp, 0x2990     ; the old hook -- far too late
+#:
+#: so scaling $f0 at the old site scaled a register the draw had stopped
+#: reading. That is why the cave was live on hardware and the labels still
+#: spilled into the other player's half.
+#:
+#: The spill cannot be hooked either: it sits in the delay slot of the `jal`
+#: above it, and a jump in a delay slot is undefined on the R5900.
+#:
+#: The `nop` before the add.s can. `jal` there puts the add.s in ITS delay
+#: slot, so the Y is computed first, the cave scales it, and the spill that
+#: follows stores the scaled value. $ra is free to clobber: the very next
+#: instruction is a `jal`, which sets it again.
+LABEL_HOOKS = (0x0043888C, 0x00438C0C, 0x00438F88, 0x00439304)
+
+#: what the game ships at each -- a real nop, checked, and nothing in the
+#: image branches to any of them or to the add.s behind them
+LABEL_STOCK = NOP
 
 
 def label_words(freed=True):
     """[(va, word, stockWord, note)] for scaling the four labels.
 
-    Each hook is one word, so each needs three of its own in the cave: the
-    multiply, the return, and the instruction it displaced sitting in the
-    return's delay slot. The four cannot share a cave because each carries a
-    different stack block.
-
-    `$ra` is free to clobber here. `jal` sets it to hook+8, the cave returns
-    there, and the instruction waiting at hook+8 is `jalr $ra, $t9`, which
-    overwrites it before anything reads it. The delay slot at hook+4 is
-    `lw $t9, 0x18($t9)` -- a load, so nothing branches inside a delay slot.
+    One cave serves all four, because hooking the nop makes the body the
+    same everywhere: scale $f0, return. $f21 is the viewport scale the ring
+    already uses, set by `div.s $f21, $f1, $f0` at 0x0043807c; it is
+    callee-saved and nothing rewrites it before any hook.
 
     `freed` carries the caller's confirmation that the dead path's entry
     branch is gone; see `rsedeadpath`.
@@ -385,13 +403,14 @@ def label_words(freed=True):
     from . import rsedeadpath
 
     out = []
-    for i, (site, original) in enumerate(LABEL_HOOKS):
-        cave = rsedeadpath.claim("wheel_label_%d" % i, freed)
-        for k, word in enumerate((MUL_F0_BY_F21, JR_RA, original)):
-            va = cave + k * 4
-            out.append((va, word, rsedeadpath.stock(va),
-                        "wheel labels: cave for label %d" % (i + 1)))
-        out.append((site, 0x0C000000 | ((cave >> 2) & 0x03FFFFFF), original,
+    cave = rsedeadpath.claim("wheel_label", freed)
+    for k, word in enumerate((MUL_F0_BY_F21, JR_RA, NOP)):
+        va = cave + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel labels: scale the label Y by the viewport"))
+    jal = 0x0C000000 | ((cave >> 2) & 0x03FFFFFF)
+    for i, site in enumerate(LABEL_HOOKS):
+        out.append((site, jal, LABEL_STOCK,
                     "wheel labels: hook label %d" % (i + 1)))
     return out
 
@@ -402,17 +421,5 @@ def label_card(prefix, group):
     return Setting(
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
-        confidence="broken", touches="words",
-        enabled=False,
-        disabled_reason="Measured on hardware and it does not work, for a reason the card had wrong rather than a delivery problem. The cave is live -- a savestate shows all four hooks holding their jal and the cave holding its code -- so the multiply really does run. What is wrong is the factor. This scaled the label Y by $f21, on the reading that $f21 is SizeY/480 and that SizeY is the viewport's 224. It is not: the canvas handed to the draw is the whole FRAMEBUFFER, measured 640x448 in split screen, so $f21 is 448/480 and the labels move up by 7 per cent. That also explains the ring, which the card claimed already scaled -- it does not either, and it spans both halves. So the wheel needs what the scope needed: the draw pointed at the viewport rect at G+0x40a00 instead of the framebuffer, ring and labels together, not a factor applied to the labels alone. The dead-path cave it would use is proven -- the scope fit rides it and works.",
-        help="With the wheel restored, its ring scales to your half of the "
-             "screen but the four item names do not -- they stay where a "
-             "full-height screen would put them, so the lower ones spill into "
-             "the other player's view. This scales them the same way the ring "
-             "is already scaled.",
-        caution="This one goes in the CHEAT FILE, not onto the disc. It needs "
-                "a few instructions of its own, and the only memory free for "
-                "them is not preserved across a level load -- a cheat file "
-                "rewrites it every frame, which is what makes it hold. Not "
-                "play-tested.",
+        confidence="untested", touches="words",
         requires={prefix + "split_wheel": [True]})

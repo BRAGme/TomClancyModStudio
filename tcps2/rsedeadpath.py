@@ -85,10 +85,12 @@ FREE_BRANCH = 0x14A001BA
 #: hand-picked cave address invites.
 SLOTS = {
     "scope_height": (0, 4),        # lui / addu / jr / lw
-    "wheel_label_0": (4, 3),       # mul.s / jr / addiu
-    "wheel_label_1": (7, 3),
-    "wheel_label_2": (10, 3),
-    "wheel_label_3": (13, 3),
+    # One slot, not four. The first design hooked the instruction that built
+    # the draw's argument, which is a different word per label, so each label
+    # needed its own cave to put its own word back. Hooking the nop before
+    # the add.s instead means the cave body is identical for all four --
+    # scale f0, return -- so they share it.
+    "wheel_label": (4, 3),         # mul.s / jr / nop
 }
 
 
