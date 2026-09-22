@@ -896,11 +896,7 @@ def _build_settings():
         rsecanon.card("", "Split Screen"),
         Setting("teammates", "AI teammates in split screen", BOOL, False,
                 "Split Screen", enabled=False, confidence="broken",
-                disabled_reason=(
-                    "Not shipped: four separate attempts all hang the level "
-                    "load, and the four hang states are byte-identical, so the "
-                    "cause is upstream of every edit tried. Re-enabling the "
-                    "script call is provably not sufficient."),
+                disabled_reason="Not shipped: four separate attempts all hang the level load, and the four hang states are byte-identical, so the cause is upstream of every edit tried. Re-enabling the script call is provably not sufficient. BUT the leading explanation is now DEAD. Split-screen Practice Mode on Trieste -- the only one of 96 map INIs with m_brescureRainbow, and gametype 11 so the ==10 RemoveMember pair never fires -- runs CreatePlayerTeam's rescue arm on the RETAIL disc with no patch at all. Measured in a savestate taken there: level Trieste_a_ss, EE in game code rather than the kernel, viewport index 2, and R6RainbowLoiselle, R6RainbowWeber and R6RainbowAI all resident -- every one of which is ABSENT in a normal split-screen load. So the engine CAN create AI Rainbow operatives in split screen. Whatever wedges the four attempts it is not the operative class load, and it is not a per-player AI pool. The next question is what those four did that Trieste does not.",
                 help="Split screen deliberately builds a one-man team."),
 
         # ---- world ------------------------------------------------------
