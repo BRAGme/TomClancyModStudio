@@ -305,7 +305,8 @@ def viewport_card(prefix, group):
 
     return Setting(
         prefix + "split_scope_fit", "Fit the scope overlay to your half",
-        BOOL, False, group, confidence="untested", touches="words",
+        BOOL, False, group, confidence="broken", touches="cheat",
+        enabled=False, disabled_reason='Same cause as the wheel labels, and the same fix pending: the cave lives in memory the game zeroes, so the hooks jal into nothing. The scope itself still works -- this is only the option that fits the overlay to your half.',
         help="With the overlay switched back on it draws at full-screen size "
              "and once per player, because it takes its dimensions from the "
              "whole framebuffer and never looks at the viewport. This points "

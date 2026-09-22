@@ -397,7 +397,8 @@ def label_card(prefix, group):
     return Setting(
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
-        confidence="untested", touches="words",
+        confidence="broken", touches="cheat",
+        enabled=False, disabled_reason="Its cave is carried in a cheat file, and that is what breaks it. A mode-1 pnach rewrites the cave every frame while the game ZEROES that memory between writes, so there is a window in every frame where the hook exists and the cave does not -- the hook then jal's into a run of nops and the EE runs off into garbage. Caught on a savestate: the hooks were live at 0x004388a8 with the cave at 0x005ba0b8 reading all zeroes, and the EE was parked in the kernel exception handler at 0x8001046c. Writing the cave to the DISC instead does not help -- the same savestate shows it zeroed there too, which is what the module always said and what a commit in this repo briefly got wrong.\n\nThe fix is a cave in memory the game preserves, and there is one: the scope draw's dead path at 0x0019b15c. It is real overlay code, so it survives, and the scope guard removed its only entry.",
         help="With the wheel restored, its ring scales to your half of the "
              "screen but the four item names do not -- they stay where a "
              "full-height screen would put them, so the lower ones spill into "
