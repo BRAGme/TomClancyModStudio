@@ -305,7 +305,7 @@ def viewport_card(prefix, group):
 
     return Setting(
         prefix + "split_scope_fit", "Fit the scope overlay to your half",
-        BOOL, False, group, confidence="untested", touches="cheat",
+        BOOL, False, group, confidence="untested", touches="words",
         help="With the overlay switched back on it draws at full-screen size "
              "and once per player, because it takes its dimensions from the "
              "whole framebuffer and never looks at the viewport. This points "

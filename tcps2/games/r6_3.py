@@ -91,6 +91,72 @@ RESEARCH_LEFTOVERS = dict(
 )
 STOCK.update(RESEARCH_LEFTOVERS)
 
+#: Every address the two split-screen HUD caves touch. They used to be
+#: cheat-file words, which never went through STOCK at all; on the disc
+#: each one is asserted before it is written, like every other patch
+#: site. The cave words are stock 0 because that is what the overlay
+#: ships there -- 116 bytes inside a 319-byte run of zeroes.
+HUD_CAVE_STOCK = {
+    0x0019AF34: 0x8E0207C4,   # scope: hook the width read at 0x19af34
+    0x0019AF38: 0x04410003,   # scope: retire the framebuffer halving at 0x19af34
+    0x0019AF3C: 0x00023843,   # scope: retire the framebuffer halving at 0x19af34
+    0x0019AF40: 0x24420001,   # scope: retire the framebuffer halving at 0x19af34
+    0x0019AF44: 0x00023843,   # scope: retire the framebuffer halving at 0x19af34
+    0x0019AF48: 0x8E0807C8,   # scope: hook the height read at 0x19af48
+    0x0019AF68: 0x8E0207C4,   # scope: hook the width read at 0x19af68
+    0x0019AF6C: 0x04410003,   # scope: retire the framebuffer halving at 0x19af68
+    0x0019AF70: 0x0002B043,   # scope: retire the framebuffer halving at 0x19af68
+    0x0019AF74: 0x24420001,   # scope: retire the framebuffer halving at 0x19af68
+    0x0019AF78: 0x0002B043,   # scope: retire the framebuffer halving at 0x19af68
+    0x0019AFD0: 0x8E0807C8,   # scope: hook the height read at 0x19afd0
+    0x0019B0A8: 0x8E0207C4,   # scope: hook the width read at 0x19b0a8
+    0x0019B0AC: 0x04410003,   # scope: retire the framebuffer halving at 0x19b0a8
+    0x0019B0B0: 0x00023843,   # scope: retire the framebuffer halving at 0x19b0a8
+    0x0019B0B4: 0x24420001,   # scope: retire the framebuffer halving at 0x19b0a8
+    0x0019B0B8: 0x00023843,   # scope: retire the framebuffer halving at 0x19b0a8
+    0x0019B0BC: 0x8E0807C8,   # scope: hook the height read at 0x19b0bc
+    0x0019B0DC: 0x8E0207C4,   # scope: hook the width read at 0x19b0dc
+    0x0019B0E0: 0x04410003,   # scope: retire the framebuffer halving at 0x19b0dc
+    0x0019B0E4: 0x0002B043,   # scope: retire the framebuffer halving at 0x19b0dc
+    0x0019B0E8: 0x24420001,   # scope: retire the framebuffer halving at 0x19b0dc
+    0x0019B0EC: 0x0002B043,   # scope: retire the framebuffer halving at 0x19b0dc
+    0x0019B144: 0x8E0807C8,   # scope: hook the height read at 0x19b144
+    0x004388A8: 0x27A62990,   # wheel labels: hook label 1
+    0x00438C28: 0x27A629B0,   # wheel labels: hook label 2
+    0x00438FA4: 0x27A629D0,   # wheel labels: hook label 3
+    0x00439320: 0x27A629F0,   # wheel labels: hook label 4
+    0x005BA0B8: 0x00000000,   # wheel labels: scale label 1 by the viewport
+    0x005BA0BC: 0x00000000,   # wheel labels: return
+    0x005BA0C0: 0x00000000,   # wheel labels: the instruction the hook replaced
+    0x005BA0C4: 0x00000000,   # wheel labels: scale label 2 by the viewport
+    0x005BA0C8: 0x00000000,   # wheel labels: return
+    0x005BA0CC: 0x00000000,   # wheel labels: the instruction the hook replaced
+    0x005BA0D0: 0x00000000,   # wheel labels: scale label 3 by the viewport
+    0x005BA0D4: 0x00000000,   # wheel labels: return
+    0x005BA0D8: 0x00000000,   # wheel labels: the instruction the hook replaced
+    0x005BA0DC: 0x00000000,   # wheel labels: scale label 4 by the viewport
+    0x005BA0E0: 0x00000000,   # wheel labels: return
+    0x005BA0E4: 0x00000000,   # wheel labels: the instruction the hook replaced
+    0x005BA0E8: 0x00000000,   # scope: viewport width, halved into r7
+    0x005BA0EC: 0x00000000,   # scope: viewport width, halved into r7
+    0x005BA0F0: 0x00000000,   # scope: viewport width, halved into r7
+    0x005BA0F4: 0x00000000,   # scope: viewport width, halved into r7
+    0x005BA0F8: 0x00000000,   # scope: viewport width, halved into r7
+    0x005BA0FC: 0x00000000,   # scope: viewport width, halved into r7
+    0x005BA100: 0x00000000,   # scope: viewport width, halved into r22
+    0x005BA104: 0x00000000,   # scope: viewport width, halved into r22
+    0x005BA108: 0x00000000,   # scope: viewport width, halved into r22
+    0x005BA10C: 0x00000000,   # scope: viewport width, halved into r22
+    0x005BA110: 0x00000000,   # scope: viewport width, halved into r22
+    0x005BA114: 0x00000000,   # scope: viewport width, halved into r22
+    0x005BA118: 0x00000000,   # scope: viewport height
+    0x005BA11C: 0x00000000,   # scope: viewport height
+    0x005BA120: 0x00000000,   # scope: viewport height
+    0x005BA124: 0x00000000,   # scope: viewport height
+    0x005BA128: 0x00000000,   # scope: viewport height
+}
+STOCK.update(HUD_CAVE_STOCK)
+
 BODY_TIMERS = {
     "stock": None,
     "15": 0x3C034170,     # lui v1, 0x4170 = 15.0f
@@ -830,6 +896,12 @@ def build_edits(v: dict) -> list:
         for va, value in rsescope.SCOPE_GUARD:
             w(va, value, "split screen: let the scope overlay draw, but only "
                          "once the renderer exists")
+        if v.get("split_scope_fit"):
+            for va, value, _stock, note in rsescope.viewport_words():
+                w(va, value, note)
+    if v.get("split_wheel_labels") and v.get("split_wheel"):
+        for va, value, _stock, note in rsewheel.label_words():
+            w(va, value, note)
     if v.get("split_shadows"):
         w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
           "split screen: let the shadow pass run")
@@ -1068,19 +1140,11 @@ def build_pnach(v: dict) -> list:
                             "map-wide spawn points: hijack the point picker"))
         out += [WordEdit(va, word, 0, "map-wide spawn points: cave")
                 for va, word in CAVE_WORDS]
-    if v.get("split_scope_fit") and v.get("split_scope"):
-        # Gated on the disc edit as well as its own tick. `requires` only
-        # greys the widget out; the stored value survives, and a pnach is
-        # re-applied every frame -- so without this an untick left eight
-        # hooks writing themselves into the scope draw forever.
-        # Its own cave, clear of both the spawn-point one and the wheel
-        # labels', so any combination of the three can be on at once.
-        out += [WordEdit(va, word, stock, note)
-                for va, word, stock, note in rsescope.viewport_words()]
-    if v.get("split_wheel_labels"):
-        # Its own cave, well clear of the spawn-point one, so both can be on.
-        out += [WordEdit(va, word, stock, note)
-                for va, word, stock, note in rsewheel.label_words()]
+    # The two split-screen HUD caves used to be emitted here. They are
+    # disc words now: a mode-1 pnach rewrites its words every frame, and
+    # doing that to overlay code while a level is streaming collapsed the
+    # emulator to 3% speed and asserted FQC = 0 on VIF FIFO READ. The
+    # region they live in ships inside SP.SOZ, so the disc holds them.
     return out
 
 

@@ -397,7 +397,7 @@ def label_card(prefix, group):
     return Setting(
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
-        confidence="untested", touches="cheat",
+        confidence="untested", touches="words",
         help="With the wheel restored, its ring scales to your half of the "
              "screen but the four item names do not -- they stay where a "
              "full-height screen would put them, so the lower ones spill into "
