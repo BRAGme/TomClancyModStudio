@@ -113,10 +113,61 @@ class Package:
 def tables(data, base):
     """(names, imports, exports) for one package, found by walking not seeking.
 
-    The summary's `importOffset` and `exportOffset` are relaid by the PS2
-    cooker and point into float data. The tables are still there, though --
-    immediately after the name table, in that order -- so walking the names to
-    their end lands on the imports, and the imports on the exports. Checked on
+    Walking is still the right way to reach the tables here, but the reason
+    this docstring used to give was WRONG and is corrected below, because it
+    sent several days of work down blind alleys.
+
+    It claimed the summary's `importOffset` and `exportOffset` were "relaid by
+    the PS2 cooker and point into float data". They are not relaid. They are
+    exact -- in the coordinates of the ORIGINAL `.u` file, which is not what a
+    LIN blob contains.
+
+    A package inside a LIN is a **two-range gather** of that original file:
+    `[0, nameTableEnd)` immediately followed by `[importOffset, size)`. The
+    export serial data, which is the whole middle of the file, is stored in
+    separate slack regions elsewhere in the container. So seeking to
+    `importOffset` inside the blob lands nowhere useful, while the value
+    itself is perfectly good.
+
+    Measured across 336 packages in three containers, with no exceptions:
+
+    * `exports[0].SerialOffset == nameTableEnd`
+    * `max(SerialOffset + SerialSize) == summary.importOffset`
+    * `summary.exportOffset - summary.importOffset == walked import length`
+    * `blobLen == nameTableEnd + (directorySize - summary.importOffset)`
+
+    That last one is what makes walking work: the imports follow the names in
+    the blob even though they do not in the file.
+
+    What those offsets are NOT is a thing the runtime uses. An earlier version
+    of this note said they formed a "closed system" the loader seeks by, and
+    that growing a package desynchronises it. That is also wrong, and it was
+    wrong in a more interesting way.
+
+    **The loader cannot seek at all.** Traced in `SP.SOZ`:
+
+    * `FLinFileReader::Seek` at `0x001d3ab0` is three instructions and a call
+      to `GError->Logf` with `"Can't seek compressed file"` at `0x005dc070`.
+    * `ReaderLoadLinear::Seek` at `0x001cfee0` ends `sw $a0, 0x48($v1)` --
+      it records a number and performs no I/O.
+    * `FUmdFileReader::Seek` at `0x001d3f60` stores `Pos` at `+0x4c`, adds
+      `entry.offset` to it, and forwards to one of the two above.
+
+    So every `ULinkerLoad::Seek` is a write to a field. A `.LIN` is not a
+    packed file system at all -- it is a **recording of one boot's read
+    stream**, replayed in order, and the reason walking the tables works is
+    simply that the imports are the next thing that boot read after the names.
+    The 900-entry directory's `size` is the ORIGINAL uncooked file length
+    (2,591,884 for `R6Engine.u`, against a 270,046-byte blob) and reaches
+    nothing but `TotalSize()`, which `ULinkerLoad`'s constructor never calls.
+
+    The consequence for editing is sharper than a length rule. Byte counts are
+    not the constraint: a grown package still lands on the next package's
+    magic exactly, measured both ways. What breaks a replay is asking for
+    something the recording does not contain. Three new imports are three
+    object references that boot never resolved, so the engine issues reads the
+    stream cannot answer and the cursor desynchronises for good -- which is
+    the hang on the initial load screen. See `rsefragwarn.py`. Checked on
     Shipyard A: 309 imports and 3145 exports parse with no out-of-range index,
     and the export table ends exactly where the next package's signature
     begins.

@@ -145,6 +145,26 @@ def _op_frag_warning(plain, params):
     return rsefragwarn.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_switch_rate(plain, params):
+    from . import rseswitch
+    return rseswitch.apply(plain, int(params.get("percent", rseswitch.STOCK)))
+
+
+def _op_squad(plain, params):
+    from . import rsesquad
+    return rsesquad.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_muzzle(plain, params):
+    from . import rsemuzzle
+    return rsemuzzle.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_rescue_flag(plain, params):
+    from . import rserescue
+    return rserescue.apply(plain, bool(params.get("enable", True)))
+
+
 def _op_split_rescue_team(plain, params):
     from . import rseteam
     return rseteam.apply(plain, bool(params.get("enable", True)))
@@ -233,6 +253,10 @@ OPS = {
     "ai_cover": _op_ai_cover,
     "fov": _op_fov,
     "split_rescue_team": _op_split_rescue_team,
+    "switch_rate": _op_switch_rate,
+    "squad": _op_squad,
+    "muzzle": _op_muzzle,
+    "rescue_flag": _op_rescue_flag,
     "frag_warning": _op_frag_warning,
     "ss_man_down": _op_ss_man_down,
     "ss_chatter": _op_ss_chatter,
@@ -518,6 +542,12 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
     """
     arcs = _archives(iso, profile)
     pending = {}          # (arcName, path) -> (arc, entry, plainBytes)
+    #: (arcName, path) -> container kind, taken from the STORED original
+    #: at the moment it is first unpacked. The length guard below used to
+    #: re-derive this from the live disc, which is a different byte source
+    #: on an already-patched disc and could therefore classify the same
+    #: entry differently from the bytes the edit actually ran on.
+    kinds = {}
     counts = {}
     scopes = {}
 
@@ -548,6 +578,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                 slot = (arc_name, ent.path)
                 if slot in pending:
                     _a, _e, plain = pending[slot]
+                    kind = kinds[slot]
                 else:
                     original = arc.read_entry(ent)
                     store.remember(arc_name, ent.path, original, ent.offset)
@@ -561,7 +592,8 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                     # restore.
                     stored = store.original(arc_name, ent.path)
                     base = stored[0] if stored else original
-                    _kind, plain = _unpack(base, ent.path)
+                    kind, plain = _unpack(base, ent.path)
+                    kinds[slot] = kind
                 if len(plain) >= _CHATTY_BYTES:
                     say("  editing %s" % ent.path)
                 beat(len(pending) + 1)
@@ -571,21 +603,48 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                     new, n = op(plain, edit.params, container)
                 else:
                     new, n = op(plain, edit.params)
-                # An rselzo chunk chain has fixed boundaries and really is
-                # corrupted by a size change. A LIN is not: its packages sit
-                # back to back, nothing records their offsets, and the loader
-                # walks them -- so one can grow, which `_repack` handles by
-                # rebuilding the chain through `lin.rebuild`. This guard used
-                # to reject every container alike, which made `frag_warning`
-                # impossible: it adds three names and three imports, so it
-                # always changes the length, so it always threw. A plain-text
-                # INI has never been restricted, because the archive writer
-                # relocates it.
-                kind, _ = _unpack(arc.read_entry(ent), ent.path)
-                if len(new) != len(plain) and kind not in ("plain", "lin"):
+                # Only plain text may change length. The archive writer
+                # relocates a plain file, and INI edits have shipped that way
+                # for a long time.
+                #
+                # A LIN may NOT -- and this is a PROXY rule, which is worth
+                # being honest about because the real one cannot be checked
+                # mechanically.
+                #
+                # `frag_warning` grew the package at 0x086a7f by three names
+                # and three imports, COMMON_SS.LIN went 5,094,061 -> 5,094,168,
+                # the container still fitted its slot, and the game then would
+                # not boot at all. The length was not what broke it: a LIN is a
+                # RECORDING of one boot's read stream (every Seek under
+                # ULinkerLoad is discarded -- FLinFileReader::Seek at
+                # 0x001d3ab0 literally logs "Can't seek compressed file"), and
+                # the grown stream still lands on the next package's magic
+                # exactly, measured both ways.
+                #
+                # What broke it is that three NEW imports are three object
+                # references that boot never resolved, so the engine asks the
+                # recording for reads it cannot answer and the cursor
+                # desynchronises permanently.
+                #
+                # That is the real rule: do not change WHICH objects load, or
+                # in what order. It is not testable from here. A length change
+                # in a cooked container is the one mechanical symptom of it
+                # that we can catch, so it is refused rather than discovered on
+                # the console. A length-preserving edit that introduces a new
+                # dependency would slip through this and still be fatal.
+                # A raw binary blob is reported as "plain" so the
+                # container sniffer never touches it, but that is about
+                # SNIFFING, not about being free-form text. Its layout is as
+                # fixed as any cooked container, so it is held to the same
+                # rule here.
+                raw = ent.path.upper().endswith(_RAW_SUFFIXES)
+                if len(new) != len(plain) and (kind != "plain" or raw):
                     raise DataEditError(
-                        "%s: %s changed the file length, which a %s container "
-                        "cannot survive" % (ent.path, edit.op, kind))
+                        "%s: %s changed the file length by %+d, which a %s "
+                        "container is not allowed to do -- see the note in "
+                        "dataedit.py" % (ent.path, edit.op,
+                                         len(new) - len(plain),
+                                         "raw binary" if raw else kind))
                 if n:
                     counts[edit.op] = counts.get(edit.op, 0) + n
                 pending[slot] = (arc, ent, new)

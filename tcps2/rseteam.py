@@ -119,8 +119,31 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_rescue_team", "Build the two AI operatives",
-        BOOL, False, group, confidence="untested", touches="data",
-        caution='EXPERIMENTAL, third attempt, and paired with the streaming-budget option -- turn BOTH on. Attempt one unlocked the rescue arm and hung off Trieste. Attempt two also pointed both spawns at m_CoverSpots[0], the spot the game null-checks and single player trusts everywhere, and Island wedged identically. So the spawn point is not the cause either. Four explanations are now refuted by measurement: the bytecode edits (this is four bytes with no re-assembly), the operative class load (Trieste builds the same operatives and runs), the gametype (Practice hangs too) and the spawn point. All four were about the TEAM. The wedge is not a crash -- it is the console frozen re-reading the last chunk of the level file -- so the untested lever is the STREAMING, which is what the budget option is for.',
+        BOOL, False, group, confidence="broken", touches="data",
+        enabled=False,
+        disabled_reason=(
+            "Three attempts, all wedging the level load, and the cause is now "
+            "known to be somewhere this option cannot reach.\n\n"
+            "Attempt one unlocked the rescue arm and hung off Trieste. "
+            "Attempt two also pointed both spawns at m_CoverSpots[0] -- the "
+            "spot the game null-checks and single player trusts everywhere -- "
+            "and Island wedged identically, so the spawn point was not the "
+            "cause. Attempt three was to be paired with a streaming-budget "
+            "option that has since been withdrawn: that number turned out to "
+            "be the cap on simultaneous streaming AUDIO sources, six in "
+            "single player and three in split screen, and nothing to do with "
+            "teammates.\n\n"
+            "What actually fails is the class load. The arm this unlocks "
+            "calls CreateTeamMember, which resolves each pawn with "
+            "DynamicLoadObject out of the R6Characters package, and that "
+            "lookup lands out of range -- export 93 of 84 on Island, import "
+            "567337 of 103 on Alpine Village. See `split_squad`, which routes "
+            "to the same code by a different path and fails the same way.\n\n"
+            "An earlier version of this text said the operative class load "
+            "was REFUTED as an explanation because Trieste builds the same "
+            "operatives and runs. Trieste doing so is still true and still "
+            "unexplained, but it does not refute the class load, and that "
+            "claim is withdrawn."),
         help="Split screen builds a two-man team and stops. The engine can "
              "build AI Rainbow operatives in split screen -- Trieste proves "
              "it on the retail disc -- but the code that does it is behind a "

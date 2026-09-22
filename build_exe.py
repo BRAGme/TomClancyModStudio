@@ -53,6 +53,15 @@ HIDDEN = [
     "tcps2.rsewheel", "tcps2.rserpg", "tcps2.rsesidearm", "tcps2.rsescope", "tcps2.rsedraw",
     "tcps2.rsemandown", "tcps2.uscode", "tcps2.rsecanon", "tcps2.rseshadow", "tcps2.rsekits",
     "tcps2.rsechatter",
+    # Registered explicitly rather than relied on: these reach the
+    # profile through r6_3, but dataedit imports them inside its
+    # dispatch functions, which a static scan does not follow.
+    "tcps2.rsefov", "tcps2.rseviewmodel", "tcps2.rsedeadpath",
+    "tcps2.rseteam", "tcps2.rserescue", "tcps2.rsemuzzle",
+    "tcps2.rsesquad", "tcps2.rseswitch", "tcps2.rsefragwarn",
+    "tcps2.rseaicover",
+    "tcps2.rsehost", "tcps2.nimitz_mis", "tcps2.engine",
+
     # zopfli packs the LIN chunks zlib cannot fit back into their
     # slots. Without it those chunks simply refuse every edit.
     "zopfli", "zopfli.zlib",

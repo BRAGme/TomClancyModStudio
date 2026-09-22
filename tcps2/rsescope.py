@@ -128,7 +128,7 @@ def card(prefix, group):
     from .model import BOOL, Setting
 
     return Setting(
-        prefix + "split_scope", "Draw the scope overlay in split screen",
+        prefix + "split_scope", "Scope overlay in split screen",
         BOOL, False, group, confidence="verified", touches="words",
         help="Aiming down sights in split screen gives you the bare reticule "
              "with none of the scope tube around it. The overlay is not "
@@ -153,9 +153,23 @@ def card(prefix, group):
                 "card always predicted. The draw takes its size from the "
                 "framebuffer, which stays 640x448 in split screen, and never "
                 "reads the per-viewport rectangle -- so the overlay sits off "
-                "to one side instead of around your crosshair. That is what "
-                "\"Fit the scope overlay to your half\" is for; turn it on "
-                "with this." + " Watched working in split screen on Mountain Highway: with the cave in the scope draw's dead path the overlay is sized to each half instead of the framebuffer. What it does NOT fix is the overlay appearing for both players at once -- m_bScopeVisionActive lives on the shared LevelInfo, so aiming down sights gives the other player a scope too. That is a separate defect and still open.")
+                "to one side instead of around your crosshair, and it appears "
+                "for BOTH players at once because m_bScopeVisionActive lives "
+                "on the shared LevelInfo.\n\n"
+                "Both of those are fixed here too. This was three separate "
+                "options -- drawing the overlay, fitting it to your half, and "
+                "giving it only to the player who aimed -- and they are one "
+                "now, because no combination of two of them is worth having. "
+                "Drawing it without the fit puts a full-screen tube across "
+                "both halves; fitting it without the owner gate hands the "
+                "other player a scope every time you aim.\n\n"
+                "All three are play-tested: the draw on Island Estate, the "
+                "viewport fit on Mountain Highway, and the owner gate in "
+                "split-screen co-op. Single player is unaffected, and that is "
+                "measured rather than assumed -- the viewport rectangle and "
+                "the framebuffer are the same numbers there (0, 0, 640, 448), "
+                "so the fit is a no-op, and a single-player savestate taken "
+                "from a disc carrying all three runs normally.")
 
 
 # ---------------------------------------------------------------------------

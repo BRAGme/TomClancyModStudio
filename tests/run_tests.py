@@ -1150,7 +1150,7 @@ def run(args, work):
     print("[presets]")
     # Presets are what most people will actually click, so they carry the
     # same duty of care as the cards. Nothing here was covered before.
-    from gui.presets import PRESETS
+    from gui.presets import PRESETS, HUD_ON
     bad_key, carries_broken, dropped = [], [], []
     for _pid, rows in PRESETS.items():
         pro = None
@@ -1190,45 +1190,245 @@ def run(args, work):
     r6 = [v for _pid, rows in PRESETS.items() if _pid == "r6_3_slus20883"
           for _n, v in rows]
     check("the split-screen HUD fixes reach the presets",
-          sum(1 for v in r6 if v.get("split_scope_fit")) == len(r6) - 1)
+          sum(1 for v in r6 if v.get("split_scope")) == len(r6) - 1)
     check("and Stock is the one that does not",
-          not r6[0].get("split_scope_fit"))
+          not r6[0].get("split_scope"))
+    # The split-screen preset is the one being shipped for a public release,
+    # and the claim made for it is specific: clicking it can only give you
+    # things that have been watched working on hardware. That is checked as
+    # an invariant rather than spot-checked.
+    #
+    # It is deliberately NOT applied to every preset. Eighteen entries across
+    # the GRAW, GR2 and SOAF enemy-tuning presets turn on `experimental`
+    # options, which is that area's established practice -- those presets are
+    # knobs to try, not guarantees. Widening this check to them would be
+    # changing other games' behaviour under cover of a test.
+    hud = [s2 for s2 in PROFILE.settings if HUD_ON.get(s2.key)]
+    check("the split-screen preset turns on exactly the nine proven fixes",
+          sorted(s2.key for s2 in hud) == [
+              "split_cycle", "split_draw_once", "split_muzzle",
+              "split_scope",
+              "split_sway", "split_sway_turn", "split_wheel"],
+          "%r" % (sorted(s2.key for s2 in hud),))
+    check("and every one of them is verified in game",
+          all(s2.confidence == "verified" and s2.enabled for s2 in hud),
+          "%r" % ([(s2.key, s2.confidence) for s2 in hud
+                   if s2.confidence != "verified" or not s2.enabled],))
+    check("nothing broken or retired is in it",
+          not [s2 for s2 in hud if not s2.enabled])
 
-    print("\n[dead-path cave]")
-    from tcps2 import rsedeadpath, rsescope, rsewheel
-    check("the slots do not overlap", rsedeadpath.check_layout() == 69)
-    check("a cave slot is refused while the entry branch is live",
-          _raises(lambda: rsedeadpath.claim("scope_height", False),
-                  rsedeadpath.DeadPathError))
-    from tcps2 import rseviewmodel
-    hud = (rsescope.viewport_words() + rsewheel.label_words()
-           + rsewheel.owner_words() + rsescope.owner_words()
-           + rseviewmodel.words(True))
-    addrs = [x[0] for x in hud]
-    check("no two HUD words fight over an address",
-          len(set(addrs)) == len(addrs) == 128)
-    check("every HUD word is inside the overlay",
-          all(0x00100000 <= a < 0x00653980 for a in addrs))
-    check("every HUD word declares the stock the profile holds",
-          all(STOCK.get(a) == st for a, _w, st, _n in hud))
-    # Freeing the dead path is not optional. With the scope option off, an
-    # option that needs the cave has to retire the branch itself, or split
-    # screen jumps straight into what is now cave code.
-    lab = dict(PROFILE.defaults(), split_wheel=True, split_wheel_labels=True)
-    ent = [e for e in PROFILE.build_edits(lab) if e.va == rsedeadpath.ENTRY]
-    check("labels alone retire the branch into the dead path", len(ent) == 1)
-    check("and do it without changing what split screen does",
-          ent and ent[0].value == rsedeadpath.FREE_BRANCH)
-    both = dict(PROFILE.defaults(), split_scope=True, split_scope_fit=True)
-    ent2 = [e for e in PROFILE.build_edits(both) if e.va == rsedeadpath.ENTRY]
-    check("the scope guard frees it instead when the scope is on",
-          ent2 and ent2[0].value == rsescope.SCOPE_GUARD[0][1])
-    check("nothing on this disc needs a cheat file for the HUD",
-          not PROFILE.build_pnach(dict(PROFILE.defaults(),
-                                       split_scope=True, split_scope_fit=True,
-                                       split_wheel=True,
-                                       split_wheel_labels=True)))
+    print("\n[length-changing edits are refused]")
+    # frag_warning grew a cooked package by 107 bytes, the container still
+    # fitted its slot, and the game then would not boot at all -- it hung on
+    # the initial load screen before any level. The file growing and the
+    # engine tolerating it are different claims. This is the guard that keeps
+    # the difference from being discovered on the console again.
+    from tcps2 import dataedit, rsefragwarn
+    fw = PROFILE.setting("frag_warning")
+    check("frag_warning is retired, not merely defaulted off",
+          fw is not None and not fw.enabled and fw.confidence == "broken")
+    check("and effective() neutralises it even if a saved profile sets it",
+          PROFILE.effective({"frag_warning": True})["frag_warning"] is False)
+    check("so it reaches neither the plan nor the disc",
+          not [e for e in PROFILE.build_data({"frag_warning": True})
+               if e.op == "frag_warning"])
+    check("every enabled split-screen data edit is length-preserving by op",
+          all(op in dataedit.OPS for op in
+              ("muzzle", "squad", "switch_rate", "fov")))
 
+    print("\n[weapon switch animation rate]")
+    import struct as _st
+    from tcps2 import rseswitch
+    spad = (bytes(40) + rseswitch.PREFIX + _st.pack("<f", 2.9) + bytes(40))
+    check("the stock rate reads 290%", rseswitch.reads(spad) == 290
+          == rseswitch.STOCK)
+    sgot, sn = rseswitch.apply(spad, 150)
+    check("it can be set to the game's own 150%",
+          sn == 1 and rseswitch.reads(sgot) == 150)
+    check("exactly the four value bytes move",
+          [i for i in range(len(spad)) if spad[i] != sgot[i]]
+          == [40 + 3, 40 + 4, 40 + 5, 40 + 6])
+    check("the property tag and name index are untouched",
+          sgot[40:43] == rseswitch.PREFIX)
+    check("the file length never moves", len(sgot) == len(spad))
+    check("running it twice changes nothing",
+          rseswitch.apply(sgot, 150) == (sgot, 0))
+    check("it can be put back", rseswitch.apply(sgot, 290)[0] == spad)
+    check("a rate outside the band is refused",
+          _raises(lambda: rseswitch.apply(spad, 50), rseswitch.SwitchError)
+          and _raises(lambda: rseswitch.apply(spad, 400),
+                      rseswitch.SwitchError))
+    check("a build without the record is refused",
+          _raises(lambda: rseswitch.apply(bytes(128), 150),
+                  rseswitch.SwitchError))
+    check("an ambiguous build is refused",
+          _raises(lambda: rseswitch.apply(spad + rseswitch.PREFIX
+                                          + _st.pack("<f", 2.9), 150),
+                  rseswitch.SwitchError))
+    sw = [e for e in PROFILE.build_data(dict(PROFILE.defaults(),
+                                             switch_rate=150))
+          if e.op == "switch_rate"]
+    check("the setting emits one data edit", len(sw) == 1)
+    check("it reaches all three COMMON files -- the rate has no per-mode copy",
+          sw and all(sw[0].matches(q) for q in
+                     ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN")))
+    check("and stock emits nothing",
+          not [e for e in PROFILE.build_data(PROFILE.defaults())
+               if e.op == "switch_rate"])
+
+    print("\n[muzzle flash]")
+    from tcps2 import rsemuzzle
+    pad = bytes(64) + rsemuzzle.STATEMENT + bytes(64)
+    check("the stock gate reads as an object ==",
+          pad[64 + rsemuzzle.OPERAND] == rsemuzzle.EQ)
+    check("a stock file reports the flash NOT on the FP weapon",
+          not rsemuzzle.reads(pad))
+    got, n = rsemuzzle.apply(pad, True)
+    check("the fix flips exactly one byte",
+          n == 1 and sum(a != b for a, b in zip(pad, got)) == 1)
+    check("and that byte is the comparison operand",
+          got[64 + rsemuzzle.OPERAND] == rsemuzzle.NE)
+    check("the file length never moves", len(got) == len(pad))
+    check("it reads back as fixed", rsemuzzle.reads(got))
+    check("running it twice changes nothing", rsemuzzle.apply(got, True) == (got, 0))
+    check("it can be put back", rsemuzzle.apply(got, False)[0] == pad)
+    check("a build without the gate is refused, not guessed at",
+          _raises(lambda: rsemuzzle.apply(bytes(256), True),
+                  rsemuzzle.MuzzleError))
+    check("an ambiguous build is refused too",
+          _raises(lambda: rsemuzzle.apply(pad + rsemuzzle.STATEMENT, True),
+                  rsemuzzle.MuzzleError))
+    mz = [e for e in PROFILE.build_data(dict(PROFILE.defaults(),
+                                             split_muzzle=True))
+          if e.op == "muzzle"]
+    check("the setting emits one data edit", len(mz) == 1)
+    check("it reaches all three COMMON files -- single player cannot change",
+          mz and all(mz[0].matches(p) for p in
+                     ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN")))
+    check("and emits nothing at its default",
+          not [e for e in PROFILE.build_data(PROFILE.defaults())
+               if e.op == "muzzle"])
+
+    print("\n[split-screen squad]")
+    from tcps2 import rsesquad, rseteam
+    # A real COMMON carries both sites; the option edits both or neither.
+    J = 48
+    C = 48 + len(rsesquad.SIGNATURE) + 48
+    pad = (bytes(48) + rsesquad.SIGNATURE + bytes(48)
+           + rsesquad.COUNT_SIG + bytes(48))
+    check("the stock jump goes to the end of the function",
+          rsesquad.reads(pad) == rsesquad.SKIP_TARGET == 0x0688)
+    check("and stock split screen pins the member count",
+          not rsesquad.counts(pad)
+          and pad[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_STOCK == 0x77)
+    got, n = rsesquad.apply(pad, True)
+    check("the fix makes both edits, never one", n == 2)
+    check("the jump is retargeted into the single-player AI arm",
+          rsesquad.reads(got) == rsesquad.ARM_TARGET == 0x0420)
+    check("and the count increments instead of resetting",
+          rsesquad.counts(got)
+          and got[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_FIXED == 0x72)
+    moved = [i for i in range(len(pad)) if pad[i] != got[i]]
+    check("exactly three bytes move", len(moved) == 3)
+    check("two in the jump operand, one in the comparison",
+          moved == [J + rsesquad.JUMP + 1, J + rsesquad.JUMP + 2,
+                    C + rsesquad.COUNT_OPERAND])
+    check("the tokens keep their width, so ScriptSize cannot move",
+          len(got) == len(pad) and got[J + rsesquad.JUMP] == 0x06)
+    check("it lands past the Price check, not on it",
+          rsesquad.ARM_TARGET > 0x03FB)
+    check("running it twice changes nothing",
+          rsesquad.apply(got, True) == (got, 0))
+    check("it can be put back whole", rsesquad.apply(got, False)[0] == pad)
+    check("a build with the jump but no clamp is refused, not half-applied",
+          _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.SIGNATURE, True),
+                  rsesquad.SquadError))
+    check("a build with the clamp but no jump is refused too",
+          _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.COUNT_SIG, True),
+                  rsesquad.SquadError))
+    check("an ambiguous build is refused",
+          _raises(lambda: rsesquad.apply(pad + rsesquad.SIGNATURE, True),
+                  rsesquad.SquadError))
+    check("it does not collide with the old rescue-arm edit",
+          rsesquad.KNOWN_OFFSET != rseteam.BRANCH
+          and rsesquad.KNOWN_COUNT_OFFSET != rseteam.BRANCH)
+    sq = [e for e in PROFILE.build_data(dict(PROFILE.defaults(),
+                                             split_squad=True))
+          if e.op == "squad"]
+    check("the setting emits one data edit", len(sq) == 1)
+    check("it reaches all three COMMON files",
+          sq and all(sq[0].matches(q) for q in
+                     ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN")))
+    check("and emits nothing at its default",
+          not [e for e in PROFILE.build_data(PROFILE.defaults())
+               if e.op == "squad"])
+
+    print("\n[field of view is split screen only]")
+    fv = [e for e in PROFILE.build_data(dict(PROFILE.defaults(), fov=110))
+          if e.op == "fov"]
+    check("a changed field of view emits one data edit", len(fv) == 1)
+    check("it writes the split-screen package",
+          fv and fv[0].matches("/COMMON_SS.LIN"))
+    check("and leaves the offline and online ones at stock 90",
+          fv and not fv[0].matches("/COMMONOFF.LIN")
+          and not fv[0].matches("/COMMON.LIN"))
+    check("stock emits nothing",
+          not [e for e in PROFILE.build_data(dict(PROFILE.defaults(), fov=90))
+               if e.op == "fov"])
+
+    print("\n[rescue flag]")
+    from tcps2 import rserescue
+    ini = ("[Engine.R6MissionDescription]\r\nversion=2\r\n"
+           "m_MapName=Island_a\r\n\r\n; Availability of Game Modes\r\n"
+           "m_bPracticeModeGame=true\r\nm_bNoRulesGame=true\r\n\r\n"
+           "m_MaxNbOfPlayersAdv=8\r\n\r\n[Engine.SomethingElse]\r\n"
+           "m_bNoRulesGame=false\r\n").encode("latin-1")
+    new, n = rserescue.apply(ini, True)
+    check("the flag is added once", n == 1 and new.count(b"m_brescureRainbow") == 1)
+    check("it lands after the LAST mode key, as Trieste places it",
+          b"m_bNoRulesGame=true\r\nm_brescureRainbow=true\r\n" in new)
+    check("it keeps the file's own line ending",
+          b"m_brescureRainbow=true\r\n" in new)
+    check("it stays inside the mission section",
+          new.index(b"m_brescureRainbow") < new.index(b"[Engine.SomethingElse]"))
+    check("the file grows by exactly the line",
+          len(new) == len(ini) + len(rserescue.LINE) + 2)
+    check("running it twice changes nothing the second time",
+          rserescue.apply(new, True) == (new, 0))
+    check("a map that already declares it is left alone",
+          rserescue.apply(ini.replace(b"m_bNoRulesGame=true\r\n",
+                                      b"m_bNoRulesGame=true\r\n"
+                                      b"m_brescureRainbow=true\r\n", 1),
+                          True)[1] == 0)
+    check("switching it off never strips Trieste's own declaration",
+          rserescue.apply(new, False) == (new, 0))
+    check("a file with no section is passed through untouched",
+          rserescue.apply(b"   spaces only, no header\r\n", True)
+          == (b"   spaces only, no header\r\n", 0))
+    nomode = b"[Engine.R6MissionDescription]\r\nversion=2\r\nm_iElite=1\r\n"
+    got, n2 = rserescue.apply(nomode, True)
+    check("a section with no mode block still gets the flag, under the header",
+          n2 == 1 and got.startswith(b"[Engine.R6MissionDescription]\r\n"
+                                     b"m_brescureRainbow=true\r\n"))
+    sel = [e for e in PROFILE.build_data(dict(PROFILE.defaults(),
+                                              split_rescue_flag=True))
+           if e.op == "rescue_flag"]
+    check("the setting emits exactly one data edit", len(sel) == 1)
+    check("it selects mission parts and not multiplayer or training",
+          sel and sel[0].matches("/MAPS/ISLAND_A.INI")
+          and not sel[0].matches("/MAPS/TRIESTE_MP.INI")
+          and not sel[0].matches("/MAPS/TRAINING_TEAM.INI")
+          and not sel[0].matches("/MAPS/ISLAND.INI"))
+    check("it skips the three maps that author no starting point",
+          sel and not sel[0].matches("/MAPS/ALPINES_A.INI")
+          and not sel[0].matches("/MAPS/IMPORT_EXPORT_A.INI")
+          and not sel[0].matches("/MAPS/PENTHOUSE_A.INI"))
+    check("but keeps their other parts, which do author one",
+          sel and sel[0].matches("/MAPS/ALPINES_B.INI")
+          and sel[0].matches("/MAPS/IMPORT_EXPORT_B.INI"))
+    check("and emits nothing at its default",
+          not [e for e in PROFILE.build_data(PROFILE.defaults())
+               if e.op == "rescue_flag"])
 
     print("\n[cheat file]")
     words = PROFILE.build_pnach(dict(PROFILE.defaults(), wave_enable=True))
@@ -3048,36 +3248,36 @@ def run_split_scope(args):
     profile = BY_ID["r6_3_slus20883"]
     check("the option reaches the profile",
           profile.setting("split_scope") is not None)
-    check("the fitting option needs the overlay switched on first",
-          profile.setting("split_scope_fit").requires
-          == {"split_scope": [True]})
-    check("and it is a cheat, not a disc edit",
-          profile.setting("split_scope_fit").touches == "cheat")
-    check("turning both on writes exactly those 41 lines",
-          len(profile.build_pnach({"split_scope_fit": True,
-                                   "split_scope": True})) == 41)
+    check("it is delivered on the disc, not as a cheat",
+          profile.setting("split_scope").touches == "words"
+          and not profile.build_pnach({"split_scope": True}))
+    check("fitting and the owner gate are no longer separate options",
+          profile.setting("split_scope_fit") is None
+          and profile.setting("split_scope_owner") is None)
+    check("and the one switch still emits all three edits",
+          len(profile.build_edits(dict(profile.defaults(),
+                                       split_scope=True))) == 44)
 
-    # A pnach is re-applied every frame, so an option left ticked behind an
-    # unticked prerequisite could not be undone by unticking it. `requires`
-    # greys the widget out; it has to gate the generator as well.
-    check("with the overlay off, the fitting cheat writes nothing",
-          not profile.build_pnach({"split_scope_fit": True,
-                                   "split_scope": False}))
-    eff = profile.effective({"split_scope_fit": True, "split_scope": False,
-                             "split_wheel_labels": True, "split_wheel": False})
-    check("and effective() neutralises both cheats whose prerequisite is off",
-          eff["split_scope_fit"] is False
-          and eff["split_wheel_labels"] is False)
+    # `requires` greys a widget out, but the stored value survives, and both
+    # the disc edits and the cheat file are built from stored values. A pnach
+    # is re-applied every frame, so an option left ticked behind an unticked
+    # prerequisite could not be undone by unticking it. It has to gate the
+    # generator as well.
+    check("the wheel labels need the wheel switched on first",
+          profile.setting("split_wheel_labels").requires
+          == {"split_wheel": [True]})
+    eff = profile.effective({"split_wheel_labels": True, "split_wheel": False})
+    check("and effective() neutralises what its prerequisite does not allow",
+          eff["split_wheel_labels"] is False)
     check("a chain of requirements resolves all the way down",
           profile.effective({"ai_finite_ammo": False,
                              "ai_sidearm": 50})["ai_sidearm"] == 0)
-    check("all three caves coexist",
-          len(profile.build_pnach({"split_scope_fit": True,
-                                   "split_scope": True,
+    check("all the caves coexist",
+          len(profile.build_pnach({"split_scope": True,
                                    "split_wheel_labels": True,
                                    "split_wheel": True,
                                    "wave_enable": True,
-                                   "wave_mapwide": True})) == 125)
+                                   "wave_mapwide": True})) == 68)
     # Watched drawing in split screen on Island Estate, both halves, so this
     # is no longer a guess. The caution still has to say what is imperfect
     # about it -- the overlay is not fitted to the viewport -- because that is

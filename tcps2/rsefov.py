@@ -51,13 +51,23 @@ the same reason every other edit here is: an offset is only true for the build
 it was measured on. The base value's 85.0 is asserted on the way past, which
 doubles as a check that the two have not swapped order.
 
-What it does NOT do
--------------------
+Split screen only, which took a while to become possible
+--------------------------------------------------------
 
-It is a class default, so it applies to single player as well as split
-screen. There is no per-mode copy to edit. That is stated on the card rather
-than hidden, because someone who wants a wider split-screen view probably
-does not expect the campaign to change too.
+This used to apply to single player as well, and this docstring used to say
+that was unavoidable because a class default has no per-mode copy. That was
+wrong, and the reason it was wrong is that the copies are not inside one
+package -- they are separate FILES.
+
+The disc ships three script packages: `COMMON.LIN` for online, `COMMONOFF.LIN`
+for offline and `COMMON_SS.LIN` for split screen. The level-name buffer at
+`0x006B95E0` carries the matching suffix (`Parade_aoff` in single player,
+`Island_a_ss` in split screen), so each mode reads its own copy.
+`COMMONOFF.LIN` and `COMMON_SS.LIN` happen to be byte-identical on the retail
+disc, which is exactly why the difference was invisible until the file names
+were looked at.
+
+So the edit goes to `COMMON_SS.LIN` alone and the campaign keeps the stock 90.
 """
 
 from __future__ import annotations
@@ -163,9 +173,13 @@ def card(prefix, group):
                 "is found by walking the packages rather than from a stored "
                 "offset, and the base class default behind it is checked to "
                 "read 85.0 on the way past.\n\n"
-                "It is a CLASS DEFAULT, so it applies to single player too. "
-                "There is no per-mode copy to edit. If you widen this for "
-                "split screen the campaign gets the same view.\n\n"
+                "SPLIT SCREEN ONLY, and this card used to say the opposite. "
+                "It is a class default, so the first version applied to the "
+                "campaign too and said there was no per-mode copy to edit. "
+                "There is: the disc ships COMMON.LIN for online, "
+                "COMMONOFF.LIN for offline and COMMON_SS.LIN for split "
+                "screen, and each mode reads its own. Only the split-screen "
+                "copy is written, so single player keeps the stock 90.\n\n"
                 "Not play-tested. 90 is stock. The engine demonstrably "
                 "handles 25.7 through 90 already, because that is what "
                 "aiming a scope does to the same field." + ' Watched working in split screen on Mountain Highway at 110: the view widens and the weapon comes back with it. Writing DefaultFOV alone did nothing, which is how DesiredFOV was found -- both are written now and the two are returned as a pair so neither can be edited without the other again.' + '\n\nFirst attempt wrote DefaultFOV alone and changed nothing on hardware. The camera follows DesiredFOV; the two are seven bytes apart in the same class-default block and both are written now.')

@@ -217,9 +217,48 @@ def cards(prefix: str, group: str) -> list:
                      "point at the throw line, so the warning never plays. The "
                      "recording is on the disc, two takes for each operative. "
                      "This points the warning slot at it.",
-                caution="Not play-tested. This is the first edit that makes a "
-                        "cooked package LONGER, which was believed impossible "
-                        "until it was measured; the container still fits its "
-                        "slot because re-deflating beats the disc's packer.",
-                confidence="applied", touches="data"),
+                caution="WITHDRAWN. See below.",
+                confidence="broken", touches="data",
+                enabled=False,
+                disabled_reason=(
+                    "Play-tested and the game will not boot. It hangs on the "
+                    "initial load screen, before any level, and removing it "
+                    "restores the boot.\n\n"
+                    "This is the one edit in the tool that makes a cooked "
+                    "package LONGER. Measured on the disc it produced: "
+                    "COMMON_SS.LIN decompressing to 5,094,168 bytes against a "
+                    "stock 5,094,061, with the first difference at plain "
+                    "0x086A8B -- the header of the package at 0x086a7f, whose "
+                    "name count went 6500 to 6503 and import count 1582 to "
+                    "1585. Three names and three imports, exactly as designed, "
+                    "and the container still fits its slot because re-deflating "
+                    "beats the disc's packer.\n\n"
+                    "The growth is not what breaks it, though, and the real "
+                    "reason changes what a safe edit looks like. A .LIN is not "
+                    "a packed file system -- it is a RECORDING of one boot's "
+                    "read stream, replayed in order. Every Seek underneath the "
+                    "package loader is discarded: FLinFileReader::Seek at "
+                    "0x001d3ab0 logs \"Can't seek compressed file\" and "
+                    "returns, and ReaderLoadLinear::Seek at 0x001cfee0 writes "
+                    "the position to a field and performs no I/O. The "
+                    "directory's recorded size is the ORIGINAL uncooked file "
+                    "length -- 2,591,884 against a 270,046-byte blob -- and "
+                    "reaches nothing but TotalSize(), which the linker's "
+                    "constructor never calls. So the byte counts stay in step: "
+                    "the grown stream still lands exactly on the next "
+                    "package's magic, measured both ways. What breaks is that "
+                    "three NEW imports are three object references the "
+                    "recorded boot never resolved, so the engine asks the "
+                    "recording for reads it cannot answer and the cursor "
+                    "desynchronises for good.\n\n"
+                    "The defect it targets is real and worth returning to: "
+                    "both of frag's voice slots point at the throw line, so "
+                    "the incoming-grenade warning never plays even though the "
+                    "recording is on the disc. The fix has to REUSE an "
+                    "existing name and import rather than add any -- not to "
+                    "keep the length, but so that nothing new is ever asked "
+                    "for. Each voice package already exports "
+                    "Play_<name>_FragThrown as an orphan the engine never "
+                    "imports, so the material is there; the price is that some "
+                    "other voice line has to be given up to carry it.")),
     ]

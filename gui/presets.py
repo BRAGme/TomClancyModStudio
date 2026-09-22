@@ -26,28 +26,36 @@ FX_ON = {
 #: quietly delivered the effects and none of the interface -- the wheel stayed
 #: shut and the scope stayed a bare reticule.
 #:
-#: `split_wheel_labels` is deliberately NOT here. It is withdrawn: the cave is
-#: live but the factor it scales by is wrong, so the labels still spill into
-#: the other player's half. A preset must never carry a broken option.
+#: `split_wheel_labels` is deliberately NOT here, though the reason has
+#: changed. The wheel itself no longer spans the split -- that was the engine
+#: running every viewport's interactions into one canvas, and it is fixed and
+#: play-tested. What is still wrong is narrower: the label TEXT does not scale
+#: with the viewport, only its position does. An option that is half right is
+#: still an option the user should choose deliberately, not one a preset turns
+#: on for them.
 HUD_ON = {
     # The equipment wheel, and what a tap of L1 does once it is back.
     "split_wheel": True,
     "split_cycle": True,
-    # The scope: draw it, fit it to your half, and give it only to the
-    # player who aimed. All three are needed -- without the last one the
-    # overlay appears in BOTH halves the moment either player aims.
+    # The scope. One switch now: drawing it, fitting it to your half
+    # and giving it only to the player who aimed were three cards,
+    # and no combination of two of them is worth having.
     "split_scope": True,
-    "split_scope_fit": True,
-    "split_scope_owner": True,
     # The first-person weapon: sway to your own stick, and stop the turn
     # channel leaning both players' weapons at once.
     "split_sway": True,
     "split_sway_turn": True,
     # And play the draw animation once instead of twice.
     "split_draw_once": True,
-    # NOT split_wheel_labels. It is an improvement -- the wheel's contents
-    # scale now -- but the wheel as a whole still spans the split, so it is
-    # left for the user to opt into rather than shipped in a preset.
+    # Muzzle flashes on your own weapon. The flash was never missing in
+    # split screen -- it stayed attached to the third-person weapon, because
+    # the call that moves it onto the first-person one sits behind a
+    # split-screen test. One byte of UnrealScript, and it cannot change
+    # single player, where that call already runs through the guard's other
+    # arm. Play-tested on Alpine Village: both players get their own flash
+    # and it does not cross the split.
+    "split_muzzle": True,
+    # See the note above for why split_wheel_labels is not here.
 }
 
 FX_OFF = {k: False for k in FX_ON}

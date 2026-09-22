@@ -31,7 +31,10 @@ from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
-                rsedeadpath, rsefov, rsemandown, rseteam, rseviewmodel, rserpg, rseshadow, rsesidearm,
+                rsedeadpath, rsefov, rsemandown, rsemuzzle, rsesquad,
+                rseswitch,
+                rserescue, rseteam,
+                rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
                 rsewheel)
 
@@ -335,6 +338,40 @@ WAVE_MAPS = (
     "feeds an accumulator at gp-32008 and a countdown at +0x304, both plain "
     "`+= dt` / `-= dt`, neither of them a look rate. Until that path is "
     "traced there is nothing honest to switch on.\n\n"
+    "PARKING GARAGE is broken in split screen ON THE RETAIL DISC, and no "
+    "option here causes it or cures it. The load screen crawls, the mission "
+    "degrades as it runs, and it can take the emulator down with it. "
+    "Measured: the engine's retained error buffer reads \"Texture "
+    "R6Characters_T.Rainbow.R6RChaveshead: SERIAL SIZE MISMATCH: GOT "
+    "1110226955, EXPECTED 16471\" -- and 1110226955 is 0x42302E4B, ASCII "
+    "bytes being read as a length, so the package loader is reading from the "
+    "wrong place entirely. The Emotion Engine sits at 99% with the GS at 1% "
+    "and the host GPU at 6%, which is the console burning its own CPU "
+    "retrying loads that cannot succeed.\n\n"
+    "Two savestates seven minutes apart settle the blame: one on a fully "
+    "patched disc and one on a disc reverted to stock, both on Garage split "
+    "screen, both with the same error, the same garbage length and the same "
+    "eight formatted linker errors. Garage A is also the largest level on the "
+    "disc at 6.76 MB, about 1.4 MB above typical, and the only map whose two "
+    "INIs ship malformed -- GARAGE_A.INI has a key truncated mid-word and "
+    "GARAGE_B.INI has its whole section header overwritten with spaces, both "
+    "verified byte-for-byte against pristine copies. Shipyard, Alpine Village "
+    "and the rest run normally in split screen.\n\n"
+    "Withdrawn: \"Give split screen the full streaming budget\". The routine "
+    "at 0x00472160 really does return 3 in split screen and 6 in single "
+    "player, and it really is the only constant in the overlay that differs "
+    "by mode -- but it is not the level streaming budget. Following its one "
+    "caller outwards, 0x004ca230 forwards it to 0x004e3490, which compares it "
+    "against a counter at 0x006f0a60 that is incremented on acquire and "
+    "decremented on release, runs only when the pool is FULL, and formats a "
+    "message into an 0x840-byte stack buffer. The strings that message is "
+    "built from name the subsystem: \"SStream Error: Not enough memory to "
+    "create streaming source\", \"->Res 0x%x cannot be started because \", "
+    "and the IMA-ADPCM decoder's own errors. It is the cap on simultaneous "
+    "streaming AUDIO sources -- six in single player, three in split screen, "
+    "because two viewports leave less memory for sound. Raising it asks the "
+    "audio system for sources it has no memory for, which is the crash the "
+    "first attempt produced. It was never going to affect AI teammates.\n\n"
     "No weapons page, and this one is settled rather than untried. Ghost "
     "Recon, Jungle Storm and The Sum of All Fears all get one, because they "
     "ship a .GUN file per weapon in plain XML. This disc keeps its weapons in "
@@ -821,27 +858,28 @@ def _build_settings():
         Setting("fx_impact", "Bullet impact decals", BOOL, True, "Split Screen",
                 help="Two branches skip the bullet-hole decal in split screen: "
                      "one for hits on the static world, one for hits on actors.",
-                confidence="applied"),
+                confidence="verified"),
         Setting("fx_emitters", "Bullet impact puffs and sparks", BOOL, True,
                 "Split Screen",
                 help="The dust/spark emitter that goes with an impact is skipped "
                      "in split screen by a third branch.",
-                confidence="applied"),
+                confidence="verified"),
         Setting("fx_blood", "Blood effects", BOOL, True, "Split Screen",
-                confidence="applied",
+                confidence="verified",
                 help="Restores the blood-effect position update."),
         rsewheel.card("", "Split Screen"),
         rsewheel.cycle_card("", "Split Screen"),
         rsewheel.label_card("", "Split Screen"),
         rsescope.card("", "Split Screen"),
         rsedraw.card("", "Split Screen"),
-        rsescope.viewport_card("", "Split Screen"),
-        rsescope.owner_card("", "Split Screen"),
         rseviewmodel.card("", "Split Screen"),
         rseviewmodel.turn_card("", "Split Screen"),
         rsefov.card("", "Split Screen"),
+        rsemuzzle.card("", "Split Screen"),
+        rseswitch.card("", "Weapons"),
+        rsesquad.card("", "Split Screen"),
         rseteam.card("", "Split Screen"),
-        rseteam.budget_card("", "Split Screen"),
+        rserescue.card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -998,8 +1036,14 @@ def build_edits(v: dict) -> list:
             for va, value, _stock, note in rseviewmodel.words(
                     right_too=bool(v.get("split_sway_turn")), freed=True):
                 w(va, value, note)
+    # One switch, three edits. They were three cards until it became clear
+    # they are not independently useful: without the viewport fit the overlay
+    # draws at full-screen size over both halves, and without the owner gate
+    # it appears in BOTH halves the moment either player aims. Nobody wants
+    # two of the three. Single player is unaffected -- measured, on a
+    # single-player savestate taken from a disc carrying all three.
     scope = bool(v.get("split_scope"))
-    fit = scope and bool(v.get("split_scope_fit"))
+    fit = scope
     labels = bool(v.get("split_wheel")) and bool(v.get("split_wheel_labels"))
     if scope:
         for va, value in rsescope.SCOPE_GUARD:
@@ -1015,7 +1059,7 @@ def build_edits(v: dict) -> list:
     if fit:
         for va, value, _stock, note in rsescope.viewport_words(freed=True):
             w(va, value, note)
-    if scope and v.get("split_scope_owner"):
+    if scope:
         for va, value, _stock, note in rsescope.owner_words():
             w(va, value, note)
     if labels:
@@ -1023,9 +1067,6 @@ def build_edits(v: dict) -> list:
             w(va, value, note)
         for va, value, _stock, note in rsewheel.owner_words(freed=True):
             w(va, value, note)
-    if v.get("split_stream_budget"):
-        w(rseteam.BUDGET, rseteam.BUDGET_SIX,
-          "split screen: full streaming budget, 6 slots not 3")
     if v.get("split_shadows"):
         w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
           "split screen: let the shadow pass run")
@@ -1181,23 +1222,84 @@ def build_data(v: dict) -> list:
                             {"primary": g1, "secondary": g2, "match": mine,
                              "per": per},
                             "teammate gadgets"))
+    if v.get("split_rescue_flag"):
+        # Mission PARTS only -- a single trailing letter, which is how the
+        # disc names the 27 playable level files (ISLAND_A, PARADE_B ...).
+        # Trieste declares the flag on TRIESTE_A and NOT on TRIESTE.INI, so
+        # the part file is what the game reads for a mission. The same
+        # pattern excludes `_MP` (two letters), the `TRAINING_*` maps and
+        # AUTOPLAY/DEMO/_DEBUG, none of which are rescues.
+        #
+        # Three maps are skipped by name, and the reason originally given for
+        # it was WRONG. It rested on `m_aStartingPoint` being absent from
+        # their cooked name tables -- but that name is dead everywhere: it
+        # appears in 48 of 54 level builds and its encoded name index occurs
+        # in no package body at all, so no actor authors a starting point on
+        # ANY map and its presence or absence distinguishes nothing.
+        #
+        # The exclusion is kept anyway, on its one surviving fact: Alpine
+        # Village A is the only map where this option has actually been
+        # tested, and it wedged. The other two are the maps that share its
+        # one measured peculiarity -- all three place zero deployment zones.
+        # That is a weak reason, and it is recorded as weak. The remaining 23
+        # maps have never been tried.
+        out.append(FileEdit("rescue_flag",
+                            r"/MAPS/(?!ALPINES_A\.|IMPORT_EXPORT_A\.|"
+                            r"PENTHOUSE_A\.)[^/]+_[A-Z]\.INI$", "",
+                            {"enable": True},
+                            "every mission declares itself a rescue"))
     if v.get("split_rescue_team"):
         out.append(FileEdit("split_rescue_team",
                             r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"enable": True},
                             "split screen: build the two AI operatives"))
+    if v.get("split_squad"):
+        # All three COMMON files, for a stronger reason than the muzzle
+        # edit has: the instruction is UNREACHABLE outside split
+        # screen. It sits inside the arm the m_bIsSplitScreen branch
+        # guards, so single player and online never execute it.
+        out.append(FileEdit("squad", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: fill the team with AI"))
+    if v.get("split_muzzle"):
+        # All three COMMON files. The edit cannot change single
+        # player or online: the call it restores already runs there
+        # through the guard's other arm. Patching all three means
+        # nobody has to be right about which file split screen
+        # loads, which is the only guess the change would carry.
+        out.append(FileEdit("muzzle", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "split screen: flash on the first-person weapon"))
+    rate = int(v.get("switch_rate", rseswitch.STOCK))
+    if rate != rseswitch.STOCK:
+        # All three COMMON files: the rate is one class default with
+        # no per-mode copy, so the choice applies everywhere either
+        # way. Writing all three keeps the modes consistent.
+        out.append(FileEdit("switch_rate", r"/COMMON(OFF|_SS)?\.LIN$",
+                            "", {"percent": rate},
+                            "weapon switch animation: %d%%" % rate))
     fov = int(v.get("fov", 90))
     if fov != int(rsefov.STOCK):
-        out.append(FileEdit("fov", r"/COMMON(OFF|_SS)?\.LIN$", "",
+        # COMMON_SS.LIN ONLY. The disc ships three script packages --
+        # COMMON (online), COMMONOFF (offline) and COMMON_SS (split
+        # screen) -- and the level-name buffer carries the matching
+        # suffix, so split screen reads its own copy. Writing only
+        # that copy keeps the campaign at the stock 90.
+        out.append(FileEdit("fov", r"/COMMON_SS\.LIN$", "",
                             {"degrees": fov},
-                            "field of view: %d degrees" % fov))
+                            "field of view: %d degrees, split screen only" % fov))
     carry = int(v.get("grenade_carry", 20))
     if carry != 20:
         out.append(FileEdit("grenade_carry", r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"percent": carry},
                             "%d%% of two-entry templates carry a grenade" % carry))
     out += rseloadout.edits(v, "", r"/COMMON(OFF|_SS)?\.LIN$")
-    if v.get("frag_warning"):
+    # Withdrawn: it grows a cooked package by 107 bytes and the game then
+    # will not boot. `effective()` already neutralises a disabled setting, but
+    # the build site guards too rather than depending on the caller having
+    # normalised -- which is the belt-and-braces the model docstring asks for,
+    # and this option is the reason it is not theoretical.
+    if v.get("frag_warning") and PROFILE.setting("frag_warning").enabled:
         out.append(FileEdit("frag_warning", r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"enable": True},
                             "teammates warn you about their own frag"))
