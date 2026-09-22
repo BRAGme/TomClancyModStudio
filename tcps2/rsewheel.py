@@ -402,7 +402,9 @@ def label_card(prefix, group):
     return Setting(
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
-        confidence="untested", touches="words",
+        confidence="broken", touches="words",
+        enabled=False,
+        disabled_reason="Measured on hardware and it does not work, for a reason the card had wrong rather than a delivery problem. The cave is live -- a savestate shows all four hooks holding their jal and the cave holding its code -- so the multiply really does run. What is wrong is the factor. This scaled the label Y by $f21, on the reading that $f21 is SizeY/480 and that SizeY is the viewport's 224. It is not: the canvas handed to the draw is the whole FRAMEBUFFER, measured 640x448 in split screen, so $f21 is 448/480 and the labels move up by 7 per cent. That also explains the ring, which the card claimed already scaled -- it does not either, and it spans both halves. So the wheel needs what the scope needed: the draw pointed at the viewport rect at G+0x40a00 instead of the framebuffer, ring and labels together, not a factor applied to the labels alone. The dead-path cave it would use is proven -- the scope fit rides it and works.",
         help="With the wheel restored, its ring scales to your half of the "
              "screen but the four item names do not -- they stay where a "
              "full-height screen would put them, so the lower ones spill into "

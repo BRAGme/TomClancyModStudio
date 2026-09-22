@@ -155,7 +155,7 @@ def card(prefix, group):
                 "reads the per-viewport rectangle -- so the overlay sits off "
                 "to one side instead of around your crosshair. That is what "
                 "\"Fit the scope overlay to your half\" is for; turn it on "
-                "with this.")
+                "with this." + " Watched working in split screen on Mountain Highway: with the cave in the scope draw's dead path the overlay is sized to each half instead of the framebuffer. What it does NOT fix is the overlay appearing for both players at once -- m_bScopeVisionActive lives on the shared LevelInfo, so aiming down sights gives the other player a scope too. That is a separate defect and still open.")
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ def viewport_card(prefix, group):
 
     return Setting(
         prefix + "split_scope_fit", "Fit the scope overlay to your half",
-        BOOL, False, group, confidence="untested", touches="words",
+        BOOL, False, group, confidence="verified", touches="words",
         help="With the overlay switched back on it draws at full-screen size "
              "and once per player, because it takes its dimensions from the "
              "whole framebuffer and never looks at the viewport. This points "
