@@ -31,7 +31,7 @@ from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
-                rsedeadpath, rsemandown, rseviewmodel, rserpg, rseshadow, rsesidearm,
+                rsedeadpath, rsefov, rsemandown, rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
                 rsewheel)
 
@@ -748,6 +748,7 @@ def _build_settings():
         rsescope.owner_card("", "Split Screen"),
         rseviewmodel.card("", "Split Screen"),
         rseviewmodel.turn_card("", "Split Screen"),
+        rsefov.card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
         Setting("fx_weather", "Rain and snow", BOOL, True, "Split Screen",
                 confidence="applied",
@@ -1086,6 +1087,11 @@ def build_data(v: dict) -> list:
                             {"primary": g1, "secondary": g2, "match": mine,
                              "per": per},
                             "teammate gadgets"))
+    fov = int(v.get("fov", 90))
+    if fov != int(rsefov.STOCK):
+        out.append(FileEdit("fov", r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"degrees": fov},
+                            "field of view: %d degrees" % fov))
     carry = int(v.get("grenade_carry", 20))
     if carry != 20:
         out.append(FileEdit("grenade_carry", r"/COMMON(OFF|_SS)?\.LIN$", "",

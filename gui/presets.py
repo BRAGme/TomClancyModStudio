@@ -30,14 +30,24 @@ FX_ON = {
 #: live but the factor it scales by is wrong, so the labels still spill into
 #: the other player's half. A preset must never carry a broken option.
 HUD_ON = {
+    # The equipment wheel, and what a tap of L1 does once it is back.
     "split_wheel": True,
     "split_cycle": True,
+    # The scope: draw it, fit it to your half, and give it only to the
+    # player who aimed. All three are needed -- without the last one the
+    # overlay appears in BOTH halves the moment either player aims.
     "split_scope": True,
     "split_scope_fit": True,
-    # Without this the overlay appears in BOTH halves the moment either
-    # player aims, so the scope is not really usable in split screen
-    # without it. Verified on hardware alongside the other two.
     "split_scope_owner": True,
+    # The first-person weapon: sway to your own stick, and stop the turn
+    # channel leaning both players' weapons at once.
+    "split_sway": True,
+    "split_sway_turn": True,
+    # And play the draw animation once instead of twice.
+    "split_draw_once": True,
+    # NOT split_wheel_labels. It is an improvement -- the wheel's contents
+    # scale now -- but the wheel as a whole still spans the split, so it is
+    # left for the user to opt into rather than shipped in a preset.
 }
 
 FX_OFF = {k: False for k in FX_ON}

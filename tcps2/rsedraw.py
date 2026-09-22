@@ -159,7 +159,7 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_draw_once", "Play the weapon draw animation once",
-        BOOL, False, group, confidence="untested", touches="data",
+        BOOL, False, group, confidence="verified", touches="data",
         help="In split screen, switching weapons plays the draw animation "
              "twice, with the equip sound doubled. Two separate things raise "
              "the weapon -- the first-person switch, and an animation notify "

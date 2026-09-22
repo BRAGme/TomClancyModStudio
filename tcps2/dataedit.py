@@ -145,6 +145,11 @@ def _op_frag_warning(plain, params):
     return rsefragwarn.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_fov(plain, params):
+    from . import rsefov
+    return rsefov.apply(plain, int(params.get("degrees", 90)))
+
+
 def _op_ai_cover(plain, params):
     from . import rseaicover
     return rseaicover.apply(plain, str(params.get("set", "stock")))
@@ -221,6 +226,7 @@ OPS = {
     "split_wheel": _op_split_wheel,
     "ai_sidearm": _op_ai_sidearm,
     "ai_cover": _op_ai_cover,
+    "fov": _op_fov,
     "frag_warning": _op_frag_warning,
     "ss_man_down": _op_ss_man_down,
     "ss_chatter": _op_ss_chatter,
