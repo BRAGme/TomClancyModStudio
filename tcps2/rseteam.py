@@ -118,7 +118,9 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_rescue_team", "Build the two AI operatives",
-        BOOL, False, group, confidence="untested", touches="data",
+        BOOL, False, group, confidence="broken", touches="data",
+        enabled=False,
+        disabled_reason='Tested on hardware and it HANGS on any map but Trieste, so it is withdrawn. Island Estate wedges in split screen, in Practice Mode as well as Terrorist Hunt, so it is the map and not the gametype. m_brescureRainbow is set in exactly ONE of 96 map INIs -- Trieste is the only level authored for the rescue, and the only one that places the cover spots this arm spawns at. What the test did buy is worth more than the option. The hang state matches the known wedge EXACTLY: IOP streaming frozen at off=0x540000 len=0x4680, the final partial chunk of the level .LIN. That is the same freeze as ss_man_down, canon_team and all four earlier teammate attempts. This edit is TWO BYTES with no re-assembly and no inserted control flow, which kills the theory that the bytecode edits were to blame. Six failures are one bug, and its trigger is now a two-byte switch rather than a frozen savestate. It also refutes the residency theory from the other direction: Trieste builds the same operatives in split screen and runs fine, so it is not the operative class load either. What separates them is that Trieste has somewhere valid to put them.',
         help="Split screen builds a two-man team and stops. The engine can "
              "build AI Rainbow operatives in split screen -- Trieste proves "
              "it on the retail disc -- but the code that does it is behind a "
