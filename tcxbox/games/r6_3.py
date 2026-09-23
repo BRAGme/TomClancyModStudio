@@ -318,10 +318,79 @@ def _hunt_edits(prefix, v):
                      % int(HUNT_STEPS[choice] * 100))]
 
 
+#: The campaign missions only -- not the training maps, not the menu, not the
+#: multiplayer maps. Those last carry no operative block at all and cannot be
+#: given one: they live in a fixed slot inside `xboxdynamic.umd`, so a file
+#: that grew by three lines plus three loadouts would not fit.
+CAMPAIGN_MAPS = (r"/MAPS/(?!R6MENU|_DEBUG|AUTOPLAY|RAVENSHIELD|TRAINING)"
+                 r"(?!.*_MP\.)[^/]+\.INI$")
+
+#: "Members Present in Mission Mode", one boolean per operative, in every
+#: mission description. Five campaign missions hold somebody back:
+#:
+#:     Airport     nobody   -- Chavez alone
+#:     Penthouse   nobody   -- Chavez alone
+#:     Garage      Loiselle only
+#:     Island      Weber only
+#:     Oldcity     Price only
+#:
+#: and the other nine bring all three. What makes this worth offering rather
+#: than guessing at is that EVERY ONE of those five still ships all four of
+#: the missing operatives' loadout blocks -- mission kit, silenced kit, hunt
+#: kit and silenced hunt kit. The equipment is authored; only the flag is off.
+SQUAD_FLAGS = ("m_bMissionWeber", "m_bMissionLoiselle", "m_bMissionPrice")
+
+
+def _squad_cards(prefix):
+    return [
+        Setting(prefix + "mission_squad", "Operatives on each mission", CHOICE,
+                "stock", "Your side",
+                choices=[
+                    Choice("stock", "As shipped", ""),
+                    Choice("all", "Weber, Loiselle and Price on every mission",
+                           "Five missions thin the team; this fills them."),
+                    Choice("solo", "Nobody -- Chavez alone",
+                           "Every mission played the way Airport and "
+                           "Penthouse already are."),
+                ],
+                confidence="experimental",
+                help="Each mission description carries a block headed "
+                     "\"Members Present in Mission Mode\" -- one true or "
+                     "false per operative. Nine of the fourteen campaign "
+                     "missions bring all three; Airport and Penthouse send "
+                     "Chavez alone, and Garage, Island and Oldcity each bring "
+                     "exactly one.\n\n"
+                     "All five of those still ship the missing operatives' "
+                     "full loadouts -- mission, silenced, hunt and silenced "
+                     "hunt. The kit is authored and only the flag is off, "
+                     "which is what makes turning it on worth trying.",
+                caution="Experimental, and the risk is the one that has "
+                        "already bitten this tool once: a mission written for "
+                        "one operative may have no insertion point for the "
+                        "other two, and a level that cannot place somebody it "
+                        "has been told to place is a level that may not "
+                        "finish loading. Airport and Penthouse are the two to "
+                        "watch. Restore game puts it back byte for byte."),
+    ]
+
+
+def _squad_edits(prefix, v):
+    choice = v.get(prefix + "mission_squad", "stock")
+    if choice not in ("all", "solo"):
+        return []
+    on = "true" if choice == "all" else "false"
+    return [FileEdit("ini_values", CAMPAIGN_MAPS,
+                     {"values": {k: on for k in SQUAD_FLAGS}},
+                     "mission squad: %s"
+                     % ("Weber, Loiselle and Price everywhere" if choice == "all"
+                        else "Chavez alone on every mission"))]
+
+
 def _settings(prefix, aim, has_boost=False):
     return (r6engine.cards(prefix, has_templates=True, aim=aim,
                            has_boost=has_boost)
             + _mode_cards(prefix) + _hunt_cards(prefix)
+            + _squad_cards(prefix)
             + _render_cards(prefix))
 
 
@@ -331,6 +400,7 @@ def _build(prefix, aim, has_boost=False):
                                has_boost=has_boost)
                 + _mode_edits(prefix, v)
                 + _hunt_edits(prefix, v)
+                + _squad_edits(prefix, v)
                 + _render_edits(prefix, v))
     return build
 
