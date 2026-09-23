@@ -22,10 +22,15 @@ SCALE = 1.0
 
 _root = None
 
+#: One entry for every confidence a profile uses. A missing one does not fail:
+#: `badge` falls back to a dim label, and "untested" -- the rating on the
+#: options that re-assemble script -- was the one reading quietest of all.
 BADGE = {
     "verified": ("good", "verified in game"),
     "applied": ("warn", "measured, not play-tested"),
+    "measured": ("warn", "measured, not play-tested"),
     "experimental": ("warn", "untested"),
+    "untested": ("warn", "untested"),
     "broken": ("bad", "not working"),
 }
 

@@ -31,8 +31,8 @@ from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
-                rsedeadpath, rsefov, rsemandown, rsemuzzle, rsesquad,
-                rseswitch,
+                rsedeadpath, rsefov, rsehudteam, rsemandown, rsemuzzle,
+                rsesplice, rsesquad, rseswitch,
                 rserescue, rseteam,
                 rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
@@ -256,8 +256,32 @@ HUD_STOCK = {
     0x004391BC: 0x0C0D25B4,
     0x00439250: 0x0C0D25B4,
     0x00439304: 0x00000000,
+    # the wheel marker's left/right cases -- jal 0x00469a10
+    0x00438340: 0x0C11A684,
+    0x004383B0: 0x0C11A684,
+    0x004384E4: 0x0C11A684,
+    0x00438540: 0x0C11A684,
 }
+# The wheel's label text: its two hooks -- one in the shared string drawer,
+# one after the fourth label -- and its words in the dead path past word 96,
+# which this table predates.
+HUD_STOCK[rsewheel.LABEL_TEXT_HOOK] = rsewheel.LABEL_TEXT_STOCK
+HUD_STOCK[rsewheel.LABEL_UNARM_HOOK] = rsewheel.LABEL_UNARM_STOCK
+for _i in range(96, 113):
+    HUD_STOCK[rsedeadpath.CAVE + 4 * _i] = rsedeadpath.STOCK_WORDS[_i]
+# ...and the split-screen team panel's: six hooks, dead-path words 113-225.
+for _va, _stock, _new, _note in rsehudteam.HOOKS:
+    HUD_STOCK[_va] = _stock
+for _i in range(113, 226):
+    HUD_STOCK[rsedeadpath.CAVE + 4 * _i] = rsedeadpath.STOCK_WORDS[_i]
 STOCK.update(HUD_STOCK)
+# The third-person flash test split_muzzle corrects -- see rsemuzzle.
+STOCK[rsemuzzle.THIRD_PERSON_TEST] = rsemuzzle.TP_STOCK
+# The split-screen aim branch ss_accuracy removes: beqz $v0 on the flag at
+# 0x006546F4, which is 1 in split screen and 0 in single player.
+SS_AIM_BRANCH = 0x003F3D90
+STOCK[SS_AIM_BRANCH] = 0x10400011      # beqz $v0, 0x003F3DD8
+SS_AIM_ALWAYS = 0x10000011             # b    0x003F3DD8 -- same target
 STOCK[rseteam.BUDGET] = rseteam.BUDGET_STOCK
 
 BODY_TIMERS = {
@@ -338,25 +362,25 @@ WAVE_MAPS = (
     "feeds an accumulator at gp-32008 and a countdown at +0x304, both plain "
     "`+= dt` / `-= dt`, neither of them a look rate. Until that path is "
     "traced there is nothing honest to switch on.\n\n"
-    "PARKING GARAGE is broken in split screen ON THE RETAIL DISC, and no "
-    "option here causes it or cures it. The load screen crawls, the mission "
-    "degrades as it runs, and it can take the emulator down with it. "
-    "Measured: the engine's retained error buffer reads \"Texture "
+    "PARKING GARAGE: a correction. An earlier version of this note said "
+    "Garage was broken in split screen ON THE RETAIL DISC. It is not. Its "
+    "two mission INIs were corrupted on the working disc by an earlier edit "
+    "of this tool, sometime after 15 September: GARAGE_A.INI kept its first "
+    "144 bytes and became 10,373 NUL bytes after them, losing its skin, "
+    "camo-face and loadout settings, and GARAGE_B.INI lost its first 57 "
+    "bytes, section header included -- one contiguous zeroed run across the "
+    "two files, identical in all three archives. Every other copy of the "
+    "disc (the November pristine image and three backups from August and "
+    "September) has both files intact.\n\n"
+    "That is what made Garage crawl and fail. With no m_Skins the loader "
+    "skips the texture Garage's recording was made with and reads the next "
+    "one from the wrong bytes, which is the retained engine error \"Texture "
     "R6Characters_T.Rainbow.R6RChaveshead: SERIAL SIZE MISMATCH: GOT "
-    "1110226955, EXPECTED 16471\" -- and 1110226955 is 0x42302E4B, ASCII "
-    "bytes being read as a length, so the package loader is reading from the "
-    "wrong place entirely. The Emotion Engine sits at 99% with the GS at 1% "
-    "and the host GPU at 6%, which is the console burning its own CPU "
-    "retrying loads that cannot succeed.\n\n"
-    "Two savestates seven minutes apart settle the blame: one on a fully "
-    "patched disc and one on a disc reverted to stock, both on Garage split "
-    "screen, both with the same error, the same garbage length and the same "
-    "eight formatted linker errors. Garage A is also the largest level on the "
-    "disc at 6.76 MB, about 1.4 MB above typical, and the only map whose two "
-    "INIs ship malformed -- GARAGE_A.INI has a key truncated mid-word and "
-    "GARAGE_B.INI has its whole section header overwritten with spaces, both "
-    "verified byte-for-byte against pristine copies. Shipyard, Alpine Village "
-    "and the rest run normally in split screen.\n\n"
+    "1110226955\" -- ASCII read as a length. The 'stock' test that seemed to "
+    "prove otherwise was not stock: the tool's backup store had recorded the "
+    "already-damaged files as originals, so RESTORE DISC put the damage back "
+    "faithfully. The store now holds the pristine copies, and the next apply "
+    "writes them to the disc.\n\n"
     "Withdrawn: \"Give split screen the full streaming budget\". The routine "
     "at 0x00472160 really does return 3 in split screen and 6 in single "
     "player, and it really is the only constant in the overlay that differs "
@@ -492,7 +516,9 @@ def _mission_settings():
         out.append(Setting(
             mission_key(stem), title, INT, 100, MISSION_GROUP,
             minimum=25, maximum=400, unit="%",
-            help="Scales every enemy count authored into %s (%s; %s). "
+            # A comma, not a semicolon, inside the brackets: the card's
+            # one-line summary ends a sentence at "; " and would cut there.
+            help="Scales every enemy count authored into %s (%s, %s). "
                  "100%% leaves it exactly as it shipped.%s"
                  % (title, where, zones, note) if live else
                  "%s, and it authors no spawner counts -- there is nothing "
@@ -512,7 +538,7 @@ def _mission_settings():
 #: Delete this list to put them back once `uscode` is understood.
 #: Still out: these two were bisected to a hang ON THE DISC, one each, with
 #: removing them loading fine. That is direct evidence, not association.
-REASSEMBLED = ("canon_team", "ss_man_down")
+REASSEMBLED = ("ss_man_down",)
 
 #: Re-enabled 2026-09-15 once `uscode` stopped shrinking the declared memory
 #: size -- see REASSEMBLED_REASON for what that was and why it mattered. They go
@@ -522,6 +548,15 @@ REASSEMBLED = ("canon_team", "ss_man_down")
 #: not the first.
 
 REASSEMBLED_REASON = (
+    "UPDATE 2026-09-22. canon_team, withdrawn beside this under the same "
+    "reasoning, turned out to hang for a reason that is now measured: a "
+    "split-screen level file is a RECORDING of what one load read, and its "
+    "script asked for a class that recording never read. It is back on "
+    "offer. The leading explanation for this one is the same kind of "
+    "mismatch in the split-screen package itself -- its retained error, "
+    "'Bad name index -511/6500', carries R6Engine's own name and import "
+    "counts -- but that is inferred, not measured, so it stays off. The "
+    "history below is kept as it was written.\n\n"
     "Withdrawn 2026-09-15, and RE-CONFIRMED 2026-09-19 on a disc carrying "
     "this option and nothing else -- so unlike some of its neighbours it "
     "was not convicted by a confounded bisect. What the retry added, from "
@@ -878,6 +913,7 @@ def _build_settings():
         rsemuzzle.card("", "Split Screen"),
         rseswitch.card("", "Weapons"),
         rsesquad.card("", "Split Screen"),
+        rsehudteam.card("", "Split Screen"),
         rseteam.card("", "Split Screen"),
         rserescue.card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
@@ -954,27 +990,46 @@ def _build_settings():
                 help="Player 2's sensitivity resets at the start of every "
                      "mission while player 1's survives."),
         Setting("ss_accuracy", "Match enemy accuracy to single player", BOOL,
-                False, "Split Screen", enabled=False, confidence="broken",
-                disabled_reason=(
-                    "There is nothing to switch. Every channel by which native "
-                    "code can learn it is in split screen was enumerated -- 82 "
-                    "accesses across four of them -- and not one lies in "
-                    "weapon, aim, dispersion, line-of-sight, observation, "
-                    "reaction-timer or damage code. The 21 split-screen tests "
-                    "are rumble, input settings, HUD loop bounds, the audio "
-                    "listener, a proximity trigger, seven render paths and one "
-                    "animation LOD. The accuracy model itself is script-side "
-                    "and has no split-screen variant."),
-                help="If enemies feel less accurate with two players, the "
-                     "shipped code does not say so. The Enemy Behaviour page "
-                     "raises their skill and their never-miss range for both "
-                     "modes at once, which is the lever that does exist."),
+                False, "Split Screen", confidence="experimental",
+                touches="words",
+                help="In split screen every terrorist fires along the direction "
+                     "his head is facing instead of at you -- the path single "
+                     "player reserves for an enemy blinded by smoke. This "
+                     "makes them aim at their target, as they do in single "
+                     "player.",
+                caution=(
+                    "One word. The native bullet-direction routine at "
+                    "0x003F36F0, run for every AI shot, reads a flag at "
+                    "0x006546F4 that is 1 in every split-screen mission and 0 "
+                    "in every single-player one (64 and 5 savestates). When "
+                    "it is set, any terrorist takes his direction from his "
+                    "view rotation -- the eye bone -- instead of the aimed "
+                    "rotation toward Target.Location. The branch at "
+                    "0x003F3D90 becomes unconditional, so only a genuinely "
+                    "smoke-blinded terrorist, tested one instruction earlier, "
+                    "still aims along his head.\n\n"
+                    "Single player cannot change: its flag is 0, so the "
+                    "original branch was always taken, and the new one takes "
+                    "the same path.\n\n"
+                    "This card used to say there was nothing to switch. That "
+                    "study enumerated every code path that tests split screen "
+                    "and found none in aim code, which was true -- this flag "
+                    "is not the split-screen flag, and it was assumed to be 0 "
+                    "on retail. Comparing the live enemies found it instead: "
+                    "difficulty, skill multipliers, every terrorist property "
+                    "and every weapon table are identical between the modes, "
+                    "and this is the one thing that is not.\n\n"
+                    "Not yet play-tested, so how much sharper they get is "
+                    "unmeasured. Idle guards' view directions sat 2.7 to 15.7 "
+                    "degrees off their body facing, and a standing player at "
+                    "10 m is about 2.2 degrees wide, so it should be very "
+                    "noticeable.")),
     ] + rseaicover.cards("", "Enemies") + rsefragwarn.cards("", TEAM_GROUP) + rsechatter.cards("", TEAM_GROUP) + [
         rsemandown.card("", "Split Screen"),
         rsecanon.card("", "Split Screen"),
-        Setting("teammates", "AI teammates in split screen", BOOL, False,
+        Setting("teammates", "AI teammates: the first attempt", BOOL, False,
                 "Split Screen", enabled=False, confidence="broken",
-                disabled_reason="Not shipped: four separate attempts all hang the level load, and the four hang states are byte-identical, so the cause is upstream of every edit tried. Re-enabling the script call is provably not sufficient. BUT the leading explanation is now DEAD. Split-screen Practice Mode on Trieste -- the only one of 96 map INIs with m_brescureRainbow, and gametype 11 so the ==10 RemoveMember pair never fires -- runs CreatePlayerTeam's rescue arm on the RETAIL disc with no patch at all. Measured in a savestate taken there: level Trieste_a_ss, EE in game code rather than the kernel, viewport index 2, and R6RainbowLoiselle, R6RainbowWeber and R6RainbowAI all resident -- every one of which is ABSENT in a normal split-screen load. So the engine CAN create AI Rainbow operatives in split screen. Whatever wedges the four attempts it is not the operative class load, and it is not a per-player AI pool. The next question is what those four did that Trieste does not.",
+                disabled_reason="Retired, and superseded by \"AI teammates in split screen\" above. Four attempts re-enabled the team script call and all hung the level load identically. The cause is now known and was never the script: a split-screen level file is a RECORDING of what one boot read, that boot never created the operatives, so their classes were read from the wrong bytes. Trieste works on the retail disc because its split-screen recording was made on a boot that did create them. The newer option pairs its team code with split-screen level files that read the operatives.",
                 help="Split screen deliberately builds a one-man team."),
 
         # ---- world ------------------------------------------------------
@@ -1030,6 +1085,15 @@ def build_edits(v: dict) -> list:
         if gate != "stock":
             w(0x0040A790, WAVE_GATES[gate], "wave: stasis gate = %s" % gate)
 
+    if v.get("ss_accuracy"):
+        w(SS_AIM_BRANCH, SS_AIM_ALWAYS,
+          "split screen: enemies aim at their target, not along their head")
+    if v.get("split_muzzle"):
+        # The overlay half of the muzzle fix: without it player 2 gets the
+        # third-person flash as well as the first-person one, on his own
+        # gun. Only ever emitted together with the COMMON attach edit.
+        for va, value, _stock, note in rsemuzzle.words():
+            w(va, value, note)
     if v.get("viewmodel"):
         w(0x00302DA8, NOP, "keep the first-person weapon in split screen")
         if v.get("split_sway"):
@@ -1045,11 +1109,13 @@ def build_edits(v: dict) -> list:
     scope = bool(v.get("split_scope"))
     fit = scope
     labels = bool(v.get("split_wheel")) and bool(v.get("split_wheel_labels"))
+    team = bool(v.get("split_squad")) and bool(v.get("split_team_panel"))
     if scope:
         for va, value in rsescope.SCOPE_GUARD:
             w(va, value, "split screen: let the scope overlay draw, but only "
                          "once the renderer exists")
-    elif fit or labels or (v.get("viewmodel") and v.get("split_sway")):
+    elif (fit or labels or team
+          or (v.get("viewmodel") and v.get("split_sway"))):
         # Something wants the cave but the scope option is off, so the dead
         # path still has its entry. Point that branch at the function's own
         # epilogue instead: split screen still branches away and still draws
@@ -1061,6 +1127,9 @@ def build_edits(v: dict) -> list:
             w(va, value, note)
     if scope:
         for va, value, _stock, note in rsescope.owner_words():
+            w(va, value, note)
+    if team:
+        for va, value, _stock, note in rsehudteam.words(freed=True):
             w(va, value, note)
     if labels:
         for va, value, _stock, note in rsewheel.label_words(freed=True):
@@ -1254,13 +1323,30 @@ def build_data(v: dict) -> list:
                             {"enable": True},
                             "split screen: build the two AI operatives"))
     if v.get("split_squad"):
-        # All three COMMON files, for a stronger reason than the muzzle
-        # edit has: the instruction is UNREACHABLE outside split
-        # screen. It sits inside the arm the m_bIsSplitScreen branch
-        # guards, so single player and online never execute it.
-        out.append(FileEdit("squad", r"/COMMON(OFF|_SS)?\.LIN$", "",
-                            {"enable": True},
+        # Two halves that only work together. The team code makes a
+        # split-screen boot create the operatives; the level recordings
+        # give that boot the bytes it will then read. Either alone wedges
+        # the load, in opposite directions -- see rsesquad and rsesplice.
+        # COMMON_SS.LIN only: it is the package split screen loads, and
+        # both edits sit where only split screen reaches anyway.
+        # With canon_team too, this edit applies canon's first (canon lifts
+        # the roster tests this one rewrites) and points those tests at
+        # Price so player 2's operative is not built again as AI.
+        out.append(FileEdit("squad", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True,
+                             "canon": bool(v.get("canon_team"))},
                             "split screen: fill the team with AI"))
+    if v.get("split_squad") or v.get("canon_team"):
+        # The level recordings both options need, disjoint per level -- see
+        # rsesplice.plan for which level reads which operatives in what order.
+        for select, order in rsesplice.plan(bool(v.get("split_squad")),
+                                            bool(v.get("canon_team"))):
+            out.append(FileEdit("team_recording", select, "",
+                                {"enable": True, "order": order},
+                                "split screen: level files that read %s"
+                                % " then ".join({"L": "Loiselle",
+                                                 "W": "Weber"}[g]
+                                                for g in order)))
     if v.get("split_muzzle"):
         # All three COMMON files. The edit cannot change single
         # player or online: the call it restores already runs there

@@ -152,7 +152,17 @@ def _op_switch_rate(plain, params):
 
 def _op_squad(plain, params):
     from . import rsesquad
-    return rsesquad.apply(plain, bool(params.get("enable", True)))
+    return rsesquad.apply(plain, bool(params.get("enable", True)),
+                          bool(params.get("canon", False)))
+
+
+def _op_team_recording(plain, params, sibling=None):
+    from . import rsesplice
+    if sibling is None:
+        raise DataEditError("team_recording needs the single-player recording "
+                            "beside the split-screen one")
+    return rsesplice.apply(plain, sibling, bool(params.get("enable", True)),
+                           str(params.get("order", "LW")))
 
 
 def _op_muzzle(plain, params):
@@ -214,6 +224,20 @@ def _op_enemy_loadout(plain, params, container=None):
 #: because what they may write depends on what will still deflate into it.
 _WANTS_CONTAINER = {"enemy_loadout"}
 
+#: Ops that are built from ANOTHER file in the same archive, handed over as
+#: that file's stock plain bytes. Maps the op to the function that names the
+#: other file from this one's path.
+def _team_recording_sibling(path):
+    from . import rsesplice
+    return rsesplice.sibling(path)
+
+
+_WANTS_SIBLING = {"team_recording": _team_recording_sibling}
+
+#: Ops allowed to change a cooked container's length -- see the length guard
+#: in `apply_data` for why every other op is not, and why these are.
+_RECORDING_OPS = {"team_recording"}
+
 
 def _op_zone_counts(plain, params):
     from . import r6zones
@@ -255,6 +279,7 @@ OPS = {
     "split_rescue_team": _op_split_rescue_team,
     "switch_rate": _op_switch_rate,
     "squad": _op_squad,
+    "team_recording": _op_team_recording,
     "muzzle": _op_muzzle,
     "rescue_flag": _op_rescue_flag,
     "frag_warning": _op_frag_warning,
@@ -292,6 +317,25 @@ def _unpack(original, path=""):
     if rselzo.is_compressed(original):
         return "rselzo", rselzo.decompress(original)
     return "plain", original
+
+
+def _sibling_plain(arc, arc_name, path, store, op):
+    """The stock plain bytes of the file an op is built from.
+
+    Taken from the backup store when it holds the file -- the shipped bytes,
+    whatever an earlier run left on the disc -- and from the disc otherwise,
+    which is then stock by construction: nothing edits a file without the
+    store remembering it first.
+    """
+    want = _WANTS_SIBLING[op](path)
+    ent = arc.files.get(want.upper())
+    if ent is None:
+        raise DataEditError("%s: %s is built from %s, which is not in %s"
+                            % (path, op, want, arc_name))
+    stored = store.original(arc_name, ent.path)
+    _kind, plain = _unpack(stored[0] if stored else arc.read_entry(ent),
+                           ent.path)
+    return plain
 
 
 def _fit_plain(data, room):
@@ -367,7 +411,15 @@ def _repack(kind, original, plain):
         if len(plain) == len(lin.decompress(original)):
             return lin.substitute(original, lambda _old: plain)[0]
         _parts, tail = lin.parse(original)
-        return lin.rebuild(plain, tail)
+        # Held to the size it shipped at whenever it fits -- a container
+        # that comes out smaller would free a gap behind itself, and the
+        # next file to relocate could land in it; see `lin.rebuild_exact`.
+        # One that has genuinely outgrown its slot is rebuilt at its natural
+        # size and relocated by the archive writer, as before.
+        try:
+            return lin.rebuild_exact(plain, tail, len(original))
+        except lin.LinTooBig:
+            return lin.rebuild(plain, tail)
     if kind == "rselzo":
         return rselzo.repack(original, plain)
     return plain
@@ -601,6 +653,10 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                     stored = store.original(arc_name, ent.path)
                     container = stored[0] if stored else arc.read_entry(ent)
                     new, n = op(plain, edit.params, container)
+                elif edit.op in _WANTS_SIBLING:
+                    new, n = op(plain, edit.params,
+                                _sibling_plain(arc, arc_name, ent.path, store,
+                                               edit.op))
                 else:
                     new, n = op(plain, edit.params)
                 # Only plain text may change length. The archive writer
@@ -637,8 +693,19 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                 # SNIFFING, not about being free-form text. Its layout is as
                 # fixed as any cooked container, so it is held to the same
                 # rule here.
+                #
+                # The one exception is an op whose whole job is to supply a
+                # DIFFERENT recording -- `team_recording`, which hands split
+                # screen the recording a boot that creates the operatives
+                # reads. It is not an edit of the old stream but a
+                # replacement for it, and it proves its own output byte for
+                # byte against both the stock split-screen and single-player
+                # recordings before returning (see `rsesplice`). It is only
+                # ever emitted together with the team code that makes the
+                # boot read it.
                 raw = ent.path.upper().endswith(_RAW_SUFFIXES)
-                if len(new) != len(plain) and (kind != "plain" or raw):
+                if (len(new) != len(plain) and (kind != "plain" or raw)
+                        and edit.op not in _RECORDING_OPS):
                     raise DataEditError(
                         "%s: %s changed the file length by %+d, which a %s "
                         "container is not allowed to do -- see the note in "

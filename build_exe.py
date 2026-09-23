@@ -41,7 +41,7 @@ ART_TARGET = os.path.join("assets", "gearicons")
 HIDDEN = [
     "cli", "gui", "gui.app", "gui.theme", "gui.widgets", "gui.controls",
     "gui.presets", "tcps2", "tcps2.iso", "tcps2.soz", "tcps2.vokes",
-    "tcps2.art", "tcps2.model", "tcps2.engine", "tcps2.detect",
+    "tcps2.art", "tcps2.model", "tcps2.engine", "tcps2.applied", "tcps2.detect",
     "tcps2.games", "tcps2.games.r6_3", "tcps2.games.ghost_recon",
     "tcps2.games.jungle_storm", "tcps2.games.ghost_recon2",
     "tcps2.games.graw", "tcps2.games.soaf", "tcps2.games.lockdown",
@@ -58,7 +58,7 @@ HIDDEN = [
     # dispatch functions, which a static scan does not follow.
     "tcps2.rsefov", "tcps2.rseviewmodel", "tcps2.rsedeadpath",
     "tcps2.rseteam", "tcps2.rserescue", "tcps2.rsemuzzle",
-    "tcps2.rsesquad", "tcps2.rseswitch", "tcps2.rsefragwarn",
+    "tcps2.rsesquad", "tcps2.rsesplice", "tcps2.rsehudteam", "tcps2.rseswitch", "tcps2.rsefragwarn",
     "tcps2.rseaicover",
     "tcps2.rsehost", "tcps2.nimitz_mis", "tcps2.engine",
 

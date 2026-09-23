@@ -39,15 +39,16 @@ order does not matter to the parser, but matching the one known-good file
 costs nothing and removes a variable from an experiment that already has too
 many.
 
-Two files on the disc are odd, and both are odd on the RETAIL disc -- checked
-byte-for-byte against the pristine copies in the backup store, so this is
-Ubisoft's doing and not a previous edit of ours. `MAPS/GARAGE_A.INI` has the
-section but no `m_bNoRulesGame`: its `m_iEliteSaveSlots` key is truncated
-mid-word and the rest of the line overwritten with spaces. `MAPS/GARAGE_B.INI`
-has had its whole header, section line included, replaced by spaces. A file
-with no section is left alone and reports no change rather than throwing --
-the disc really does ship that way, and one padded file is not a reason to
-refuse the other twenty-six.
+Two files on the working disc are odd, and an earlier version of this note
+called that Ubisoft's doing. It was not. `MAPS/GARAGE_A.INI` and
+`MAPS/GARAGE_B.INI` were damaged on the working disc by an earlier edit of
+this tool -- one zeroed run across both files, identical in all three
+archives -- and the backup store recorded the damage as the original, so a
+comparison against the store could not see it. The pristine image has both
+files intact, and the store has since been repaired from it. The handling
+below is kept anyway, because a mission INI with no section is still not a
+reason to refuse the other maps: a file with no section is left alone and
+reports no change rather than throwing.
 
 What it does not claim
 ----------------------
@@ -182,14 +183,12 @@ def card(prefix, group):
             "with no code patched at all, just one line of INI text, which is "
             "itself worth knowing because every earlier wedge involved a "
             "bytecode edit.\n\n"
-            "It is retired rather than left untried, because the arm this "
-            "flag unlocks calls the same CreateTeamMember as `split_squad`, "
-            "and that is where the failure lives: the pawn class is resolved "
-            "with DynamicLoadObject out of the R6Characters package and the "
-            "lookup lands out of range (export 93 of 84 on Island, import "
-            "567337 of 103 on Alpine). No INI key reaches that.\n\n"
-            "One thing remains genuinely unexplained and is recorded rather "
-            "than papered over: Trieste runs this same arm on the RETAIL disc "
-            "and reaches gameplay. Whatever lets it succeed there has not "
-            "been found."),
+            "It stays retired. The flag unlocks the rescue arm, whose "
+            "operatives load the same classes `split_squad` creates, and the "
+            "wedge was never about the flag: a split-screen level file is a "
+            "RECORDING of what one boot read, that boot never created the "
+            "operatives, so their classes are read from the wrong bytes. "
+            "Trieste works on the retail disc because its split-screen "
+            "recording was made on a boot that did create them. "
+            "`split_squad` supplies such recordings for 22 maps."),
         help=HELP, caution=CAUTION)

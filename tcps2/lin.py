@@ -67,9 +67,18 @@ ZOPFLI_LADDER = (5, 15, 40)
 
 ZOPFLI_LEADS = 24
 
+#: Zopfli effort when a whole rebuilt container has to be squeezed into its
+#: slot (`rebuild_exact`). Five iterations already gets about 5% over zlib's
+#: best; more buys little and costs linearly.
+ZOPFLI_FIT_ITERATIONS = 5
+
 
 class LinError(Exception):
     pass
+
+
+class LinTooBig(LinError):
+    """A rebuilt container that cannot be held to its slot's size."""
 
 
 #: how much unparsed tail is tolerated after the last chunk. COMMON_SS.LIN's
@@ -149,12 +158,102 @@ def rebuild(plain: bytes, tail: bytes = b"", level: int = 9) -> bytes:
     for i in range(0, len(plain), CHUNK_RAW):
         raw = plain[i:i + CHUNK_RAW]
         comp = zlib.compress(raw, level)
+        # The reader keeps its COMPRESSED chunk in a fixed 16384-byte buffer
+        # too (a 0x8054-byte object: two 16 KB buffers and their state), and
+        # zlib can come out a few bytes longer than its input on data that
+        # does not compress. No shipped chunk is anywhere near it -- the
+        # largest level chunk is 15,906 -- so this refuses rather than trims.
+        if len(comp) > CHUNK_RAW:
+            raise LinError("chunk at plain 0x%X deflates to %d bytes, past the "
+                           "loader's %d-byte buffer" % (i, len(comp), CHUNK_RAW))
         out += struct.pack("<II", len(raw), len(comp)) + comp
     out += tail
     # A container that will not read back is not worth writing.
     if decompress(bytes(out)) != plain:
         raise LinError("rebuilt container does not round-trip")
     return bytes(out)
+
+
+def rebuild_exact(plain: bytes, tail: bytes, size: int, level: int = 9) -> bytes:
+    """`rebuild`, landing on exactly `size` bytes -- the slot it shipped in.
+
+    Why a rebuilt container must not simply come out smaller: the archive
+    writer shrinks the file's recorded extent to match, and the bytes it gave
+    up become a free run. The allocator is best-fit, so the next INI that
+    outgrows its own slot lands in exactly that kind of gap -- and putting the
+    original container back later writes its full length over the newcomer.
+    Holding the size fixed leaves the archive's layout exactly as it shipped.
+
+    The slack is spread over every chunk as empty stored deflate blocks
+    (`EMPTY_STORED`, five bytes that decode to nothing) -- the padding the
+    same-length edits already carry into the game -- a few per chunk rather
+    than kilobytes in one place. Whatever is left under five bytes is taken
+    up by re-deflating one chunk to an exact length.
+    """
+    if not plain:
+        raise LinError("refusing to build a container with no payload")
+    parts = []
+    for i in range(0, len(plain), CHUNK_RAW):
+        raw = plain[i:i + CHUNK_RAW]
+        comp = zlib.compress(raw, level)
+        if len(comp) > CHUNK_RAW:
+            raise LinError("chunk at plain 0x%X deflates to %d bytes, past the "
+                           "loader's %d-byte buffer" % (i, len(comp), CHUNK_RAW))
+        parts.append([raw, comp])
+
+    def total():
+        return sum(8 + len(c) for _r, c in parts) + len(tail)
+
+    slack = size - total()
+    if slack < 0:
+        # zlib cannot reach it -- the winter levels' recordings come out 16
+        # to 25 KB over at level 9. Zopfli packs the same chunk about 5%
+        # tighter, and costs about a third of a second per chunk, so it is
+        # spent on the largest chunks first and only until the file fits:
+        # 40 to 50 chunks of 700-900 on those levels.
+        for k in sorted(range(len(parts)), key=lambda n: -len(parts[n][1])):
+            if slack >= 0:
+                break
+            packed = _zopfli(parts[k][0], ZOPFLI_FIT_ITERATIONS)
+            if packed is None:
+                break                          # zopfli is not installed
+            if len(packed) < len(parts[k][1]):
+                try:
+                    if zlib.decompress(packed) != parts[k][0]:
+                        continue
+                except zlib.error:
+                    continue
+                slack += len(parts[k][1]) - len(packed)
+                parts[k][1] = packed
+    if slack < 0:
+        raise LinTooBig("the rebuilt container is %d bytes over its %d-byte "
+                        "slot" % (-slack, size))
+    per, extra = divmod(slack // 5, len(parts))
+    for n, part in enumerate(parts):
+        k = min(per + (1 if n < extra else 0),
+                (CHUNK_RAW - len(part[1])) // 5)
+        if k:
+            # after the two-byte zlib header, where the first block begins
+            part[1] = part[1][:2] + EMPTY_STORED * k + part[1][2:]
+    rest = size - total()
+    for part in reversed(parts):
+        if not rest:
+            break
+        budget = len(part[1]) + rest
+        if budget > CHUNK_RAW:
+            continue
+        exact = _deflate_exact(part[0], budget)
+        if exact is not None:
+            part[1] = exact
+            rest = 0
+    if rest:
+        raise LinError("could not land the container on exactly %d bytes "
+                       "(%d left over)" % (size, rest))
+    out = b"".join(struct.pack("<II", len(r), len(c)) + c for r, c in parts)
+    out += tail
+    if len(out) != size or decompress(out) != plain:
+        raise LinError("exact rebuild does not round-trip -- refusing to write")
+    return out
 
 
 def _zopfli(plain: bytes, iterations: int = 15):

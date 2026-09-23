@@ -20,7 +20,7 @@ from tkinter import filedialog, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tcps2 import art, engine  # noqa: E402
+from tcps2 import applied, art, engine  # noqa: E402
 from tcps2.detect import identify, look, preview_detection  # noqa: E402
 from tcps2.games import PROFILES  # noqa: E402
 from tcps2.model import BOOL, INT  # noqa: E402
@@ -68,7 +68,10 @@ class App(tk.Tk):
         self.title("%s %s" % (APP_NAME, VERSION))
         theme.install(self)
         self.configure(bg=theme.P.bg)
-        self.geometry("%dx%d" % (theme.px(1160), theme.px(860)))
+        # Wide enough for the whole action bar on every disc. The bar is
+        # packed, and a packed row that runs out of room clips its LAST
+        # button rather than saying so.
+        self.geometry("%dx%d" % (theme.px(1260), theme.px(860)))
         self.minsize(theme.px(900), theme.px(660))
         self._set_icon()
 
@@ -115,6 +118,10 @@ class App(tk.Tk):
             try:
                 if name.endswith(".ico"):
                     self.iconbitmap(path)
+                    # And the default for every window opened after this
+                    # one -- the confirm sheets are Toplevels, which do not
+                    # inherit the main window's icon and showed Tk's feather.
+                    self.iconbitmap(default=path)
                 else:
                     from PIL import Image, ImageTk
                     self._icon_img = ImageTk.PhotoImage(Image.open(path))
@@ -200,6 +207,12 @@ class App(tk.Tk):
                                        width=34, state="readonly", values=[])
         self.preset_box.pack(side="left", pady=theme.px(6))
         self.preset_box.bind("<<ComboboxSelected>>", self._apply_preset)
+        # Beside the presets rather than with the disc buttons, because it is
+        # the same kind of thing: it fills the controls and writes nothing.
+        self.history_btn = ActionButton(self.bar, "Last applied",
+                                        self._last_applied)
+        self.history_btn.pack(side="left", padx=(theme.px(10), 0))
+        self.history_btn.set_enabled(False)
 
         self.apply_btn = ActionButton(self.bar, "Apply to disc", self._apply,
                                       accent=True)
@@ -285,7 +298,7 @@ class App(tk.Tk):
 
         for b in (self.browse, self.browse_dir, self.apply_btn,
                   self.cheat_btn, self.root_btn, self.revert_btn,
-                  self.discord_btn):
+                  self.discord_btn, self.history_btn):
             b.configure(width=b.width_needed())
 
         self._fit_nav()
@@ -652,6 +665,9 @@ class App(tk.Tk):
         self.root_btn.set_enabled(on and has and hostroot.supported(self.profile))
         self.revert_btn.set_enabled(on and bool(self.detection
                                                 and self.detection.has_backup))
+        self.history_btn.set_enabled(on and has and bool(applied.load(
+            engine.backup_dir_for(self.detection.path),
+            self.profile)["history"]))
 
     # -- settings ----------------------------------------------------------
     def _build_settings(self):
@@ -893,7 +909,7 @@ class App(tk.Tk):
     def _run(self, fn, done):
         self.busy = True
         for b in (self.apply_btn, self.cheat_btn, self.root_btn,
-                  self.revert_btn):
+                  self.revert_btn, self.history_btn):
             b.set_enabled(False)
 
         def worker():
@@ -960,7 +976,14 @@ class App(tk.Tk):
             lines.append("")
             lines += ["• " + w for w in pl.warnings]
         lines += ["", "Close the emulator first -- it locks the file."]
-        if not dialog.ask(self, APP_NAME, "\n".join(lines)):
+        # Against what the DISC carries, not against this window's stored
+        # profile: that profile can be hours old, and it is what went onto a
+        # disc unseen when one dial was all that had been moved.
+        before, entry = applied.baseline(engine.backup_dir_for(path), profile)
+        rows = applied.changes(profile, before, vals)
+        if not dialog.confirm_changes(self, self.apply_btn.text,
+                                      self._compared_with(entry, rows), rows,
+                                      lines):
             return
 
         self._say("Patching…")
@@ -993,6 +1016,85 @@ class App(tk.Tk):
                                        tick=self._tick,
                                        progress=lambda m: self._post("  " + m)),
                   done)
+
+    def _compared_with(self, entry, rows):
+        """The apply sheet's opening: how much changes, and against what."""
+        if entry is None:
+            since = "the disc as it shipped"
+        elif entry.get("kind") == "stock":
+            since = "the disc as it shipped, put back at %s" % entry["when"]
+        else:
+            since = "what was applied at %s" % entry["when"]
+        if rows:
+            head = ("%d setting%s will change, compared with %s:"
+                    % (len(rows), "" if len(rows) == 1 else "s", since))
+        else:
+            head = ("Nothing differs from %s, so this writes the same "
+                    "settings again." % since)
+        if entry is None:
+            head = ("Nothing has been recorded for this disc: it is new to "
+                    "this tool, or was last patched by a version that kept "
+                    "no record. Anything that version turned on and these "
+                    "settings turn off is not listed.\n\n" + head)
+        return head
+
+    def _last_applied(self):
+        """Load the settings from a recent apply back into the window.
+
+        For getting back to what worked before the latest change. It writes
+        nothing: the disc only changes when Apply is pressed, and that still
+        lists every difference first. Not Restore disc, which takes the disc
+        back to how it shipped.
+        """
+        if not self._guard():
+            return
+        log = applied.load(engine.backup_dir_for(self.detection.path),
+                           self.profile)
+        history, on_disc = log["history"], log["on_disc"] or {}
+        if not history:
+            dialog.info(self, APP_NAME, "Nothing has been applied to this "
+                                        "disc since this tool began keeping "
+                                        "a record.")
+            return
+        now = self._values()
+        options = []
+        for i, entry in enumerate(history):
+            label = "Applied %s" % entry["when"]
+            if i == 0 and on_disc.get("kind") == "applied":
+                label += "   ·   on the disc now"
+            options.append((label, self._differs(now, entry["values"])))
+        message = ("Load one of these into the window. Nothing is written to "
+                   "the disc until you press Apply, which lists what would "
+                   "change first.")
+        if on_disc.get("kind") == "stock":
+            message += ("\n\nThe disc itself was put back as it shipped at %s."
+                        % on_disc["when"])
+        pick = dialog.choose(self, "Last applied", message, options,
+                             ok_text="Load")
+        if pick is None:
+            return
+        for k, v in self.profile.normalise(history[pick]["values"]).items():
+            if k in self.vars:
+                self.vars[k].set(v)
+        for card in self.cards.values():
+            card.sync()
+        self._say("Loaded the settings applied at %s. Nothing is written "
+                  "until Apply." % history[pick]["when"], "good")
+        self._changed()
+
+    def _differs(self, now, values):
+        """How an earlier apply differs from what the window holds, in a line."""
+        diff = applied.changes(self.profile, now, values)
+        if not diff:
+            return "The same as the window now."
+        names = ", ".join(ch.setting.label for ch in diff[:3])
+        if len(diff) > 3:
+            names += ", and %d more" % (len(diff) - 3)
+        risky = sum(1 for ch in diff if ch.risk)
+        return ("%d setting%s from the window: %s.%s"
+                % (len(diff), " differs" if len(diff) == 1 else "s differ",
+                   names, " %d %s not play-tested." % (
+                       risky, "is" if risky == 1 else "are") if risky else ""))
 
     def _revert(self):
         if not self._guard():

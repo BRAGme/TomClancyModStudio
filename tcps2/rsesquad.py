@@ -1,165 +1,234 @@
-"""AI teammates in split screen, by sending it down the arm that already works.
+"""AI teammates in split screen: the team code half.
+
+Why every attempt before this one wedged
+----------------------------------------
+
+Six attempts made split screen build Loiselle and Weber, by four different
+routes through `R6RainbowTeam.CreatePlayerTeam`, and every one of them wedged
+the level load. The routes were never the problem. A split-screen level file
+is a RECORDING of what one boot read, replayed in order, and that boot never
+created the operatives -- so the moment any route asks for Loiselle's class,
+the engine reads the next recorded bytes as that class and the load falls out
+of step for good. Island's savestate from the last attempt retains the
+engine's own error, "BAD EXPORT INDEX 93/84", and "SERIAL SIZE MISMATCH: GOT
+66, EXPECTED 321", where 321 bytes is R6RainbowWeber's class.
+
+`rsesplice` supplies the recording a boot with operatives reads. This module
+makes the boot ask for it. Neither works alone and they are one option.
 
 The shape of CreatePlayerTeam
 -----------------------------
 
-`R6RainbowTeam.CreatePlayerTeam` lives in the package at plain `0x086a7f` in
-every COMMON build, script block at `0x1470a3`, disk 1346 / memory 1775. Read
-whole, it is a fork with two arms:
+In the package at plain `0x086a7f` of every COMMON build, script block at
+`0x1470a3`, disk 1346 / memory 1775::
 
-```
-0x0150: CreateTeamMember(0, p_playerStartingPoint, True, PC)      ; player 1
-0x0162: JumpIfNot(-> 0x357, Level.Game.m_bIsSplitScreen)          ; THE FORK
-          ; ---- split-screen arm ----
-0x017d:   PC = R6PlayerController(Level.m_playerList[1])          ; player 2
-0x0198:   if (PC != None)
-0x01c4:     CreateTeamMember(1, m_CoverSpots[0], True, PC, bTerroHunt)
-0x01f9:   if (aMissionDescription.m_bRescureRainbow)              ; Trieste only
-0x02b9:     CreateTeamMember(2, m_CoverSpots[1], False, PC, False)
-0x0300:     CreateTeamMember(3, m_CoverSpots[2], False, PC, False)
-0x0354:   Jump(-> 0x688)                                          ; <-- THE END
-          ; ---- single-player arm ----
-0x0357: ... CreateTeamMember(1, ...)      ; Price
-0x03fb: if (!bTerroHunt && !m_bMissionPrice) RemoveMember()
-0x0420: ... rescue cover-spot setup, skipped when the flag is false
-0x04d1: if (... && m_CoverSpots[1] != None)
-0x054f:     CreateTeamMember(2, m_CoverSpots[1], False, PC, bTerroHunt)
-0x056d:   else CreateTeamMember(2, teamStartingPoint, False, PC, bTerroHunt)
-0x0586: if (!bTerroHunt && !m_bMissionLoiselle) RemoveMember()
-0x05ab: ... CreateTeamMember(3, ...)      ; Weber
-0x0663: if (!bTerroHunt && !m_bMissionWeber) RemoveMember()
-0x0688: end
-```
-
-Split screen creates player 2 as member 1 and then **jumps clean over the
-entire AI-creation section**. That unconditional `Jump` at memory `0x0354` is
-the whole reason there are no teammates. It is not a flag, not a budget and
-not missing content -- it is one jump.
-
-Why every previous attempt failed
----------------------------------
-
-Six attempts all aimed at the `JumpIfNot` at memory `0x01f9` (disk
-`0x14721d`), forcing the **rescue** arm to run. That arm spawns at
-`m_CoverSpots[1]` and `m_CoverSpots[2]`, which are filled from
-`RescureTeamStartingPoint` -- and it has **no fallback** if they come back
-null. On a map that authors no starting point the spawn target is nothing at
-all, which is exactly the wedge that was seen, most recently on Alpine
-Village with no code patched whatsoever.
-
-The single-player arm is written defensively where the rescue arm is not.
-`0x04d1` tests `m_CoverSpots[1] != None` and falls through to `0x056d`, which
-spawns at `teamStartingPoint` -- a local assigned at `0x0028`/`0x0036` from
-the function's own parameters, so it always exists. That is the difference,
-and it is why this edit points at that arm instead.
+    0x0150: CreateTeamMember(0, p_playerStartingPoint, True, PC)      ; player 1
+    0x0162: JumpIfNot(-> 0x357, Level.Game.m_bIsSplitScreen)
+              ; ---- split-screen arm ----
+    0x017d:   PC = R6PlayerController(Level.m_playerList[1])          ; player 2
+    0x0198:   if (PC != None)
+    0x01c4:     CreateTeamMember(1, m_CoverSpots[0], True, PC, bTerroHunt)
+    0x01f9:   if (aMissionDescription.m_bRescureRainbow)   <-- THIS JUMP
+    0x02b9:     CreateTeamMember(2, m_CoverSpots[1], False, PC, False)
+    0x0300:     CreateTeamMember(3, m_CoverSpots[2], False, PC, False)
+    0x0354:   Jump(-> 0x688)
+              ; ---- single-player arm ----
+    0x0357: ... CreateTeamMember(1, ...)      ; Price
+    0x03fb: if (!bTerroHunt && !m_bMissionPrice) RemoveMember()
+    0x0420: ... rescue cover-spot setup, skipped when the flag is false
+    0x04d1: if (... && m_CoverSpots[1] != None)
+    0x054f:     CreateTeamMember(2, m_CoverSpots[1], False, PC, bTerroHunt)
+    0x056d:   else CreateTeamMember(2, teamStartingPoint, False, PC, bTerroHunt)
+    0x0586: if (!bTerroHunt && !m_bMissionLoiselle) RemoveMember()
+    0x05ab: ... CreateTeamMember(3, ...)      ; Weber
+    0x0663: if (!bTerroHunt && !m_bMissionWeber) RemoveMember()
+    0x0688: end
 
 The edit
 --------
 
-Retarget one `Jump`: memory `0x0354`, `0x0688` -> `0x0420`.
-
-Landing at `0x0420` rather than `0x03fb` is deliberate. `0x03fb` is the
-`m_bMissionPrice` check, and `RemoveMember` takes off the member most
-recently added -- which in the split-screen arm is **player 2**, a human. On
-any map where Price is not in the mission that would delete the second player
-from his own team. `0x0420` starts just past it, which is correct on its own
-terms too: player 2 occupies Price's slot, so Price's presence test has
-already been answered by there being a second player at all.
-
-What the split-screen team then becomes:
+The rescue test at `0x01f9` (disk `0x14721d`) jumps to `0x0354` when the map is
+not a rescue -- straight out of the function. It now jumps to `0x0420`, into
+the single-player arm just past its Price check, so every non-rescue map
+creates Loiselle and Weber exactly as single player does, and removes whichever
+the mission's roster leaves out:
 
 | member | who |
 | ------ | --- |
 | 0 | player 1 |
 | 1 | player 2 |
-| 2 | AI, Loiselle, subject to `m_bMissionLoiselle` |
-| 3 | AI, Weber, subject to `m_bMissionWeber` |
+| 2 | AI Loiselle, unless the mission leaves her out |
+| 3 | AI Weber, unless the mission leaves him out |
 
-which is the same pair of operatives Trieste produces, reached without
-needing anything Trieste authors.
+Why this jump and not the `Jump` at `0x0354`, which the previous version
+retargeted: that one runs after the rescue arm as well, so on Trieste -- where
+the rescue arm already builds both operatives -- it would build them twice.
+Retargeting the rescue test's miss leaves Trieste's hit exactly as shipped.
 
-Three bytes wide, and only two of them change: `06 88 06` becomes
-`06 20 04`. The token keeps its width, so `ScriptSize` cannot move and no
-other jump is touched -- the rule this engine hangs on breaking.
+Landing at `0x0420` rather than `0x03fb` is deliberate: `0x03fb` removes the
+member most recently added when Price is not in the mission, and in split
+screen that member is player 2.
 
-Why it is safe outside split screen
------------------------------------
+The member count
+----------------
 
-Memory `0x0354` is only reachable through the `m_bIsSplitScreen` branch at
-`0x0162`. Single player and online take the other arm at `0x0357` and never
-execute this instruction. The edit is therefore not merely harmless in those
-modes, it is **unreachable** -- which is why it is written to all three COMMON
-files and nobody has to be right about which one a mode loads.
+`CreateTeamMember` ends by maintaining the member count, and in split screen
+it RESETS rather than counts::
+
+    0x0ead: if (Level.Game != None && Level.Game.m_bIsSplitScreen)
+    0x0ede:     m_iMemberCount = 1
+    0x0ee8: else m_iMemberCount++
+
+The rescue arm survives that by setting the count itself around each call.
+The single-player arm does not, so without this both operatives would be
+written into `m_Team[1]`, on top of player 2. `native119` (object `!=`)
+becomes `native114` (object `==`): the first operand goes false, the `&&`
+short-circuits, and the increment runs. Single player already took the
+increment, by the other operand, and still does. On Trieste the rescue arm's
+own assignments overwrite the count after every call, so it ends where it
+always did.
+
+Both edits keep their token widths, so `ScriptSize` cannot move. They are
+written to `COMMON_SS.LIN` only -- the package split screen loads -- and both
+sit where only split screen reaches anyway.
 
 What is NOT established
 -----------------------
 
-Three things, all of which need the disc to run:
+* Who the AI follow. The split-screen arm reassigned `PC` to player 2's
+  controller at `0x017d`, and the single-player arm passes `PC` to
+  `CreateTeamMember`, so the operatives are created against player 2 rather
+  than player 1. What that argument governs was not traced.
+* How the AI look. `LoadMissionRainbowSkins` clamps its member count to 2 in
+  split screen (mem `0x0825`), so they may wear their class's default skin
+  rather than the mission's camouflage.
+* The winter levels. `rsesplice` covers them too, but their order is
+  reasoned from an exact accounting of what single player reads, not proved
+  by a map like Trieste -- see its notes. Before it did, Alpine Village
+  wedged with exactly the recording desync every other level had.
 
-* that `CreateTeamMember` succeeds for members 2 and 3 in split screen at
-  all. The engine demonstrably can build AI operatives in split screen --
-  Trieste does it on the retail disc -- but Trieste does it through the other
-  arm.
-* that passing player 2's `PlayerController` is right. In the split-screen
-  arm `PlayerController` was reassigned at `0x017d` to player 2, so the AI
-  are created against player 2 rather than player 1. What that argument
-  governs was not traced. It may mean the AI follow player 2, which is a
-  behaviour question rather than a correctness one.
-* that `m_iMemberCount` ends up correct. The rescue arm sets it explicitly
-  (`0x020b`, `0x02cf`, `0x0317`); the single-player arm never does, so
-  `CreateTeamMember` must maintain it. That was inferred from the asymmetry,
-  not read.
+Retired neighbour: `rseteam` (`split_rescue_team`) retargeted this same jump to
+`0x020b` to force the rescue arm. It stays retired; this refuses a file that
+carries its edit rather than guessing.
 """
 
 from __future__ import annotations
 
-#: Context through the `Jump`, long enough to be unique in all three COMMON
-#: builds. The last three bytes are the instruction itself.
-SIGNATURE = bytes([
+#: The rescue test at memory `0x01f9`, with two bytes of the next statement
+#: so the pattern is unique in all three COMMON builds.
+RESCUE_SIG = bytes([
+    0x07, 0x54, 0x03,              # JumpIfNot -> 0x0354      <-- retargeted
+    0x19,                          # Context:
+    0x00, 0x71, 0x0C,              #   local aMissionDescription
+    0x06, 0x00, 0x04,              #   (skip 6, result size 4)
+    0x2D, 0x01, 0xCB, 0x04,        #   .m_bRescureRainbow
+    0x0F, 0x01,                    # next statement: Let(...
+])
+
+#: Index of the `JumpIfNot` opcode inside RESCUE_SIG; its target is the next
+#: two bytes, little-endian, in MEMORY offsets as all cooked jumps are.
+RESCUE_JUMP = 0
+
+SKIP_TARGET = 0x0354        # stock: out of the split-screen arm
+ARM_TARGET = 0x0420         # the single-player AI arm, past the Price check
+
+#: Measured on this disc, identical in all three COMMON builds. Not used to
+#: find anything.
+KNOWN_OFFSET = 0x14721D
+
+#: The split-screen arm's own exit, which the previous version of this option
+#: retargeted. It must stay stock now, or Trieste builds its operatives twice.
+EXIT_SIG = bytes([
     0x3A, 0x24, 0x0A, 0x16,        # ...end of the m_iMemberCount store
     0x1B, 0x45, 0x05, 0x16,        # VirtualFunction(RemoveMember)
     0x1B, 0x45, 0x05, 0x16,        # VirtualFunction(RemoveMember)
     0x0F, 0x01, 0x16, 0x26,        # Let(m_iMemberCount, IntOne())
-    0x06, 0x88, 0x06,              # Jump -> 0x0688      <-- retargeted
+    0x06, 0x88, 0x06,              # Jump -> 0x0688
 ])
+#: Where its `Jump` opcode sits.
+KNOWN_EXIT_OFFSET = 0x147326
 
-#: Index of the `Jump` opcode inside SIGNATURE; its target is the next two
-#: bytes, little-endian.
-JUMP = 16
+#: The AI's own heads, bodies and caps. `LoadMissionRainbowSkins` loads every
+#: operative's skins, heads and cap classes unconditionally, then hands them
+#: out in a loop -- and in split screen that loop is capped at two members::
+#:
+#:     0x080a: if (Level.Game.m_bIsSplitScreen)
+#:     0x0825:     iMemberCount = 2
+#:     0x082d:     goto 0x083b                <-- this jump
+#:     0x0830: else iMemberCount = m_iMemberCount
+#:     0x083b: for (i = 0; i < iMemberCount; i++) ... skins, head, cap
+#:
+#: so the AI, members 2 and 3, kept their mesh's built-in materials: Weber's
+#: head on the ordinary levels, Price's face on the winter ones. The jump
+#: now lands on 0x0830, so split screen counts the real team. It loads
+#: nothing: the loop has no DynamicLoadObject and every head, body and cap it
+#: hands out was loaded before 0x080a. It needs the count fix above, without
+#: which split screen's m_iMemberCount is 1 and player 2 would lose his skin.
+SKINS_SIG = bytes([
+    0x0F, 0x00, 0x74, 0x19, 0x2C, 0x02,   # iMemberCount = 2
+    0x06, 0x3B, 0x08,                     # Jump -> 0x083b     <-- retargeted
+    0x0F, 0x00, 0x74, 0x19, 0x01, 0x16,   # iMemberCount = m_iMemberCount
+])
+SKINS_OPERAND = 7
+SKINS_STOCK = 0x3B          # -> 0x083b, the loop
+SKINS_FIXED = 0x30          # -> 0x0830, the real count
+KNOWN_SKINS_OFFSET = 0x147E13
 
-SKIP_TARGET = 0x0688        # stock: straight to the end of the function
-ARM_TARGET = 0x0420         # the single-player AI arm, past the Price check
+#: ...and on Trieste, whose rescue arm pins the count to 1 before the skins
+#: are handed out (`Let(m_iMemberCount, IntOne())`, mem 0x034d, inside
+#: EXIT_SIG), the uncapped loop would skip player 2. That Let becomes
+#: EX_Nothing, which leaves `m_iMemberCount` and `1` as two statements that
+#: evaluate and discard -- same width on disk and in memory, and the jumps
+#: onto 0x034d still land on a statement. `R6GameInfo.CreateRainbowTeam`
+#: resets every team's count afterwards, so Trieste's teams end as shipped.
+EXIT_LET = 12
+EX_LET = 0x0F
+EX_NOTHING = 0x0B
 
-#: Measured on this disc. Not used to find anything.
-KNOWN_OFFSET = 0x147326
+#: Player 2 out of the squad.
+#:
+#: With player 2 created as member 1 and the AI behind him, the squad code --
+#: which treats every counted member after index 0 as an AI -- orders player
+#: 2 about with them: each follow order reshuffles him among the AI and sends
+#: his controller into FollowLeader, a state it does not have, and the AI's
+#: wait loop (`bLocked`, R6RainbowAI.FollowLeader 0x05cd) waits for the last
+#: member, who could be him. That is "they go where they were told and then
+#: hold". Retail split screen keeps player 2 OUTSIDE the counted range
+#: ([P1, P2], count 1), so after the skins are handed out this moves him to
+#: the end and counts him out: [P1, AI..., P2], count 1 + the AI.
+#:
+#: The code lives in the rescue cover-spot block at mem 0x0420-0x04d0, which
+#: nothing in the split-screen package can reach any more (the jump there,
+#: the rescue test's miss above, lands on its first statement, which now
+#: jumps straight past it to 0x04d1 exactly as the flag test did). The call to
+#: SetSavedData() at 0x06e1 jumps into it::
+#:
+#:     SetSavedData()
+#:     if (m_bRescureRainbow) { m_iMemberCount = 1; return; }   // Trieste as shipped
+#:     if (m_iMemberCount > 1 && m_Team[1].m_bIsPlayer)
+#:         { SendMemberToEnd(1); m_iMemberCount--; }
+#:     return
+#:
+#: Every token is lifted from this package; the balance is dead filler, so
+#: both regions keep their disk and memory lengths and ScriptSize is 1775.
+LAYOUT_CALL = bytes.fromhex("19004a03030000683216040b")    # SetSavedData(); return
+LAYOUT_CALL_NEW = bytes.fromhex("06230400710c0b0b0b0b040b")
+LAYOUT_CODE = bytes.fromhex(
+    "07d104821900710c0600042d01cb04181d00811919018f05000401a6080004612f214a04161616e7701f322320526573637572655465616d5374617274696e67506f696e7400395600631416161b40031900631405000c018c1607d104771a2501282a160f1a2601281a25191a25012805000801e1030f1a2c0201281a26191a25012805000801e103")
+LAYOUT_CODE_NEW = bytes.fromhex(
+    "06d10419004a03030000683216074a041900710c0600042d01cb040f011626040b077904829701162616181200191a26010a0600042d01b7161b66102616a6011616040b"
+    "0016" + "00710c" * 7 + "0b" * 46)
+KNOWN_LAYOUT_OFFSETS = (0x1475DD, 0x1473BF)
 
-#: The second half of the fix, and the reason the first half alone wedged.
-#:
-#: `CreateTeamMember` ends by maintaining the member count, and in split
-#: screen it does not count -- it RESETS::
-#:
-#:     0x0ead: if (Level.Game != None && Level.Game.m_bIsSplitScreen)
-#:     0x0ede:     m_iMemberCount = 1        ; hard reset
-#:     0x0ee8: else m_iMemberCount++
-#:
-#: The rescue arm survives that by setting the count explicitly around each
-#: of its calls (2, 3, 4, then 1). The single-player arm the jump above lands
-#: in does not, so AI creation runs with the count pinned at 1: both
-#: operatives are written into `m_Team[1]`, on top of player 2, and
-#: `iSpawnTry` -- assigned `m_iMemberCount` at mem `0x0067` -- starts from 1
-#: instead of 0. The wedged savestate's retained error buffer reads
-#: "Script serialization mismatch: Got 0, expected -184945406", which is what
-#: that kind of arithmetic damage looks like by the time the engine notices.
-#:
-#: The condition is `(Level.Game != None) && Level.Game.m_bIsSplitScreen`.
-#: Changing `native119` (object `!=`) to `native114` (object `==`) makes the
-#: first operand false, the `&&` short-circuits, and the reset is skipped in
-#: favour of the increment.
-#:
-#: Single player is unchanged, and provably so: there the condition was
-#: ALREADY false (`m_bIsSplitScreen` is false), so it already took the
-#: increment. After the edit it still takes the increment, by the other
-#: operand. Same path, same result.
+#: Player 2's "move here" used player 1's aim point: TeamActionRequest read
+#: `m_TeamLeader.Controller`. It now reads `actionRequested.aQueryTarget`, the
+#: controller that asked -- the form the menu-order path already uses -- so
+#: for player 1 nothing changes.
+ORDER_AIM = bytes.fromhex("1b7901192e0519014f01050004019405000c017a0e16")
+ORDER_AIM_NEW = bytes.fromhex("1b7901192e051900580205000401b305000c017a0e16")
+KNOWN_ORDER_OFFSET = 0x145CBF
+
+#: `CreateTeamMember`'s count maintenance, see the notes above.
 COUNT_SIG = bytes([
     0x07, 0xE8, 0x0E,              # JumpIfNot -> 0x0ee8 (the increment)
     0x82,                          # bool eval
@@ -172,50 +241,165 @@ COUNT_OPERAND = 4
 COUNT_STOCK = 0x77      # native119, !=
 COUNT_FIXED = 0x72      # native114, ==
 
-#: Measured on this disc. Not used to find anything.
+#: The jump target inside COUNT_SIG, which is the one thing about it that
+#: moves: `canon_team` re-assembles CreateTeamMember, and the increment it
+#: jumps to goes from 0x0ee8 to 0x0eb5. Both are accepted, so this edit
+#: finds its site before or after canon's, in either order. A wildcard would
+#: not do: the rest of the pattern, `Level.Game != None`, occurs eleven more
+#: times in the package.
+COUNT_TARGETS = (0x0EE8, 0x0EB5)
+
+#: The operand byte, measured on this disc. Not used to find anything.
 KNOWN_COUNT_OFFSET = 0x146BC6
+
+
+#: With `canon_team` as well, player 2 is created as the mission's own
+#: operative on three levels, and the single-player arm would then create the
+#: same operative again as AI. Its two removal tests::
+#:
+#:     0x0586: if (!bTerroHunt && !m_bMissionLoiselle) RemoveMember()
+#:     0x0663: if (!bTerroHunt && !m_bMissionWeber)    RemoveMember()
+#:
+#: are pointed at `m_bMissionPrice` instead -- one byte each, the property's
+#: import index inside a compact index of the same width (c3 Weber, c4
+#: Loiselle, c5 Price). Price is out exactly on the levels canon changes, so
+#: both AI go and the team is the roster; on the all-three levels both stay.
+#: No single flag is right on every roster: OLDCITY_A (Price only) keeps both
+#: AI. Only emitted when both options are on.
+ROSTER_SIGS = {
+    # JumpIfNot(next) (!bTerroHunt && !GetMissionDescription().<flag>)
+    #     RemoveMember()
+    "L": bytes.fromhex("07ab05" "82" "812d00530416" "181000"
+                       "81196516160600042d01c40c16" "16" "1b450516"),
+    "W": bytes.fromhex("078806" "82" "812d00530416" "181000"
+                       "81196516160600042d01c30c16" "16" "1b450516"),
+}
+ROSTER_FLAG = 23                # the compact index's first byte
+ROSTER_STOCK = {"L": 0xC4, "W": 0xC3}
+ROSTER_PRICE = 0xC5
+KNOWN_ROSTER_OFFSETS = {"L": 0x1474E9, "W": 0x147595}
 
 
 class SquadError(Exception):
     pass
 
 
+def _roster_site(plain: bytes, who: str) -> int:
+    found = []
+    for flag in (ROSTER_STOCK[who], ROSTER_PRICE):
+        probe = bytearray(ROSTER_SIGS[who])
+        probe[ROSTER_FLAG] = flag
+        found += _find_all(plain, bytes(probe))
+    if len(found) != 1:
+        raise SquadError("expected exactly 1 %s removal test, found %d"
+                         % (who, len(found)))
+    return found[0] + ROSTER_FLAG
+
+
+def roster_reads_price(plain: bytes) -> bool:
+    """True if both removal tests read the Price flag."""
+    return all(plain[_roster_site(plain, w)] == ROSTER_PRICE for w in "LW")
+
+
+def _find_all(plain: bytes, probe: bytes):
+    found = []
+    at = plain.find(probe)
+    while at >= 0:
+        found.append(at)
+        at = plain.find(probe, at + 1)
+    return found
+
+
 def _site(plain: bytes) -> int:
-    """Offset of the SIGNATURE, whichever target the jump currently holds."""
+    """Offset of RESCUE_SIG, whichever of our two targets the jump holds."""
     found = []
     for target in (SKIP_TARGET, ARM_TARGET):
-        probe = bytearray(SIGNATURE)
-        probe[JUMP + 1] = target & 0xFF
-        probe[JUMP + 2] = (target >> 8) & 0xFF
-        probe = bytes(probe)
-        at = plain.find(probe)
-        while at >= 0:
-            found.append(at)
-            at = plain.find(probe, at + 1)
+        probe = bytearray(RESCUE_SIG)
+        probe[RESCUE_JUMP + 1] = target & 0xFF
+        probe[RESCUE_JUMP + 2] = (target >> 8) & 0xFF
+        found += _find_all(plain, bytes(probe))
     if len(found) != 1:
         raise SquadError(
-            "expected exactly 1 split-screen team jump, found %d -- this is "
-            "not the build this was measured on" % len(found))
+            "expected exactly 1 split-screen rescue test, found %d -- this is "
+            "not the build this was measured on, or another edit holds the "
+            "jump" % len(found))
     return found[0]
 
 
 def reads(plain: bytes) -> int:
-    """The jump's current target."""
-    at = _site(plain) + JUMP + 1
+    """The rescue test's current miss target."""
+    at = _site(plain) + RESCUE_JUMP + 1
     return plain[at] | (plain[at + 1] << 8)
+
+
+def _exit_site(plain: bytes) -> int:
+    """Offset of EXIT_SIG, with its count reset as a Let or as Nothing."""
+    found = []
+    for op in (EX_LET, EX_NOTHING):
+        probe = bytearray(EXIT_SIG)
+        probe[EXIT_LET] = op
+        found += _find_all(plain, bytes(probe))
+    if len(found) != 1:
+        raise SquadError("expected exactly 1 split-screen arm exit, found %d"
+                         % len(found))
+    return found[0]
+
+
+def _exit_is_stock(plain: bytes) -> bool:
+    """The exit JUMP is stock (the Let before it may be either form)."""
+    try:
+        _exit_site(plain)
+        return True
+    except SquadError:
+        return False
+
+
+def _skins_site(plain: bytes) -> int:
+    found = []
+    for t in (SKINS_STOCK, SKINS_FIXED):
+        probe = bytearray(SKINS_SIG)
+        probe[SKINS_OPERAND] = t
+        found += _find_all(plain, bytes(probe))
+    if len(found) != 1:
+        raise SquadError("expected exactly 1 split-screen skin cap, found %d"
+                         % len(found))
+    return found[0] + SKINS_OPERAND
+
+
+def _pair_site(plain: bytes, stock: bytes, new: bytes, what: str):
+    """(offset, isNew) of one of two same-length forms, unique in the file."""
+    a, b = _find_all(plain, stock), _find_all(plain, new)
+    if len(a) + len(b) != 1:
+        raise SquadError("expected exactly 1 %s, found %d" % (what, len(a) + len(b)))
+    return (a or b)[0], bool(b)
+
+
+def keeps_player2_out(plain: bytes) -> bool:
+    """True if split screen moves player 2 out of the AI squad after skins."""
+    return (_pair_site(plain, LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call")[1]
+            and _pair_site(plain, LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block")[1])
+
+
+def orders_from_requester(plain: bytes) -> bool:
+    return _pair_site(plain, ORDER_AIM, ORDER_AIM_NEW, "order aim")[1]
+
+
+def skins_everyone(plain: bytes) -> bool:
+    """True if split screen skins the whole team, not just two members."""
+    return (plain[_skins_site(plain)] == SKINS_FIXED
+            and plain[_exit_site(plain) + EXIT_LET] == EX_NOTHING)
 
 
 def _count_site(plain: bytes) -> int:
     """Offset of the member-count clamp, whichever operator it holds."""
     found = []
     for op in (COUNT_STOCK, COUNT_FIXED):
-        probe = bytearray(COUNT_SIG)
-        probe[COUNT_OPERAND] = op
-        probe = bytes(probe)
-        at = plain.find(probe)
-        while at >= 0:
-            found.append(at)
-            at = plain.find(probe, at + 1)
+        for target in COUNT_TARGETS:
+            probe = bytearray(COUNT_SIG)
+            probe[COUNT_OPERAND] = op
+            probe[1] = target & 0xFF
+            probe[2] = (target >> 8) & 0xFF
+            found += _find_all(plain, bytes(probe))
     if len(found) != 1:
         raise SquadError(
             "expected exactly 1 member-count clamp, found %d -- this is not "
@@ -228,96 +412,126 @@ def counts(plain: bytes) -> bool:
     return plain[_count_site(plain) + COUNT_OPERAND] == COUNT_FIXED
 
 
-def apply(plain: bytes, enable: bool = True):
+def apply(plain: bytes, enable: bool = True, canon: bool = False):
     """Both halves. Returns (bytes, changed). Length never moves.
 
-    They are deliberately not separable. The jump alone was play-tested and
-    wedged, because it routes AI creation into an arm that never maintains
-    the member count; the clamp alone does nothing, because nothing reaches
-    the code that would notice. An option that can be half-applied is an
-    option that can be tested into a misleading answer.
+    `canon` also points the two removal tests at Price -- see ROSTER_SIGS --
+    and first applies `rsecanon` itself, because canon LIFTS those two tests
+    into its own code and must see them before they are rewritten. It is
+    idempotent, so the canon card's own edit running afterwards is a no-op;
+    and it refuses rather than lift a rewritten test, so running before it
+    cannot be silently wrong.
+
+    They are deliberately not separable: the jump without the count writes
+    both operatives over player 2, and the count without the jump does
+    nothing anyone can see. Neither ships without the recordings either --
+    that is the card's job, not this function's.
     """
+    pre = 0
+    if enable and canon:
+        from . import rsecanon
+        plain, pre = rsecanon.apply(plain, True)
+    at = _site(plain)
+    cat = _count_site(plain)
+    if not _exit_is_stock(plain):
+        raise SquadError(
+            "the split-screen arm's exit jump is not stock -- a file carrying "
+            "the previous version of this edit would build Trieste's "
+            "operatives twice")
+
     out = bytearray(plain)
     changed = 0
-
-    at = _site(plain)
     want = ARM_TARGET if enable else SKIP_TARGET
     if reads(plain) != want:
-        out[at + JUMP + 1] = want & 0xFF
-        out[at + JUMP + 2] = (want >> 8) & 0xFF
+        out[at + RESCUE_JUMP + 1] = want & 0xFF
+        out[at + RESCUE_JUMP + 2] = (want >> 8) & 0xFF
         changed += 1
 
-    cat = _count_site(plain)
     cwant = COUNT_FIXED if enable else COUNT_STOCK
     if plain[cat + COUNT_OPERAND] != cwant:
         out[cat + COUNT_OPERAND] = cwant
         changed += 1
 
+    sat = _skins_site(plain)
+    swant = SKINS_FIXED if enable else SKINS_STOCK
+    if plain[sat] != swant:
+        out[sat] = swant
+        changed += 1
+    lat = _exit_site(plain) + EXIT_LET
+    lwant = EX_NOTHING if enable else EX_LET
+    if plain[lat] != lwant:
+        out[lat] = lwant
+        changed += 1
+
+    for stock, new, what in ((LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call"),
+                             (LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block"),
+                             (ORDER_AIM, ORDER_AIM_NEW, "order aim")):
+        at_pair, is_new = _pair_site(plain, stock, new, what)
+        if is_new != enable:
+            out[at_pair:at_pair + len(stock)] = new if enable else stock
+            changed += 1
+
+    for who in "LW":
+        at_flag = _roster_site(plain, who)
+        fwant = ROSTER_PRICE if (enable and canon) else ROSTER_STOCK[who]
+        if plain[at_flag] != fwant:
+            out[at_flag] = fwant
+            changed += 1
+
     if len(out) != len(plain):
         raise SquadError("the squad edit changed the file length")
-    return bytes(out), changed
+    return bytes(out), changed + pre
 
 
-HELP = ("Split screen creates player 2 as the second team member and then "
-        "jumps straight over the code that creates the AI operatives. This "
-        "retargets that one jump into the arm single player already uses, so "
-        "the team is filled out with Loiselle and Weber behind the two "
-        "players.")
+HELP = ("Split screen builds player 2 and then skips the code that creates the "
+        "AI operatives. This sends it through the same code single player "
+        "uses, so the two players are joined by Loiselle and Weber -- or "
+        "whichever of them the mission's own roster includes -- and swaps in "
+        "split-screen level files that contain the operatives, which is what "
+        "every earlier attempt was missing.")
 
 CAUTION = (
-    "EXPERIMENTAL, but a different shape from the six attempts before it, and "
-    "the reason they failed is now understood.\n\n"
-    "All six retargeted the branch that forces the RESCUE arm. That arm "
-    "spawns at cover spots derived from a rescue starting point, with no "
-    "fallback when they come back null -- so on a map that authors no "
-    "starting point it spawns operatives nowhere, which is the wedge that "
-    "kept happening. Alpine Village reproduced it with no code patched at "
-    "all, just one line of INI, which is what finally made the cause "
-    "clear.\n\n"
-    "This points at the SINGLE-PLAYER arm instead, which is written "
-    "defensively where the rescue arm is not: it tests the cover spot for "
-    "null and falls back to the team starting point, a value the function "
-    "assigns from its own parameters and which therefore always exists.\n\n"
-    "Two bytes, inside a jump that keeps its width, so ScriptSize does not "
-    "move and no other jump is touched.\n\n"
-    "Single player and online cannot change, and this time it is stronger "
-    "than safe -- the instruction is UNREACHABLE unless split screen is "
-    "running, because it sits inside the branch the split-screen test "
-    "guards.\n\n"
-    "PLAY-TESTED on Alpine Village, and it wedged -- but it got FURTHER than "
-    "anything before it, and the savestate says where. The AI operatives "
-    "start being built: R6RainbowLoiselle goes from 4 references in a working "
-    "split-screen state to 8 in the wedged one, R6RainbowWeber from 4 to 7. "
-    "So the jump lands correctly and the team code runs. The EE is then "
-    "parked in the kernel with the UnrealScript VM's opcode dispatch on the "
-    "stack, which means it hung inside script, downstream of this edit.\n\n"
-    "It is not an infinite load. The console is parked in the engine's fatal "
-    "error handler, and the wedged savestate still holds the message: the "
-    "retained error buffer at 0x005b9070 reads \"Script serialization "
-    "mismatch: Got 0, expected -184945406\", where four working states all "
-    "hold the pristine default \"General protection fault!\". Only the wedged "
-    "state carries FORMATTED linker errors rather than bare format strings, "
-    "among them \"failed to alloc 50331656 bytes\" (0x03000008, a length read "
-    "from garbage) and a serial-size mismatch naming R6Characters.\n\n"
-    "CreateTeamMember also ends with `if (m_bIsSplitScreen) m_iMemberCount = "
-    "1; else m_iMemberCount++;` -- a hard RESET, not an increment. That is "
-    "fixed here too, because resetting a count instead of counting is wrong "
-    "on its own terms and the operatives need m_Team[2] and [3] to be free. "
-    "It was NOT the cause: Alpine Village failed byte-identically with the "
-    "count fix and without it.\n\n"
-    "Island Estate then failed with a DIFFERENT error, and that is the most "
-    "informative thing this option has produced: \"BAD EXPORT INDEX 93/84\". "
-    "R6Characters has exactly 84 exports; the loader asked for 93. Alpine "
-    "reads garbage of another shape entirely -- a 50331656-byte allocation, "
-    "import index 567337 of 103 -- so what gets read depends on memory state, "
-    "not on the map.\n\n"
-    "That rules out the last content-shaped explanation. Not the Winter "
-    "classes: Island is not a winter map. Not the routing: the jump lands "
-    "correctly and the operatives begin to build, which the savestate string "
-    "counts show. Loading these pawn classes through DynamicLoadObject at "
-    "team-build time resolves out of range inside R6Characters, and nothing "
-    "reachable from a same-width operand swap changes that.\n\n"
-    "Leave this OFF. RESTORE DISC puts everything back.")
+    "Watched working on 2026-09-22, on Alpine Village and on a non-winter "
+    "mission: Loiselle and Weber spawn as AI, both players can command them, "
+    "and their name tags are right. That first test found two faults; both "
+    "are fixed, and the fixes were watched working on Alpine Village the "
+    "same night:\n\n"
+    "- They wore Price's or Weber's default look. Split screen hands out "
+    "skins, heads and caps to only two team members; it now does the whole "
+    "team, so each wears his own head, the mission's camouflage and his cap. "
+    "Nothing new is loaded -- everything they wear was already in memory.\n"
+    "- They went where they were told and then held. Player 2 was counted "
+    "inside the AI squad, so orders shuffled him in among them and the AI "
+    "waited for him. He is now kept outside it, as retail split screen does, "
+    "so the AI follow player 1 in single file; and player 2's own 'move "
+    "here' uses his own aim.\n\n"
+    "Known limits: if both players die while an AI lives, the mission may "
+    "not end (a mission rule checks team slot 1 for the other player), and "
+    "if player 1 dies the AI keep following his position.\n\n"
+    "Why it works where six earlier attempts did not:\n\n"
+    "Every one of them wedged the load for the same reason, whatever code it "
+    "patched: a split-screen level file is a RECORDING of what one boot read, "
+    "and that boot never created the operatives. When the team code asks for "
+    "Loiselle's class, the engine reads the next recorded bytes as that class "
+    "and falls out of step. Island's wedged savestate still holds the "
+    "engine's own error, with the byte size of Weber's class in it.\n\n"
+    "So this also REPLACES each map's split-screen level file with the single "
+    "player one plus the 105 bytes only split screen reads. That is exactly "
+    "how Trieste's split-screen file relates to its single-player file on the "
+    "retail disc -- and Trieste is the one map where split screen already "
+    "builds the operatives and plays. Every replacement is proved byte for "
+    "byte before it is written, and each fits its own slot on the disc.\n\n"
+    "Every mission is covered; Trieste needs nothing. The four winter levels "
+    "-- Alpine Village and Mountain Highway, A and B -- are the least certain: "
+    "their single-player files also read one texture in a different order, "
+    "and there is no winter Trieste to prove what split screen then reads. "
+    "The order was worked out from an exact accounting of every byte instead. "
+    "If one of them hangs, save a state -- the engine keeps its own error.\n\n"
+    "Not yet known: whether the AI follow player 1 or player 2, and whether "
+    "they wear the mission's camouflage (split screen only loads two sets of "
+    "skins).\n\n"
+    "Single player and online are untouched. RESTORE DISC puts every file "
+    "back.")
 
 
 def card(prefix, group):
@@ -325,29 +539,5 @@ def card(prefix, group):
 
     return Setting(
         prefix + "split_squad", "AI teammates in split screen",
-        BOOL, False, group, confidence="broken", touches="data",
-        enabled=False,
-        disabled_reason=(
-            "Play-tested on Alpine Village and Island Estate. Both wedge the "
-            "level load, and the reason is now known and is not reachable "
-            "from here.\n\n"
-            "The routing this option performs is CORRECT -- the operatives "
-            "genuinely start being built, which the savestates show. What "
-            "fails is the class load underneath it: CreateTeamMember resolves "
-            "each pawn with DynamicLoadObject out of the R6Characters "
-            "package, and that lookup lands out of range. Island asked for "
-            "export 93 of 84; Alpine read a 50,331,656-byte allocation length "
-            "and import index 567337 of 103. Different garbage per map, so it "
-            "is reading uninitialised memory rather than hitting one bug.\n\n"
-            "Nine explanations are closed by measurement: the level data "
-            "(identical tables between the offline and split-screen builds), "
-            "the script (those two files are byte-identical), the streaming "
-            "budget (that number is the audio stream cap), the rescue flag, "
-            "the member count (byte-identical failure with and without the "
-            "fix), the Winter pawn classes (Island is not a winter map), the "
-            "spawn point, the gametype and the operative class load itself.\n\n"
-            "Fixing it would mean editing the cooked R6Characters package, "
-            "which is a different and much riskier class of change than the "
-            "same-width operand swaps everything here is built from. The "
-            "diagnosis is kept so none of it has to be found twice."),
+        BOOL, False, group, confidence="verified", touches="data",
         help=HELP, caution=CAUTION)

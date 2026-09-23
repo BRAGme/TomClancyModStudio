@@ -135,7 +135,9 @@ def main():
         run_mem_size_preserved(args)
         run_chunks_fill_exactly(args)
         run_switch_off_restores(args, work)
+        run_team_recordings(args)
         run_combination_warnings()
+        run_applied_record(args, work)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1086,6 +1088,59 @@ def run(args, work):
     check("pack/unpack round-trips",
           SozImage.unpack(img.pack(), base).image == img.image)
 
+    print("\n[muzzle: the third-person flash test]")
+    # Player 2 saw his flash doubled -- the third-person flash as well as the
+    # first-person one -- because a native test skips the third-person
+    # sub-emitters only when the shooter is viewport 0's player.
+    from tcps2 import rsemuzzle as _mz
+    tp = _mz.THIRD_PERSON_TEST
+    def _btarget(va, word):
+        imm = word & 0xFFFF
+        imm = imm - 0x10000 if imm & 0x8000 else imm
+        return va + 4 + (imm << 2)
+    check("the stock test is bne $s0,$s1 in the pristine overlay",
+          img.read_word(tp) == _mz.TP_STOCK == 0x16110007,
+          "reads %08x" % img.read_word(tp))
+    check("its delay slot is a nop", img.read_word(tp + 4) == 0)
+    check("and it is not itself in a delay slot",
+          img.read_word(tp - 4) == 0, "word before is %08x" % img.read_word(tp - 4))
+    check("the fix is beq $s0,$zero with the same target",
+          _mz.TP_FIXED == 0x12000007
+          and _btarget(tp, _mz.TP_FIXED) == _btarget(tp, _mz.TP_STOCK) == 0x003F67C0)
+    mw = [e for e in PROFILE.build_edits(dict(PROFILE.defaults(),
+                                              split_muzzle=True))
+          if e.va == tp]
+    check("split_muzzle emits the word, declaring the stock it replaces",
+          len(mw) == 1 and mw[0].value == _mz.TP_FIXED
+          and mw[0].stock == _mz.TP_STOCK)
+    check("and nothing else ever emits it -- it is wrong without the attach",
+          not [e for e in PROFILE.build_edits(PROFILE.defaults())
+               if e.va == tp])
+
+    print("\n[split-screen enemy aim]")
+    # Every terrorist in split screen fired along his head's direction, the
+    # path single player keeps for an enemy blinded by smoke, because of a
+    # flag at 0x006546F4 that is 1 in split screen and 0 in single player.
+    from tcps2.games import r6_3 as _r6
+    ab = _r6.SS_AIM_BRANCH
+    check("the stock branch is beqz $v0 in the pristine overlay",
+          img.read_word(ab) == 0x10400011, "reads %08x" % img.read_word(ab))
+    check("it tests the flag loaded just before it",
+          img.read_word(ab - 4) == 0x8F829004)          # lw $v0, -0x6ffc($gp)
+    check("the smoke test that must survive sits one branch earlier",
+          img.read_word(ab - 0xC) == 0x14400004)        # bnez $v0 -> view path
+    check("the delay slot is a nop", img.read_word(ab + 4) == 0)
+    check("the fix is unconditional with the same target",
+          _btarget(ab, _r6.SS_AIM_ALWAYS) == _btarget(ab, 0x10400011)
+          == 0x003F3DD8)
+    aw = [e for e in PROFILE.build_edits(dict(PROFILE.defaults(),
+                                              ss_accuracy=True))
+          if e.va == ab]
+    check("ss_accuracy emits exactly that word",
+          len(aw) == 1 and aw[0].value == _r6.SS_AIM_ALWAYS)
+    check("and it is off unless asked for",
+          not [e for e in PROFILE.build_edits(PROFILE.defaults()) if e.va == ab])
+
     print("\n[apply]")
     vals = PROFILE.defaults()
     pl = engine.plan(iso_path, PROFILE, vals)
@@ -1096,6 +1151,24 @@ def run(args, work):
           r["applied"] == r["verified"] and r["applied"] > 0,
           "%d of %d" % (r["verified"], r["applied"]))
     check("a backup was taken", os.path.exists(r["backup"]))
+
+    # The settings record is written AFTER the disc is patched and verified.
+    # If it cannot be written, that must not turn a good apply into a failed
+    # one -- the record is a convenience beside the disc, not the disc.
+    from tcps2 import applied as _ap
+    _real = _ap.record
+    def _no_room(*_a, **_k):
+        raise OSError(28, "No space left on device")
+    _ap.record = _no_room
+    try:
+        try:
+            rr = engine.apply(iso_path, PROFILE, vals)
+            ok = rr["applied"] == rr["verified"] and "record_error" in rr
+        except Exception:                                             # noqa: BLE001
+            ok = False
+    finally:
+        _ap.record = _real
+    check("an unwritable settings record does not fail a good apply", ok)
 
     print("\n[re-apply from pristine, not from the patched disc]")
     vals2 = dict(vals, wave_enable=True, wave_total=99, wave_trigger=5,
@@ -1216,6 +1289,158 @@ def run(args, work):
                    if s2.confidence != "verified" or not s2.enabled],))
     check("nothing broken or retired is in it",
           not [s2 for s2 in hud if not s2.enabled])
+
+    print("\n[wheel label text]")
+    import struct as _lst
+    from tcps2 import rsedeadpath as _ldp, rsewheel as _lw
+    _data = _ldp.claim("label_scale", True)
+    _words = {va: w for va, w, _s, _n in _lw.label_words()}
+    check("the scale ships as 1.0 and the offset as 0.0 -- identity",
+          _words[_data] == _lw.ONE_F == 0x3F800000
+          and _words[_data + 4] == 0)
+    check("the arm, glyph and disarm caves are the interpreter-checked words",
+          list(_lw._label_arm(_data)) == [
+              0x8F818E94, 0x3C020004, 0x00220821, 0x8C210A04, 0x3C02001A,
+              0x44810800, 0xE45AB2DC, 0x46800860, 0x03E00008, 0xE441B2E0, 0]
+          and list(_lw._label_glyph(_data)) == [
+              0x3C01001A, 0xC420B2DC, 0xC422B2E0, 0x44890800, 0x46006B42,
+              0x46800860, 0x46026B40, 0x46000842, 0x080D25B4, 0x460D0BC0]
+          and list(_lw._label_unarm(_data)) == [
+              0x3C02001A, 0x3C013F80, 0xAC41B2DC, 0x080D29B4, 0xAC40B2E0])
+    check("every glyph call goes through the text cave",
+          _words[_lw.LABEL_TEXT_HOOK]
+          == 0x0C000000 | (_ldp.claim("label_text", True) >> 2))
+    check("and the call after the fourth label through the disarm",
+          _words[_lw.LABEL_UNARM_HOOK]
+          == 0x0C000000 | (_ldp.claim("label_unarm", True) >> 2))
+    check("both hooks replace the calls the caves tail-jump to",
+          _lw.LABEL_TEXT_STOCK == 0x0C000000 | (_lw.LABEL_TEXT_TARGET >> 2)
+          and _lw.LABEL_UNARM_STOCK
+          == 0x0C000000 | (_lw.LABEL_UNARM_TARGET >> 2))
+    _dslot = [va for va in (_ldp.claim("label_text", True) + 32,
+                            _ldp.claim("label_unarm", True) + 12,
+                            _ldp.claim("wheel_label", True) + 32)
+              if (_words.get(va + 4, 0) >> 26) in (1, 2, 3, 4, 5, 6, 7)]
+    check("no jump or branch sits in any of their delay slots", not _dslot)
+
+    def _f(x):
+        return _lst.unpack("<f", _lst.pack("<f", x))[0]
+
+    def _glyph(y0, vsize, k, vpy):
+        y = _f(_f(y0 * k) + vpy)
+        return y, _f(_f(vsize * k) + y)
+    _cases = [(y0 / 4.0, 15) for y0 in range(0, 448 * 4, 7)]
+    check("disarmed, every glyph lands exactly where it always did",
+          all(_glyph(y, v, 1.0, 0.0) == (_f(y), _f(v + _f(y)))
+              for y, v in _cases))
+    check("armed in split screen it is half height, in its own half",
+          _glyph(100.0, 15, 0.5, 224.0) == (274.0, 281.5))
+    check("the old label cave's single-player lift is gone",
+          _lw.MUL_F0_BY_F21 not in list(_lw._label_arm(_data)))
+
+    print("\n[team status panel]")
+    from tcps2 import rsedeadpath as _tdp, rsehudteam as _th
+    _tw = _th.words(True)
+    check("six hooks and six caves, 119 words",
+          len(_th.HOOKS) == 6 and len(_tw) == 119)
+    check("every cave sits in its own dead-path slot",
+          all(_tdp.claim(slot, True) == _tdp.CAVE + 4 * first
+              for slot, (first, _b) in _th.CAVES.items()))
+    check("and fits inside the proved block",
+          max(first + len(b) for first, b in _th.CAVES.values())
+          <= _tdp.CAVE_WORDS)
+    _hooks = {va for va, _s, _n, _x in _th.HOOKS}
+    check("each hook jumps into one of the panel's caves",
+          all(((new & 0x03FFFFFF) << 2)
+              in {_tdp.claim(slot, True) for slot in _th.CAVES}
+              for _va, _s, new, _x in _th.HOOKS))
+    _on = PROFILE.effective(dict(PROFILE.defaults(), split_squad=True,
+                                 split_team_panel=True))
+    _eds = {e.va for e in PROFILE.build_edits(_on)}
+    check("with AI teammates it writes every word, and frees the dead path",
+          {va for va, _w, _s, _n in _tw} <= _eds and _tdp.ENTRY in _eds)
+    _off = PROFILE.effective(dict(PROFILE.defaults(), split_team_panel=True))
+    check("without AI teammates there is nothing to list, so it stays off",
+          _off["split_team_panel"] is False
+          and not (_hooks & {e.va for e in PROFILE.build_edits(_off)}))
+    check("it is offered, and was watched working in game",
+          PROFILE.setting("split_team_panel").confidence == "verified")
+
+    print("\n[dead-path cave]")
+    # Restored 2026-09-22. This whole block was deleted by accident that
+    # afternoon, when a test edit replaced a span of this file that happened
+    # to contain it; the pass count kept rising, so its absence went unseen
+    # through a commit. It guards the one shared code cave every HUD fix
+    # lives in, so it is not optional. Counts updated for the scope merge
+    # (three cards -> one) and the wheel marker's left/right slot.
+    from tcps2 import rsedeadpath, rsescope, rsewheel, rseviewmodel
+    check("the slots do not overlap", rsedeadpath.check_layout() == 216)
+    check("a cave slot is refused while the entry branch is live",
+          _raises(lambda: rsedeadpath.claim("scope_height", False),
+                  rsedeadpath.DeadPathError))
+    from tcps2 import rsehudteam
+    hud = (rsescope.viewport_words() + rsewheel.label_words()
+           + rsewheel.owner_words() + rsescope.owner_words()
+           + rseviewmodel.words(True) + rsehudteam.words(True))
+    addrs = [x[0] for x in hud]
+    check("no two HUD words fight over an address",
+          len(set(addrs)) == len(addrs) == 287,
+          "%d words, %d distinct" % (len(addrs), len(set(addrs))))
+    check("every HUD word is inside the overlay",
+          all(0x00100000 <= a < 0x00653980 for a in addrs))
+    check("every HUD word declares the stock the profile holds",
+          all(STOCK.get(a) == st for a, _w, st, _n in hud),
+          "%r" % ([hex(a) for a, _w, st, _n in hud if STOCK.get(a) != st][:4],))
+    # Freeing the dead path is not optional. With the scope option off, an
+    # option that needs the cave has to retire the branch itself, or split
+    # screen jumps straight into what is now cave code.
+    lab = dict(PROFILE.defaults(), split_wheel=True, split_wheel_labels=True)
+    ent = [e for e in PROFILE.build_edits(lab) if e.va == rsedeadpath.ENTRY]
+    check("labels alone retire the branch into the dead path", len(ent) == 1)
+    check("and do it without changing what split screen does",
+          ent and ent[0].value == rsedeadpath.FREE_BRANCH)
+    both = dict(PROFILE.defaults(), split_scope=True)
+    ent2 = [e for e in PROFILE.build_edits(both) if e.va == rsedeadpath.ENTRY]
+    check("the scope guard frees it instead when the scope is on",
+          ent2 and ent2[0].value == rsescope.SCOPE_GUARD[0][1])
+    check("nothing on this disc needs a cheat file for the HUD",
+          not PROFILE.build_pnach(dict(PROFILE.defaults(), split_scope=True,
+                                       split_wheel=True,
+                                       split_wheel_labels=True)))
+
+    print("\n[wheel marker: left and right]")
+    # The marker's left/right cases draw through a rotated-quad call that
+    # hard-codes a 1.0 scale, so they kept the ring's pre-fix native size.
+    side0, side_n = rsedeadpath.SLOTS["wheel_side"]
+    check("the side slot ends where the first 96 proved words end",
+          side0 + side_n == 96 <= rsedeadpath.CAVE_WORDS == 244)
+    check("the cave is 17 words and tail-jumps into the stock call",
+          len(rsewheel.SIDE_CAVE) == 17
+          and rsewheel.SIDE_CAVE[-2] == 0x08000000 | (rsewheel.SIDE_TARGET >> 2))
+    sidew = [x for x in rsewheel.label_words() if "left/right" in x[3]]
+    check("its four hooks and 17 cave words are emitted with the labels",
+          len(sidew) == 21)
+    cave_va = rsedeadpath.CAVE + side0 * 4
+    check("each hook becomes jal into the cave, from the declared stock",
+          all(v == 0x0C000000 | (cave_va >> 2) and st == rsewheel.SIDE_STOCK
+              for a, v, st, _n in sidew if a in rsewheel.SIDE_HOOKS))
+    check("the hooks are only ever emitted with the ring that builds $f26",
+          any("hook the ring" in x[3] for x in rsewheel.label_words()))
+    # The cave's arithmetic, modelled in float32: single player must pass
+    # through bit-identical, split screen must land at single player x 0.5
+    # plus the viewport's Y.
+    import struct as _s
+    f32 = lambda v: _s.unpack("<f", _s.pack("<f", v))[0]
+    def side(x, y, w, h, k, vpy):
+        d = f32(f32(k * 0.5) - 0.5)
+        y2 = f32(f32(k * y) + f32(h * d))
+        return f32(x - f32(w * d)), f32(y2 + vpy), f32(w * k)
+    for x0, y0 in ((350.0, 242.0 - 131), (292.0 - 94, 205.0)):
+        check("single player at (%g, %g) passes through unchanged" % (x0, y0),
+              side(x0, y0, 94.0, 131.0, 1.0, 0.0) == (x0, y0, 94.0))
+    xs, ys, ws = side(350.0, 205.0, 94.0, 131.0, 0.5, 224.0)
+    check("split screen halves the visible height and drops into player 2's half",
+          ws == 47.0 and ys >= 224.0 and abs((xs + ws / 2) - (350.0 + 94.0 / 2)) < 1e-4)
 
     print("\n[length-changing edits are refused]")
     # frag_warning grew a cooked package by 107 bytes, the container still
@@ -1347,57 +1572,282 @@ def run(args, work):
 
     print("\n[split-screen squad]")
     from tcps2 import rsesquad, rseteam
-    # A real COMMON carries both sites; the option edits both or neither.
-    J = 48
-    C = 48 + len(rsesquad.SIGNATURE) + 48
-    pad = (bytes(48) + rsesquad.SIGNATURE + bytes(48)
-           + rsesquad.COUNT_SIG + bytes(48))
-    check("the stock jump goes to the end of the function",
-          rsesquad.reads(pad) == rsesquad.SKIP_TARGET == 0x0688)
+    # A real COMMON carries all three sites; the option edits two of them and
+    # insists the third -- the arm's own exit -- is stock.
+    R = 48
+    X = R + len(rsesquad.RESCUE_SIG) + 48
+    C = X + len(rsesquad.EXIT_SIG) + 48
+    RL = C + len(rsesquad.COUNT_SIG) + 48
+    RW = RL + len(rsesquad.ROSTER_SIGS["L"]) + 48
+    SK = RW + len(rsesquad.ROSTER_SIGS["W"]) + 48
+    LC = SK + len(rsesquad.SKINS_SIG) + 48
+    LB = LC + len(rsesquad.LAYOUT_CALL) + 48
+    OA = LB + len(rsesquad.LAYOUT_CODE) + 48
+    pad = (bytes(48) + rsesquad.RESCUE_SIG + bytes(48) + rsesquad.EXIT_SIG
+           + bytes(48) + rsesquad.COUNT_SIG + bytes(48)
+           + rsesquad.ROSTER_SIGS["L"] + bytes(48)
+           + rsesquad.ROSTER_SIGS["W"] + bytes(48)
+           + rsesquad.SKINS_SIG + bytes(48)
+           + rsesquad.LAYOUT_CALL + bytes(48)
+           + rsesquad.LAYOUT_CODE + bytes(48)
+           + rsesquad.ORDER_AIM + bytes(48))
+    check("the stock rescue test leaves the arm when the map is no rescue",
+          rsesquad.reads(pad) == rsesquad.SKIP_TARGET == 0x0354)
     check("and stock split screen pins the member count",
           not rsesquad.counts(pad)
           and pad[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_STOCK == 0x77)
     got, n = rsesquad.apply(pad, True)
-    check("the fix makes both edits, never one", n == 2)
-    check("the jump is retargeted into the single-player AI arm",
+    check("the fix makes all seven edits, never some", n == 7)
+    check("a miss now falls into the single-player AI arm",
           rsesquad.reads(got) == rsesquad.ARM_TARGET == 0x0420)
     check("and the count increments instead of resetting",
           rsesquad.counts(got)
           and got[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_FIXED == 0x72)
-    moved = [i for i in range(len(pad)) if pad[i] != got[i]]
-    check("exactly three bytes move", len(moved) == 3)
-    check("two in the jump operand, one in the comparison",
-          moved == [J + rsesquad.JUMP + 1, J + rsesquad.JUMP + 2,
-                    C + rsesquad.COUNT_OPERAND])
+    rewritten = (set(range(LC, LC + len(rsesquad.LAYOUT_CALL)))
+                 | set(range(LB, LB + len(rsesquad.LAYOUT_CODE)))
+                 | set(range(OA, OA + len(rsesquad.ORDER_AIM))))
+    moved = [i for i in range(len(pad))
+             if pad[i] != got[i] and i not in rewritten]
+    check("outside the three rewritten regions, exactly five bytes move",
+          len(moved) == 5)
+    check("the jump operand, the comparison, Trieste's count reset and the "
+          "skin loop's jump",
+          moved == [R + rsesquad.RESCUE_JUMP + 1, R + rsesquad.RESCUE_JUMP + 2,
+                    X + rsesquad.EXIT_LET, C + rsesquad.COUNT_OPERAND,
+                    SK + rsesquad.SKINS_OPERAND])
+    exit_now = bytearray(rsesquad.EXIT_SIG)
+    exit_now[rsesquad.EXIT_LET] = rsesquad.EX_NOTHING
+    check("the arm's own exit JUMP is left alone, so Trieste builds its pair "
+          "once; only the count reset before it goes",
+          got[X:X + len(rsesquad.EXIT_SIG)] == bytes(exit_now))
+    check("player 2 is moved out of the AI squad after the skins",
+          rsesquad.keeps_player2_out(got)
+          and not rsesquad.keeps_player2_out(pad)
+          and got[LC:LC + len(rsesquad.LAYOUT_CALL)]
+          == rsesquad.LAYOUT_CALL_NEW
+          and got[LB:LB + len(rsesquad.LAYOUT_CODE)]
+          == rsesquad.LAYOUT_CODE_NEW)
+    check("both rewritten regions keep their width",
+          len(rsesquad.LAYOUT_CALL_NEW) == len(rsesquad.LAYOUT_CALL)
+          and len(rsesquad.LAYOUT_CODE_NEW) == len(rsesquad.LAYOUT_CODE) == 137
+          and len(rsesquad.ORDER_AIM_NEW) == len(rsesquad.ORDER_AIM))
+    check("each player's move order uses that player's own aim",
+          rsesquad.orders_from_requester(got)
+          and not rsesquad.orders_from_requester(pad))
+    check("split screen now skins, heads and caps the whole team",
+          rsesquad.skins_everyone(got) and not rsesquad.skins_everyone(pad)
+          and got[SK + rsesquad.SKINS_OPERAND] == rsesquad.SKINS_FIXED == 0x30)
     check("the tokens keep their width, so ScriptSize cannot move",
-          len(got) == len(pad) and got[J + rsesquad.JUMP] == 0x06)
+          len(got) == len(pad) and got[R + rsesquad.RESCUE_JUMP] == 0x07)
     check("it lands past the Price check, not on it",
           rsesquad.ARM_TARGET > 0x03FB)
     check("running it twice changes nothing",
           rsesquad.apply(got, True) == (got, 0))
     check("it can be put back whole", rsesquad.apply(got, False)[0] == pad)
     check("a build with the jump but no clamp is refused, not half-applied",
-          _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.SIGNATURE, True),
+          _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.RESCUE_SIG
+                                         + rsesquad.EXIT_SIG, True),
                   rsesquad.SquadError))
+    check("without canon the roster tests keep their own flags",
+          not rsesquad.roster_reads_price(got)
+          and got[RL + rsesquad.ROSTER_FLAG] == 0xC4
+          and got[RW + rsesquad.ROSTER_FLAG] == 0xC3)
+    flipped = bytearray(got)
+    flipped[RL + rsesquad.ROSTER_FLAG] = flipped[RW + rsesquad.ROSTER_FLAG] = 0xC5
+    check("and switching canon off puts them back to Loiselle and Weber",
+          rsesquad.apply(bytes(flipped), True, False)[0] == got)
+    moved_c = bytearray(pad)
+    moved_c[C + 1:C + 3] = (0x0EB5).to_bytes(2, "little")
+    check("the count site is found where canon's reassembly moves it",
+          rsesquad.counts(rsesquad.apply(bytes(moved_c), True)[0]))
     check("a build with the clamp but no jump is refused too",
-          _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.COUNT_SIG, True),
+          _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.COUNT_SIG
+                                         + rsesquad.EXIT_SIG, True),
                   rsesquad.SquadError))
     check("an ambiguous build is refused",
-          _raises(lambda: rsesquad.apply(pad + rsesquad.SIGNATURE, True),
+          _raises(lambda: rsesquad.apply(pad + rsesquad.RESCUE_SIG, True),
                   rsesquad.SquadError))
-    check("it does not collide with the old rescue-arm edit",
-          rsesquad.KNOWN_OFFSET != rseteam.BRANCH
-          and rsesquad.KNOWN_COUNT_OFFSET != rseteam.BRANCH)
+    old = bytearray(pad)
+    old[X + 17:X + 19] = b"\x20\x04"            # the previous version's edit
+    check("a file carrying the previous version's exit retarget is refused",
+          _raises(lambda: rsesquad.apply(bytes(old), True),
+                  rsesquad.SquadError))
+    forced = bytearray(pad)
+    forced[R + 1:R + 3] = (rseteam.ARM_TARGET).to_bytes(2, "little")
+    check("so is one carrying the retired rescue-arm edit on the same jump",
+          _raises(lambda: rsesquad.apply(bytes(forced), True),
+                  rsesquad.SquadError))
+    check("which is the same site, and stays retired",
+          rsesquad.KNOWN_OFFSET == rseteam.BRANCH
+          and not PROFILE.setting("split_rescue_team").enabled)
     sq = [e for e in PROFILE.build_data(dict(PROFILE.defaults(),
                                              split_squad=True))
-          if e.op == "squad"]
-    check("the setting emits one data edit", len(sq) == 1)
-    check("it reaches all three COMMON files",
-          sq and all(sq[0].matches(q) for q in
-                     ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN")))
+          if e.op in ("squad", "team_recording")]
+    check("the setting emits the team code and the recordings together",
+          sorted(e.op for e in sq) == ["squad", "team_recording"])
+    code = [e for e in sq if e.op == "squad"]
+    check("the team code goes to the split-screen package only",
+          code and code[0].matches("/COMMON_SS.LIN")
+          and not code[0].matches("/COMMONOFF.LIN")
+          and not code[0].matches("/COMMON.LIN"))
     check("and emits nothing at its default",
           not [e for e in PROFILE.build_data(PROFILE.defaults())
-               if e.op == "squad"])
+               if e.op in ("squad", "team_recording")])
+    check("it is on offer, and watched working in game",
+          PROFILE.setting("split_squad").enabled
+          and PROFILE.setting("split_squad").confidence == "verified")
+
+    print("\n[split-screen level recordings]")
+    import hashlib as _hl
+    import random as _rnd
+    from tcps2 import rsesplice as _sp
+    rng = _rnd.Random(20260922)
+
+    def rb(n):
+        return bytes(rng.randrange(256) for _ in range(n))
+
+    def rec(name, *parts):
+        return _sp.MAGIC + bytes([len(name) + 1]) + name + b"\0" + b"".join(parts)
+
+    A, B, Cc = rb(3000), rb(5000), rb(2000)
+    REC, OPS = rb(_sp.RECORD), rb(_sp.OPERATIVES)
+
+    def _stand_ins(ops):
+        """Point the group constants at the stand-in operatives' bytes."""
+        cut = _sp.GROUP_BYTES["L"]
+        _sp.GROUP_HEAD.update(L=ops[:24], W=ops[cut:cut + 24])
+        _sp.GROUP_SHA1.update(L=_hl.sha1(ops[:cut]).hexdigest(),
+                              W=_hl.sha1(ops[cut:]).hexdigest())
+    kept = (_sp.RECORD_SHA1, _sp.OPERATIVES_SHA1, dict(_sp.GROUP_HEAD),
+            dict(_sp.GROUP_SHA1))
+    try:
+        # The real record and operatives are measured bytes off the disc and
+        # cannot be synthesised to match their hashes, so the structure is
+        # tested on stand-ins; the disc test below uses the real ones.
+        _sp.RECORD_SHA1 = _hl.sha1(REC).hexdigest()
+        _sp.OPERATIVES_SHA1 = _hl.sha1(OPS).hexdigest()
+        _stand_ins(OPS)
+        off = rec(b"island_aoff", A, B, OPS, Cc)
+        ss = rec(b"island_a_ss", A, REC, B, Cc)
+        # What Trieste's split-screen recording is to its single-player one.
+        want = rec(b"island_a_ss", A, REC, B, OPS, Cc)
+        new = _sp.splice(ss, off)
+        check("the splice is single player's recording plus split screen's "
+              "record, exactly as Trieste ships", new == want)
+        check("2,631 bytes longer than stock split screen, 105 longer than "
+              "single player", len(new) - len(ss) == 2631
+              and len(new) - len(off) == 105)
+        check("it keeps the split-screen level name",
+              new[5:17] == b"island_a_ss\0")
+        check("it reads the operatives; stock split screen does not",
+              _sp.reads(new) and _sp.reads(off) and not _sp.reads(ss))
+        check("apply reports the one change",
+              _sp.apply(ss, off) == (new, 1))
+        check("a recording that already reads them is left alone",
+              _sp.apply(want, off) == (want, 0))
+        check("switched off it hands back the stock file",
+              _sp.apply(ss, off, False) == (ss, 0))
+        check("a pair differing in a second place is refused -- the winter "
+              "maps' shape", _raises(
+                  lambda: _sp.splice(rec(b"island_a_ss", A, REC, B[:-1]
+                                         + bytes([B[-1] ^ 1]), Cc), off),
+                  _sp.SpliceError))
+        check("a pair whose extra bytes are not the operatives is refused",
+              _raises(lambda: _sp.splice(ss, rec(b"island_aoff", A, B,
+                                                 rb(_sp.OPERATIVES), Cc)),
+                      _sp.SpliceError))
+        check("a split-screen record that is not the known one is refused",
+              _raises(lambda: _sp.splice(rec(b"island_a_ss", A, rb(105), B,
+                                             Cc), off), _sp.SpliceError))
+        check("the wrong amount of extra single-player data is refused",
+              _raises(lambda: _sp.splice(ss, rec(b"island_aoff", A, B,
+                                                 OPS + b"\0", Cc)),
+                      _sp.SpliceError))
+        check("names of different lengths are refused",
+              _raises(lambda: _sp.splice(ss, rec(b"island_off", A, B, OPS,
+                                                 Cc)), _sp.SpliceError))
+        check("so is something that is not a level recording",
+              _raises(lambda: _sp.splice(b"\0" * 64, off), _sp.SpliceError))
+    finally:
+        _sp.RECORD_SHA1, _sp.OPERATIVES_SHA1 = kept[:2]
+        _sp.GROUP_HEAD.clear()
+        _sp.GROUP_HEAD.update(kept[2])
+        _sp.GROUP_SHA1.clear()
+        _sp.GROUP_SHA1.update(kept[3])
+    kept2 = (_sp.RECORD_SHA1, _sp.OPERATIVES_SHA1, dict(_sp.GROUP_HEAD),
+             dict(_sp.GROUP_SHA1))
+    try:
+        _sp.RECORD_SHA1 = _hl.sha1(REC).hexdigest()
+        _sp.OPERATIVES_SHA1 = _hl.sha1(OPS).hexdigest()
+        _stand_ins(OPS)
+        _L, _W = OPS[:_sp.GROUP_BYTES["L"]], OPS[_sp.GROUP_BYTES["L"]:]
+        off = rec(b"island_aoff", A, B, OPS, Cc)
+        ss = rec(b"island_a_ss", A, REC, B, Cc)
+        check("canon's Weber alone reads just his group, where the pair goes",
+              _sp.recording(ss, off, "W") == rec(b"island_a_ss", A, REC, B,
+                                                  _W, Cc))
+        check("canon's Weber with AI reads him first, then Loiselle",
+              _sp.recording(ss, off, "WL") == rec(b"island_a_ss", A, REC, B,
+                                                   _W, _L, Cc))
+        check("and teammates alone is exactly the proved splice",
+              _sp.recording(ss, off, "LW") == _sp.splice(ss, off))
+        check("an order that is not the two operatives is refused",
+              all(_raises(lambda o=o: _sp.recording(ss, off, o),
+                          _sp.SpliceError) for o in ("", "LL", "X", "LWL")))
+    finally:
+        _sp.RECORD_SHA1, _sp.OPERATIVES_SHA1 = kept2[:2]
+        _sp.GROUP_HEAD.clear()
+        _sp.GROUP_HEAD.update(kept2[2])
+        _sp.GROUP_SHA1.clear()
+        _sp.GROUP_SHA1.update(kept2[3])
+    import re as _re
+    for combo in ((True, False), (False, True), (True, True)):
+        plan = _sp.plan(*combo)
+        hits = {m: [o for sel, o in plan
+                    if _re.search(sel, "/%s_SS.LIN" % m, _re.I)]
+                for m in _sp.MAPS + _sp.WINTER + ("TRIESTE_A",)}
+        check("plan %r never splices a level twice" % (combo,),
+              all(len(v) <= 1 for v in hits.values()))
+        if combo == (True, False):
+            check("teammates alone: all 26 levels, Loiselle then Weber",
+                  [m for m, v in hits.items() if v == ["LW"]]
+                  == list(_sp.COVERED))
+        elif combo == (False, True):
+            check("canon alone: only its three levels, each its own operative",
+                  {m: v for m, v in hits.items() if v}
+                  == {"ISLAND_A": ["W"], "GARAGE_A": ["L"], "GARAGE_B": ["L"]})
+        else:
+            check("both: Island reads Weber first, every other level as usual",
+                  hits["ISLAND_A"] == ["WL"]
+                  and all(v == ["LW"] for m, v in hits.items()
+                          if m in _sp.COVERED and m != "ISLAND_A"))
+    check("the single-player sibling is named from the split-screen file",
+          _sp.sibling("/ISLAND_A_SS.LIN") == "/ISLAND_AOFF.LIN"
+          and _sp.sibling("/GARAGE_B_SS.LIN") == "/GARAGE_BOFF.LIN"
+          and _raises(lambda: _sp.sibling("/COMMON_SS.LIN"), _sp.SpliceError))
+    lvl = [e for e in PROFILE.build_data(dict(PROFILE.defaults(),
+                                              split_squad=True))
+           if e.op == "team_recording"]
+    check("the recordings edit selects exactly the 26 covered levels",
+          lvl and [m for m in _sp.MAPS + _sp.WINTER + ("TRIESTE_A",)
+                   if lvl[0].matches("/%s_SS.LIN" % m)] == list(_sp.COVERED))
+    check("and no single-player, training or COMMON file",
+          lvl and not any(lvl[0].matches(q) for q in (
+              "/ISLAND_AOFF.LIN", "/TRAINING_TEAM_SS.LIN", "/COMMON_SS.LIN",
+              "/ISLAND_A_SS.LIN.BAK")))
+    check("26 levels: the 22 plus the four winter ones, and not Trieste",
+          len(_sp.MAPS) == 22 and len(_sp.WINTER) == 4
+          and _sp.COVERED == _sp.MAPS + _sp.WINTER
+          and "TRIESTE_A" not in _sp.COVERED)
+    from tcps2 import dataedit as _de
+    check("only the recordings op may change a cooked file's length",
+          _de._RECORDING_OPS == {"team_recording"})
+    check("and it is handed its sibling rather than reading the disc itself",
+          "team_recording" in _de._WANTS_SIBLING
+          and _de._WANTS_SIBLING["team_recording"]("/PARADE_B_SS.LIN")
+          == "/PARADE_BOFF.LIN")
+    check("the op refuses to run without its sibling",
+          _raises(lambda: _de.OPS["team_recording"](b"", {}), _de.DataEditError))
 
     print("\n[field of view is split screen only]")
     fv = [e for e in PROFILE.build_data(dict(PROFILE.defaults(), fov=110))
@@ -1541,13 +1991,15 @@ def run_withdrawn_options(args, work):
         live = [k for k in off if got[k] != prof.setting(k).default]
         check("%s: all %d withdrawn options are neutralised" % (pid, len(off)),
               not live, str(live))
-    check("canon_team is withdrawn", not profile.setting("canon_team").enabled)
-    check("and says why", "hangs the split-screen level load"
-          in profile.setting("canon_team").disabled_reason)
+    check("ss_man_down is withdrawn", not profile.setting("ss_man_down").enabled)
+    check("and says why", "hangs" in profile.setting("ss_man_down").disabled_reason)
     check("and emits no data edit even when stored true",
           not [e for e in profile.build_data(
-                  profile.effective(dict(profile.defaults(), canon_team=True)))
-               if e.op == "canon_team"])
+                  profile.effective(dict(profile.defaults(), ss_man_down=True)))
+               if e.op == "ss_man_down"])
+    check("canon_team is back on offer, and watched working, now its hang "
+          "is understood", profile.setting("canon_team").enabled
+          and profile.setting("canon_team").confidence == "verified")
 
     dial = profile.setting("p2_look_speed")
     check("the dial replaces it", dial is not None and dial.enabled)
@@ -2911,44 +3363,36 @@ def run_split_wheel(args):
                     check("and the ones it refuses are refused, never mangled",
                           refused < total // 50, "%d of %d" % (refused, total))
 
-    # the label-scaling cheat: it rewrites live code, so the words it claims
-    # to replace must really be there, and its cave must be empty
-    from tcps2 import overlay as _ov
+    # The wheel fix rewrites live code, so every word it claims to replace
+    # must be what the PRISTINE image holds -- the live disc may carry the
+    # fix -- and every hook must land in one of the wheel's own slots in the
+    # dead path, never on the map-wide spawn cave.
+    from tcps2 import rsedeadpath as _dp
     from tcps2.games.r6_3 import SP as _SP, CAVE_WORDS as _SPAWN
-    with Iso(args.rs3data) as _iso:
-        _o = _ov.open_overlay(_iso, _SP)
-        bad = [(va, _o.read_word(va), want)
-               for va, want in rsewheel.LABEL_HOOKS if _o.read_word(va) != want]
-        check("every wheel-label hook replaces the instruction it expects",
-              not bad, str(bad))
-        busy = [va for i in range(12)
-                for va in (rsewheel.LABEL_CAVE + i * 4,)
-                if _o.read_word(va) != 0]
-        check("and its cave is empty on a stock disc", not busy, str(busy))
+    _img = SozImage.unpack(stock_container(args), _SP.base_va)
     words = rsewheel.label_words()
-    check("the cheat is 4 hooks plus a 3-word cave each",
-          len(words) == 16, str(len(words)))
-    check("each cave ends by redoing the instruction its hook took",
-          [w for _va, w, _s, _n in words[2::3][:4]]
-          == [orig for _site, orig in rsewheel.LABEL_HOOKS])
-    check("every hook is a jal into its own cave",
-          all((w >> 26) == 3 and ((w & 0x03FFFFFF) << 2)
-              == rsewheel.LABEL_CAVE + i * 12
-              for i, (_va, w, _s, _n) in enumerate(words[12:])))
+    bad = [(va, "%#010x" % _img.read_word(va), "%#010x" % st)
+           for va, _w, st, _n in words if _img.read_word(va) != st]
+    check("every wheel word replaces the instruction it expects",
+          not bad, str(bad))
+    _lo, _hi = _dp.CAVE, _dp.CAVE + 4 * _dp.CAVE_WORDS
+    _slots = {_dp.claim(n, True) for n in _dp.SLOTS
+              if n.startswith(("wheel_", "label_"))}
+    _hooks = [(va, w) for va, w, _s, _n in words
+              if (w >> 26) == 3 and not _lo <= va < _hi]
+    check("every hook is a jal into one of the wheel's dead-path slots",
+          _hooks and all(((w & 0x03FFFFFF) << 2) in _slots
+                         for _va, w in _hooks), str(len(_hooks)))
     spawn = {va for va, _w in _SPAWN}
     check("and it never lands on the map-wide spawn cave",
           not [va for va, _w, _s, _n in words if va in spawn])
     _p = BY_ID["r6_3_slus20883"]
-    check("the option is cheat-file, not disc",
-          _p.setting("split_wheel_labels").touches == "cheat")
+    check("the label fix is on the disc, not in a cheat file",
+          _p.setting("split_wheel_labels").touches == "words"
+          and not _p.build_pnach({"split_wheel_labels": True,
+                                  "split_wheel": True}))
     check("and it needs the wheel itself",
           _p.setting("split_wheel_labels").requires == {"split_wheel": [True]})
-    check("leaving it off writes no cheat lines", not _p.build_pnach({}))
-    check("turning it on writes exactly those 16",
-          len(_p.build_pnach({"split_wheel_labels": True})) == 16)
-    check("and it coexists with the map-wide spawn cheat",
-          len(_p.build_pnach({"split_wheel_labels": True,
-                              "wave_enable": True, "wave_mapwide": True})) == 84)
 
     check("all three COMMON containers carry the branch", checked == 3,
           "%d checked" % checked)
@@ -3200,14 +3644,16 @@ def run_rpg_speed(args):
 
 
 def run_split_scope(args):
-    """The one branch that throws the scope overlay away in split screen.
+    """The scope overlay in split screen: the guard, and the viewport fit.
 
     Everything upstream is healthy in split screen -- the textures reach the
-    render devices and the scope-active flag is set -- so the assertions here
-    are about the branch itself and about the fact that the option is honest
-    that it is an experiment.
+    render devices and the scope-active flag is set. What this pins is the
+    guard that replaced the branch into the dead path, and the fit that reads
+    the viewport instead of the framebuffer, checked against the PRISTINE
+    image: the live disc may carry the option, so it can only be asked which
+    of the known words the branch holds.
     """
-    from tcps2 import overlay, rsescope
+    from tcps2 import overlay, rsedeadpath, rsescope
     from tcps2.games import BY_ID
     from tcps2.games.r6_3 import SP, STOCK
     from tcps2.iso import Iso
@@ -3218,77 +3664,62 @@ def run_split_scope(args):
     with Iso(args.rs3data) as iso:
         ov = overlay.open_overlay(iso, SP)
         live = ov.read_word(rsescope.SCOPE_BRANCH)
-    check("the branch is one of the two words it can be",
-          live in (rsescope.SCOPE_BRANCH_STOCK, rsescope.SCOPE_BRANCH_OPEN),
-          "%#010x" % live)
+    guard = dict(rsescope.SCOPE_GUARD)
+    check("the branch holds stock, the guard, or the free branch",
+          live in (rsescope.SCOPE_BRANCH_STOCK, guard[rsescope.SCOPE_BRANCH],
+                   rsedeadpath.FREE_BRANCH), "%#010x" % live)
     check("the shipped word is recorded, so a patched disc can be healed",
           STOCK.get(rsescope.SCOPE_BRANCH) == rsescope.SCOPE_BRANCH_STOCK,
           "%r" % STOCK.get(rsescope.SCOPE_BRANCH))
     check("and it decodes as the branch we think it is",
           (rsescope.SCOPE_BRANCH_STOCK >> 26) == 5          # bne
           and ((rsescope.SCOPE_BRANCH_STOCK >> 16) & 31) == 0)   # against $zero
+    check("the guard returns through the function's own epilogue",
+          (guard[rsescope.SCOPE_DELAY] >> 26) == 4          # beq
+          and rsescope.SCOPE_DELAY + 4
+          + ((guard[rsescope.SCOPE_DELAY] & 0xFFFF) << 2)
+          == rsescope.SCOPE_RETURN)
 
-    # the cave that fits the overlay to the viewport
+    # the fit, against the pristine image
     from tcps2.games.r6_3 import CAVE_WORDS as _SPAWN
     from tcps2 import rsewheel as _rw
+    img = SozImage.unpack(stock_container(args), SP.base_va)
     vw = rsescope.viewport_words()
     hooks = [(va, w) for va, w, _s, _n in vw if (w >> 26) == 3]
-    caves = {va: w for va, w, _s, _n in vw if va >= 0x00500000}
-    check("the cheat is 8 hooks, 12 retired words and three caves",
-          len(vw) == 41 and len(hooks) == 8 and len(caves) == 17, str(len(vw)))
+    cave = rsedeadpath.claim("scope_height", True)
+    check("the fit is a 4-word cave, 4 width sites of 5 and 4 height reads",
+          len(vw) == 4 + 4 * 5 + 4 and len(hooks) == len(rsescope.HEIGHT_FAR),
+          str(len(vw)))
+    bad = [(va, "%#010x" % img.read_word(va), "%#010x" % st)
+           for va, _w, st, _n in vw if img.read_word(va) != st]
+    check("every word it overwrites is the word it claims", not bad, str(bad))
+    check("its cave is the dead path's scope slot",
+          all(((w & 0x03FFFFFF) << 2) == cave for _va, w in hooks))
 
-    with Iso(args.rs3data) as iso:
-        ov2 = overlay.open_overlay(iso, SP)
-        bad = [(va, "%#010x" % ov2.read_word(va), "%#010x" % st)
-               for va, _w, st, _n in vw
-               if va < 0x00500000 and ov2.read_word(va) != st]
-        check("every word the cheat overwrites is the word it claims",
-              not bad, str(bad))
-        busy = [va for va in caves if ov2.read_word(va) != 0]
-        check("and all three caves are empty on a stock disc",
-              not busy, str(busy))
+    # `jal` has a delay slot, so the instruction AFTER a hook runs BEFORE the
+    # cave. A branch there is undefined on the R5900 and once hung the game
+    # on the loading screen; and it must not read $t0, which the cave loads.
+    BRANCHES = (1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23)
+    emitted = {va: w for va, w, _s, _n in vw}
+    slots, stale = [], []
+    for va, _w in hooks:
+        nxt = emitted.get(va + 4, img.read_word(va + 4))
+        if (nxt >> 26) in BRANCHES:
+            slots.append("%#010x -> %#010x" % (va, nxt))
+        if nxt and 8 in ((nxt >> 21) & 31, (nxt >> 16) & 31):
+            stale.append("%#010x -> %#010x" % (va, nxt))
+    check("no hook puts a branch in a jal delay slot", not slots, str(slots))
+    check("nor one that reads the register the cave is about to load",
+          not stale, str(stale))
 
-        # The bug this option shipped with: `jal` has a delay slot, so the
-        # instruction AFTER a hook runs BEFORE the cave. A branch there is
-        # undefined on the R5900, and it hung the game on the loading screen.
-        BRANCHES = (1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23)
-        emitted = {va: w for va, w, _s, _n in vw}
-        slots = []
-        for va, _w in hooks:
-            nxt = emitted.get(va + 4, ov2.read_word(va + 4))
-            if (nxt >> 26) in BRANCHES:
-                slots.append("%#010x -> %#010x" % (va, nxt))
-        check("no hook puts a branch in a jal delay slot", not slots,
-              str(slots))
-
-        # ... and the delay slot must not read the register the cave loads,
-        # which would give it the stale framebuffer value.
-        stale = []
-        for va, w in hooks:
-            target = (w & 0x03FFFFFF) << 2
-            loads = 8 if target == rsescope._HEIGHT_CAVE else 2   # $t0 / $v0
-            nxt = emitted.get(va + 4, ov2.read_word(va + 4))
-            if nxt == 0:
-                continue
-            rs, rt = (nxt >> 21) & 31, (nxt >> 16) & 31
-            if loads in (rs, rt):
-                stale.append("%#010x -> %#010x" % (va, nxt))
-        check("nor one that reads the register the cave is about to load",
-              not stale, str(stale))
-
-    check("four hooks take the width and four the height",
-          len(rsescope.WIDTH_HOOKS) == 4 and len(rsescope.HEIGHT_HOOKS) == 4)
-    check("every hook is a jal into one of the three caves",
-          all(((w & 0x03FFFFFF) << 2)
-              in set(rsescope._WIDTH_CAVE.values()) | {rsescope._HEIGHT_CAVE}
-              for _va, w in hooks))
     mine = {va for va, _w, _s, _n in vw}
-    check("it lands on neither of the other two caves",
+    check("it lands on neither the wheel's words nor the spawn cave",
           not (mine & {va for va, _w, _s, _n in _rw.label_words()})
           and not (mine & {va for va, _w in _SPAWN}))
-    check("the hooked reads are the ones the module recorded",
+    check("the reads it takes over are the eight the module recorded",
           {va for va, _rd in rsescope.WIDTH_HOOKS}
-          | set(rsescope.HEIGHT_HOOKS) == set(rsescope.FRAMEBUFFER_READS))
+          | set(rsescope.HEIGHT_NEAR) | set(rsescope.HEIGHT_FAR)
+          == set(rsescope.FRAMEBUFFER_READS))
 
     profile = BY_ID["r6_3_slus20883"]
     check("the option reaches the profile",
@@ -3336,8 +3767,9 @@ def run_split_scope(args):
                if e.va == rsescope.SCOPE_BRANCH])
     made = [e for e in profile.build_edits({"split_scope": True})
             if e.va == rsescope.SCOPE_BRANCH]
-    check("turning it on clears exactly that branch",
-          len(made) == 1 and made[0].value == rsescope.SCOPE_BRANCH_OPEN
+    check("turning it on replaces exactly that branch with the guard",
+          len(made) == 1
+          and made[0].value == dict(rsescope.SCOPE_GUARD)[rsescope.SCOPE_BRANCH]
           and made[0].stock == rsescope.SCOPE_BRANCH_STOCK)
 
     # the caveat is the point: the draw sizes itself off the framebuffer
@@ -3492,7 +3924,7 @@ def run_room_invariant(args):
 
     print(chr(10) + "[room after a file never reaches the next one]")
 
-    discs = [(args.iso, "r6_3_slus20883"),
+    discs = [(args.iso or args.rs3data, "r6_3_slus20883"),
              (args.gr, "ghost_recon_slus20613"),
              (args.js, "jungle_storm_slus20820"),
              (args.gr2, "gr2_slus21105"),
@@ -3641,23 +4073,20 @@ def run_fit_in_place(args):
 
 
 def run_grown_lin(args):
-    r"""An edit that makes a LIN package bigger must go through.
+    r"""A cooked package that changes length is refused -- unless it is a recording.
 
-    This pins a bug that made `frag_warning` impossible on every disc. It adds
-    three names and three imports to the package, so it ALWAYS changes the
-    length, and a guard in `apply_data` rejected any length change in a
-    compressed container -- the rule this project retracted once the loader
-    turned out to walk its packages rather than index them. `_repack` had
-    already gained the `lin.rebuild` path for exactly this; the guard upstream
-    had not caught up, so the rebuild was never reached.
-
-    It threw on every attempt, and until the pump was taught to report its own
-    faults the error was swallowed and the window simply hung. Only `rselzo`
-    still has to keep its length: its chunk boundaries are fixed.
+    This test used to pin the opposite. `frag_warning` grew COMMON by 107
+    bytes, a guard refused it, the guard was relaxed, the container fitted its
+    slot -- and the game then would not boot at all. A LIN is a RECORDING of
+    one boot's read stream, and three new imports are three reads that boot
+    never made. So the guard came back, for every op but one: `team_recording`,
+    which supplies a whole different recording and proves it byte for byte
+    (see `run_team_recordings`, which drives it through this same path).
     """
     import tempfile
     from tcps2 import dataedit
     from tcps2.iso import Iso
+    from tcps2.model import FileEdit
     from tcps2.vokes import Region, Vokes, open_archives
     from tcps2.games import BY_ID
 
@@ -3666,7 +4095,7 @@ def run_grown_lin(args):
         return
     profile = BY_ID["r6_3_slus20883"]
 
-    print(chr(10) + "[an edit that grows a LIN package]")
+    print(chr(10) + "[an edit that grows a LIN package is refused]")
 
     class Shadow(Region):
         """Reads through to the real archive, keeps writes in memory."""
@@ -3683,14 +4112,10 @@ def run_grown_lin(args):
         def write(self, off, data):
             self.w.append((off, bytes(data)))
 
-    vals = dict(profile.defaults())
-    vals["frag_warning"] = True
-    edits = [e for e in profile.build_data(profile.normalise(vals))
-             if e.op == "frag_warning"]
-    check("the disc offers an edit that grows a package", len(edits) == 1)
-    if not edits:
-        return
-
+    check("frag_warning is retired, so no setting emits it",
+          not [e for e in profile.build_data(profile.effective(
+              dict(profile.defaults(), frag_warning=True)))
+              if e.op == "frag_warning"])
     work = tempfile.mkdtemp(prefix="tcms-grown-")
     real_archives = dataedit._archives
     try:
@@ -3700,51 +4125,22 @@ def run_grown_lin(args):
                 arc = Vokes(Shadow(real.r))
                 shadows[arc.r.name.upper()] = arc
             dataedit._archives = lambda _iso, _p: shadows
-
-            # the op really does change the length -- otherwise this proves
-            # nothing about the guard it is here to pin
-            grew = False
-            for arc in shadows.values():
-                ent = arc.files.get("/COMMON.LIN")
-                if ent is None:
-                    continue
-                _kind, plain = dataedit._unpack(arc.read_entry(ent),
-                                                "/COMMON.LIN")
-                new, _n = dataedit.OPS["frag_warning"](plain,
-                                                       edits[0].params)
-                grew = len(new) > len(plain)
-                break
-            check("and it does make the package longer", grew)
-
+            # Asked for by hand, the way a stale saved profile once did.
+            edit = FileEdit("frag_warning", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True})
             try:
-                rep = dataedit.apply_data(iso, profile, edits,
-                                          dataedit.Store(work))
+                dataedit.apply_data(iso, profile, [edit], dataedit.Store(work))
                 threw = None
             except Exception as exc:                  # noqa: BLE001
-                rep, threw = None, exc
-            check("a longer package is no longer refused outright",
-                  threw is None, "%s: %s" % (type(threw).__name__, threw)
-                  if threw else "")
-            if threw is not None:
-                return
-            check("and the edit actually reached files",
-                  rep.get("files", 0) > 0, str(rep))
-            check("and it is counted", rep["changes"].get("frag_warning", 0) > 0,
-                  str(rep.get("changes")))
-
-            # what landed must still decompress to what the edit asked for
-            checked = 0
-            for arc in shadows.values():
-                for key, ent in sorted(arc.files.items()):
-                    if not key.startswith("/COMMON"):
-                        continue
-                    raw = arc.read_file(ent.path)
-                    kind, got = dataedit._unpack(raw, ent.path)
-                    if kind != "lin":
-                        continue
-                    checked += 1
-            check("and every COMMON package still decompresses afterwards",
-                  checked > 0, "checked %d" % checked)
+                threw = exc
+            check("a script edit that grows a package is refused",
+                  isinstance(threw, dataedit.DataEditError)
+                  and "length" in str(threw),
+                  "%s: %s" % (type(threw).__name__, threw) if threw else "")
+            check("before a single byte reaches the disc",
+                  not any(arc.r.w for arc in shadows.values()))
+            check("and the recordings op is the only exception",
+                  dataedit._RECORDING_OPS == {"team_recording"})
     finally:
         dataedit._archives = real_archives
         shutil.rmtree(work, ignore_errors=True)
@@ -4275,6 +4671,11 @@ def run_op_contract(args):
             try:
                 if op in dataedit._WANTS_CONTAINER:
                     got = fn(plain, edit.params, raw)
+                elif op in dataedit._WANTS_SIBLING:
+                    sib = dataedit._WANTS_SIBLING[op](hit).upper()
+                    sraw = where[sib].read_entry(where[sib].files[sib])
+                    got = fn(plain, edit.params,
+                             lin.decompress(sraw) if lin.is_lin(sraw) else sraw)
                 else:
                     got = fn(plain, edit.params)
             except Exception as exc:                         # noqa: BLE001
@@ -4863,6 +5264,221 @@ def run_switch_off_restores(args, work):
             dataedit._archives = real
 
 
+def run_team_recordings(args):
+    """AI teammates in split screen, through the real apply path on the disc.
+
+    Reads the real archives and keeps every write in memory, so the disc is
+    never touched. What it pins: every covered map's split-screen recording is
+    replaced by the proved splice and stays in its own slot; the team code
+    lands in the split-screen package and nowhere else; the winter maps,
+    Trieste and every single-player file are left exactly as they were; and
+    switching the option off puts every one of those files back.
+    """
+    from tcps2 import dataedit, lin, rsesplice, rsesquad
+    from tcps2.iso import Iso
+    from tcps2.vokes import Region, Vokes, open_archives
+    from tcps2.games import BY_ID
+
+    iso_path = args.rs3data or args.iso
+    if not iso_path:
+        return
+    profile = BY_ID["r6_3_slus20883"]
+    print(chr(10) + "[split-screen teammates on the disc]")
+
+    class Shadow(Region):
+        """Reads through to the real archive, keeps writes in memory."""
+        def __init__(self, inner):
+            super().__init__(inner.fh, inner.base, inner.name)
+            self.w = []
+        def read(self, off, n):
+            d = bytearray(super().read(off, n))
+            for o, b in self.w:
+                s0, e0 = max(off, o), min(off + n, o + len(b))
+                if s0 < e0:
+                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
+            return bytes(d)
+        def write(self, off, data):
+            self.w.append((off, bytes(data)))
+
+    edits = [e for e in profile.build_data(profile.effective(
+        dict(profile.defaults(), split_squad=True)))
+        if e.op in ("squad", "team_recording")]
+    work = tempfile.mkdtemp(prefix="tcms-team-")
+    real_archives = dataedit._archives
+    try:
+        with Iso(iso_path) as iso:
+            shadows = {}
+            for real in open_archives(iso, profile.archive_pattern):
+                arc = Vokes(Shadow(real.r))
+                shadows[arc.r.name.upper()] = arc
+            dataedit._archives = lambda _iso, _p: shadows
+
+            def where(path):
+                for name, arc in shadows.items():
+                    ent = arc.files.get(path)
+                    if ent is not None:
+                        return name, arc, ent
+                return None, None, None
+
+            watch = ["/%s_SS.LIN" % m for m in rsesplice.COVERED]
+            left = (["/TRIESTE_A_SS.LIN"]
+                    + ["/%sOFF.LIN" % m for m in rsesplice.MAPS[:3]]
+                    + ["/%sOFF.LIN" % m for m in rsesplice.WINTER[:1]])
+
+            # The disc may already carry the option. Put the shipped files
+            # back first -- in memory only, from the disc's own backup store,
+            # which is only ever READ here -- so this starts from stock.
+            shipped = dataedit.Store(engine.backup_dir_for(iso_path))
+            for name, arc in shadows.items():
+                for key in watch + ["/COMMON_SS.LIN"]:
+                    ent = arc.files.get(key)
+                    got = ent and shipped.original(name, ent.path)
+                    if not got:
+                        continue
+                    data, offset = got
+                    if ent.offset != offset or arc.read_entry(ent) != data:
+                        if ent.offset != offset:
+                            arc.r.write(ent.offset, b"\x00" * ent.size)
+                        arc.r.write(offset, data)
+                        arc._set_entry(ent, offset, len(data))
+            before = {}
+            for path in watch + left:
+                name, arc, ent = where(path)
+                before[path] = (ent.offset, arc.read_entry(ent))
+            commons = {n: a.read_file("/COMMON_SS.LIN")
+                       for n, a in shadows.items()
+                       if "/COMMON_SS.LIN" in a.files}
+            others = {(n, k): a.read_file(k) for n, a in shadows.items()
+                      for k in ("/COMMON.LIN", "/COMMONOFF.LIN")
+                      if k in a.files}
+
+            store = dataedit.Store(os.path.join(work, "store"))
+            try:
+                dataedit.apply_data(iso, profile, edits, store)
+                threw = None
+            except Exception as exc:                  # noqa: BLE001
+                threw = exc
+            check("the option applies", threw is None,
+                  "%s: %s" % (type(threw).__name__, threw) if threw else "")
+            if threw is not None:
+                return
+
+            spliced = fitted = chunked = 0
+            for path in watch:
+                name, arc, ent = where(path)
+                raw = arc.read_entry(ent)
+                plain = lin.decompress(raw)
+                sname, sarc, sent = where(rsesplice.sibling(path))
+                stock_ss = lin.decompress(before[path][1])
+                stock_off = lin.decompress(sarc.read_entry(sent))
+                if (rsesplice.reads(plain)
+                        and plain == rsesplice.splice(stock_ss, stock_off)):
+                    spliced += 1
+                if (ent.offset == before[path][0]
+                        and len(raw) == len(before[path][1])):
+                    fitted += 1
+                if max(c for _r, c, _o in lin.parse(raw)[0]) <= lin.CHUNK_RAW:
+                    chunked += 1
+            check("all 26 split-screen recordings now read the operatives",
+                  spliced == len(watch), "%d of %d" % (spliced, len(watch)))
+            check("every one stays in its own slot, at exactly its shipped size",
+                  fitted == len(watch), "%d of %d" % (fitted, len(watch)))
+            check("and no chunk outgrows the loader's buffer",
+                  chunked == len(watch), "%d of %d" % (chunked, len(watch)))
+            same = [p for p in left
+                    if where(p)[1].read_entry(where(p)[2]) == before[p][1]]
+            check("Trieste and the single-player files are untouched",
+                  same == left,
+                  ", ".join(sorted(set(left) - set(same))))
+            landed = [n for n, a in shadows.items()
+                      if "/COMMON_SS.LIN" in a.files
+                      and rsesquad.reads(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      == rsesquad.ARM_TARGET
+                      and rsesquad.skins_everyone(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      and rsesquad.keeps_player2_out(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      and rsesquad.orders_from_requester(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))]
+            check("the team code and the whole-team skins land in every copy "
+                  "of the split-screen package",
+                  sorted(landed) == sorted(commons))
+            check("and the offline and online packages are untouched",
+                  all(shadows[n].read_file(k) == b
+                      for (n, k), b in others.items()))
+
+            r = dataedit.apply_data(iso, profile, [], store)
+            back = [p for p in watch
+                    if where(p)[1].read_entry(where(p)[2]) == before[p][1]
+                    and where(p)[2].offset == before[p][0]]
+            check("switching it off puts every recording back byte for byte",
+                  back == watch, "%d of %d" % (len(back), len(watch)))
+            check("and the split-screen package too",
+                  all(shadows[n].read_file("/COMMON_SS.LIN") == b
+                      for n, b in commons.items()))
+            check("and says so", r.get("restored") == len(watch) + len(commons),
+                  "restored=%r" % r.get("restored"))
+
+            # Canon on top. The expected recordings are the ones measured
+            # independently, by hash, from the single-player files.
+            from tcps2 import rsecanon
+
+            def edits_for(**on):
+                return [e for e in profile.build_data(profile.effective(
+                    dict(profile.defaults(), **on)))
+                    if e.op in ("squad", "team_recording", "canon_team")]
+
+            def plain_at(path):
+                _n, a, e = where(path)
+                return lin.decompress(a.read_entry(e))
+
+            def packages():
+                return [lin.decompress(a.read_file("/COMMON_SS.LIN"))
+                        for a in shadows.values()
+                        if "/COMMON_SS.LIN" in a.files]
+
+            dataedit.apply_data(iso, profile,
+                                edits_for(split_squad=True, canon_team=True),
+                                store)
+            check("with canon, Island reads Weber, then Loiselle",
+                  hashlib.sha1(plain_at("/ISLAND_A_SS.LIN")).hexdigest()
+                  == "f164dc071e389b6e30c62c0263d85c5e6de1c174")
+            check("and both Garage levels read the pair as single player does",
+                  all(rsesplice.reads(plain_at(q)) for q in
+                      ("/GARAGE_A_SS.LIN", "/GARAGE_B_SS.LIN")))
+            check("the package carries canon, the team code and the roster "
+                  "tests pointed at Price",
+                  all(rsecanon.reads(c) and rsesquad.counts(c)
+                      and rsesquad.roster_reads_price(c)
+                      and rsesquad.reads(c) == rsesquad.ARM_TARGET
+                      for c in packages()))
+            dataedit.apply_data(iso, profile, edits_for(canon_team=True), store)
+            want = {"/ISLAND_A_SS.LIN": "d0ac074020467ee6ca8071849412bcf08752a064",
+                    "/GARAGE_A_SS.LIN": "340b9b22c823612fb71623c36972b73393fa5656",
+                    "/GARAGE_B_SS.LIN": "b235ecea34c031829f094b9412d12564b0afaa4c"}
+            got = {q: hashlib.sha1(plain_at(q)).hexdigest() for q in want}
+            check("canon alone: its three levels read just player 2's operative",
+                  got == want, str(got))
+            check("and every other level is back to the stock recording",
+                  all(where(q)[1].read_entry(where(q)[2]) == before[q][1]
+                      for q in watch if q not in want))
+            check("and the package carries canon without the team code",
+                  all(rsecanon.reads(c)
+                      and rsesquad.reads(c) == rsesquad.SKIP_TARGET
+                      and not rsesquad.roster_reads_price(c)
+                      for c in packages()))
+            dataedit.apply_data(iso, profile, [], store)
+            check("switching both off puts every file back byte for byte",
+                  all(where(q)[1].read_entry(where(q)[2]) == before[q][1]
+                      for q in watch)
+                  and all(shadows[n].read_file("/COMMON_SS.LIN") == b
+                          for n, b in commons.items()))
+    finally:
+        dataedit._archives = real_archives
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def run_vokes_stay_home(args):
     """A file that grows by a byte must not be exiled to the end of the archive.
 
@@ -4968,6 +5584,11 @@ def run_mem_size_preserved(args):
     if not iso_path:
         return
     print("\n[bytecode edits keep the declared memory size]")
+    from tcps2 import dataedit as _de
+    # The disc may already carry these edits, and each one leaves a file it
+    # has already changed alone -- so start from the shipped bytes, read (and
+    # only read) from the disc's own backup store when it has them.
+    shipped = _de.Store(engine.backup_dir_for(iso_path))
     with Iso(iso_path) as iso:
         arcs = open_archives(iso, r"/VOKES0\.IMG$")
         if not arcs:
@@ -4976,7 +5597,9 @@ def run_mem_size_preserved(args):
         for path in ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN"):
             if path.upper() not in arc.files:
                 continue
-            raw = arc.read_entry(arc.files[path.upper()])
+            ent = arc.files[path.upper()]
+            got = shipped.original(arc.r.name.upper(), ent.path)
+            raw = got[0] if got else arc.read_entry(ent)
             plain = lin.decompress(raw)
             cases = [
                 ("ss_man_down", rsemandown.find_block,
@@ -5099,6 +5722,253 @@ def run_chunks_fill_exactly(args):
                 check("%s: %s leaves nothing after any stream"
                       % (path[1:], name), not short,
                       "%d chunk(s) with trailing bytes" % len(short))
+
+
+def run_applied_record(args, work):
+    """What a disc carries, what an Apply would change on it, and the way back.
+
+    Written after a hang. One dial was moved in the window and Apply wrote the
+    window's whole stored profile -- hours old, unlike the disc, and carrying
+    two untested options that re-assemble UnrealScript -- with nothing on
+    screen to say anything else was going with it. The level load never
+    finished. The apply sheet now lists every setting that changes against what
+    the disc was last patched with and flags the untested ones, and the window
+    can load a recent apply back.
+
+    Everything here is plain Python. The sheet itself is Tk, and this suite
+    does not open it; `_table` is the part of it that decides the layout, and
+    that part is checked.
+    """
+    import cli
+    from gui import dialog, theme
+    from tcps2 import applied
+    from tcps2.games import BY_ID
+    from tcps2.model import BOOL, CHOICE, INT, Setting
+
+    print("\n[what the disc carries, and what an apply would change]")
+    prof = BY_ID["r6_3_slus20883"]
+    show, risk = applied.show, applied.risk
+
+    check("a switch reads On and Off",
+          (show(prof.setting("wave_enable"), True),
+           show(prof.setting("wave_enable"), False)) == ("On", "Off"))
+    check("a choice reads by its label, not its value",
+          show(prof.setting("bodies"), "15") == "15 seconds",
+          show(prof.setting("bodies"), "15"))
+    check("a symbol unit sits against its number",
+          (show(prof.setting("ai_sidearm"), 40),
+           show(prof.setting("p2_look_speed"), 3)) == ("40%", "3x"))
+    check("a word unit takes a space",
+          show(prof.setting("fov"), 110) == "110 degrees")
+    check("and a number with no unit is just the number",
+          show(Setting("n", "N", INT, 0), 7) == "7")
+
+    # The disc as the command line left it; the window's stored profile, with
+    # the two untested options in it and the one dial actually moved tonight.
+    disc = prof.effective(prof.defaults())
+    window = dict(disc, ai_finite_ammo=True, ai_sidearm=40, ai_say_dry=20,
+                  p2_look_speed=3)
+    got = applied.changes(prof, disc, window)
+    want = {"ai_finite_ammo", "ai_sidearm", "ai_say_dry", "p2_look_speed"}
+    check("tonight's apply lists every setting it changes, in page order",
+          [c.setting.key for c in got]
+          == [s.key for s in prof.settings if s.key in want],
+          str([c.setting.key for c in got]))
+    check("and the two untested ones are the ones flagged",
+          sorted((c.setting.key, c.risk) for c in got if c.risk)
+          == [("ai_say_dry", "untested"), ("ai_sidearm", "untested")],
+          str([(c.setting.key, c.risk) for c in got]))
+    look = [c for c in got if c.setting.key == "p2_look_speed"]
+    check("the dial moved on purpose is verified, so its row is quiet",
+          len(look) == 1 and look[0].risk is None)
+    check("and it reads 1x > 3x",
+          (show(look[0].setting, look[0].before),
+           show(look[0].setting, look[0].after)) == ("1x", "3x"))
+    check("nothing differs from itself",
+          applied.changes(prof, window, window) == [])
+
+    print("  -- phantoms")
+    check("a withdrawn option stored on is not a change",
+          applied.changes(prof, disc, dict(disc, ss_man_down=True)) == [])
+    check("nor is a dial whose prerequisite is off on both sides",
+          applied.changes(prof, disc, dict(disc, wave_total=99)) == [])
+    waves = dict(disc, wave_enable=True, wave_total=99, wave_gate="away")
+    got = applied.changes(prof, waves, dict(waves, wave_enable=False))
+    check("switching wave mode off lists wave mode, not its dials resetting",
+          [c.setting.key for c in got] == ["wave_enable"],
+          str([c.setting.key for c in got]))
+    got = applied.changes(prof, disc, waves)
+    check("switching it on lists the dials it comes with",
+          {c.setting.key for c in got}
+          == {"wave_enable", "wave_total", "wave_gate"},
+          str([c.setting.key for c in got]))
+    armed = dict(disc, ai_finite_ammo=True, ai_sidearm=40,
+                 ai_sidearm_contact=False)
+    got = applied.changes(prof, armed, dict(armed, ai_sidearm=0))
+    check("turning an untested option off is one quiet row",
+          [(c.setting.key, c.risk) for c in got] == [("ai_sidearm", None)],
+          str([(c.setting.key, c.risk) for c in got]))
+
+    print("  -- risk")
+    sidearm, weather = prof.setting("ai_sidearm"), prof.setting("fx_weather")
+    check("turning an untested option on is flagged",
+          risk(sidearm, 40) == "untested")
+    check("turning it back off is not", risk(sidearm, 0) is None)
+    check("a not-play-tested fix that defaults on is flagged while on",
+          weather.default is True and risk(weather, True) == "applied")
+    check("and quiet when off", risk(weather, False) is None)
+    check("a verified option is never flagged",
+          risk(prof.setting("p2_look_speed"), 256) is None)
+    check("an option marked broken but left switchable is flagged",
+          risk(Setting("odd", "Odd", BOOL, False, confidence="broken"),
+               True) == "broken")
+    check("and so is a withdrawn one",
+          risk(prof.setting("ss_man_down"), True) == "broken")
+    used = {s.confidence for p in ALL_PROFILES for s in p.settings}
+    check("every confidence a profile uses has a badge of its own",
+          used <= set(theme.BADGE), str(sorted(used - set(theme.BADGE))))
+    check("and every one a change can be flagged with is a warning colour",
+          all(theme.BADGE[k][0] in ("warn", "bad")
+              for k in used if k != "verified"))
+
+    print("  -- the disc as it shipped")
+    loud, quiet_data = [], []
+    for p in ALL_PROFILES:
+        v = p.effective(applied.stock(p))
+        if ((p.build_edits and p.build_edits(v))
+                or (p.build_pnach and p.build_pnach(v))):
+            loud.append(p.id)
+        # The loadout builder always emits, and "stock" is how it puts the
+        # shipped templates back; that is the only data edit allowed here.
+        quiet_data += [(p.id, e.op) for e in
+                       (p.build_data(v) if p.build_data else [])
+                       if e.params != {"weapons": "stock"}]
+    check("the shipped baseline builds no code word or cheat line on any disc",
+          not loud, str(loud))
+    check("and no data edit that changes anything", not quiet_data,
+          str(quiet_data))
+    check("which the defaults are not: Rainbow Six 3's switch fixes on",
+          bool(prof.build_edits(prof.effective(prof.defaults()))))
+
+    print("  -- the record")
+    folder = os.path.join(work, "applied-store")
+    nothing = {"on_disc": None, "history": []}
+    check("a disc with no record reads as nothing recorded",
+          applied.load(folder, prof) == nothing)
+    base, entry = applied.baseline(folder, prof)
+    check("and compares against the disc as it shipped",
+          entry is None and base == prof.effective(applied.stock(prof)))
+    for n in range(1, 8):
+        applied.record(folder, prof, dict(disc, p2_look_speed=n), "t%d" % n)
+    log = applied.load(folder, prof)
+    check("the history keeps the last %d applies, newest first"
+          % applied.KEEP,
+          [e["when"] for e in log["history"]] == ["t7", "t6", "t5", "t4", "t3"],
+          str([e["when"] for e in log["history"]]))
+    check("and the newest is what the disc carries",
+          log["on_disc"]["when"] == "t7" and log["on_disc"]["kind"] == "applied")
+    applied.record(folder, prof, dict(disc, p2_look_speed=5, ss_man_down=True),
+                   "t8")
+    log = applied.load(folder, prof)
+    check("what is recorded is the effective settings, not the stored ones",
+          log["on_disc"]["values"]["ss_man_down"] is False)
+    check("re-applying a configuration moves it up instead of copying it",
+          [e["when"] for e in log["history"]] == ["t8", "t7", "t6", "t4", "t3"],
+          str([e["when"] for e in log["history"]]))
+    applied.record_stock(folder, prof, "t9")
+    log = applied.load(folder, prof)
+    check("a restore records the disc as stock",
+          log["on_disc"]["kind"] == "stock" and log["on_disc"]["when"] == "t9")
+    check("and keeps every apply to go back to",
+          [e["when"] for e in log["history"]] == ["t8", "t7", "t6", "t4", "t3"])
+    base, entry = applied.baseline(folder, prof)
+    check("so the next sheet compares against the disc as it shipped",
+          entry["kind"] == "stock"
+          and base == prof.effective(applied.stock(prof)))
+    check("a record written for another game is ignored",
+          applied.load(folder, BY_ID["ghost_recon_slus20613"]) == nothing)
+    with open(os.path.join(folder, applied.STORE), "w") as fh:
+        fh.write("{half a record")
+    check("and a damaged one reads as nothing recorded, without raising",
+          applied.load(folder, prof) == nothing)
+
+    print("  -- the sheet's layout")
+    # Every setting on every disc changed at once, between its two longest
+    # values, and flagged whenever it could be: no line may be wider than the
+    # sheet, or Tk wraps it and the end of the list drops out of sight.
+    width = dialog.CHANGE_COLS - 2
+    every = []
+    for p in ALL_PROFILES:
+        for s in p.settings:
+            if s.kind == CHOICE:
+                ends = sorted((c.value for c in s.choices),
+                              key=lambda v, s=s: -len(show(s, v)))[:2]
+            elif s.kind == BOOL:
+                ends = [False, True]
+            else:
+                ends = [s.minimum, s.maximum]
+            every.append(applied.Change(s, ends[0], ends[-1],
+                                        None if s.confidence == "verified"
+                                        else s.confidence))
+    lines = dialog._table(every, width)
+    wide = [ln for ln, _t in lines if len(ln) > width]
+    check("no line of the change list is wider than the sheet (%d rows)"
+          % len(every), not wide, str(wide[:2]))
+    lines = dialog._table(applied.changes(prof, disc, window), width)
+    check("tonight's list is one line a setting except the long label",
+          len(lines) == 5, "\n".join(ln for ln, _t in lines))
+    check("and the flagged rows are drawn in the warning colour",
+          sorted(ln.split()[0] for ln, t in lines if "warn" in t)
+          == ["0%", "Chance", "Chance"],
+          str([(ln, t) for ln, t in lines]))
+
+    # The discs that patch their boot executable word by word apply and
+    # restore down a different branch of the engine; run_raw_and_data drove
+    # one apply and one restore through it on each of their fixtures.
+    for pid in ("ghost_recon_slus20613", "jungle_storm_slus20820"):
+        raw = os.path.join(work, pid + ".iso")
+        if not os.path.exists(raw):
+            continue
+        log = applied.load(engine.backup_dir_for(raw), BY_ID[pid])
+        check("%s: its apply and its restore were both recorded"
+              % BY_ID[pid].short,
+              len(log["history"]) == 1
+              and (log["on_disc"] or {}).get("kind") == "stock")
+
+    if not (args.soz or args.iso):
+        return
+    print("  -- recorded where both the window and the command line apply")
+    fx = os.path.join(work, "applied.iso")
+    build(fx, [("SP.SOZ", stock_container(args)),
+               ("SLUS_208.83", boot_elf(args))])
+    folder = engine.backup_dir_for(fx)
+    asked = dict(prof.defaults(), p2_look_speed=3, ss_man_down=True)
+    r = engine.apply(fx, prof, asked)
+    log = applied.load(folder, prof)
+    check("an apply records what it wrote, beside the disc's other backups",
+          r["verified"] == r["applied"] and log["on_disc"] is not None
+          and os.path.exists(os.path.join(folder, applied.STORE)))
+    check("the effective settings, stamped with the apply's own time",
+          log["on_disc"]["values"] == prof.effective(asked)
+          and log["on_disc"]["when"] == r["when"])
+    code = cli.main(["apply", fx, "--set", "p2_look_speed=4"])
+    log = applied.load(folder, prof)
+    check("an apply from the command line is recorded too",
+          code == 0 and log["on_disc"]["values"]["p2_look_speed"] == 4,
+          "exit %r" % code)
+    check("with the window's apply still in the history behind it",
+          [e["values"]["p2_look_speed"] for e in log["history"]] == [4, 3])
+    before, _entry = applied.baseline(folder, prof)
+    check("so the next apply sheet compares against the command line's",
+          [c.setting.key for c in applied.changes(
+              prof, before, dict(prof.defaults(), p2_look_speed=4))] == [])
+    rv = engine.revert(fx, prof)
+    log = applied.load(folder, prof)
+    check("a restore is recorded as the disc as it shipped",
+          rv["hash_ok"] and log["on_disc"]["kind"] == "stock")
+    check("and both applies are still there to load back",
+          len(log["history"]) == 2)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

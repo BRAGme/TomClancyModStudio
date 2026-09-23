@@ -519,9 +519,12 @@ BOX_TARGET = 0x003496D0
 #: so it survives the intervening calls. The hook goes in the free `nop` at
 #: 0x00438080 -- NOT 0x00438084, which would put the `jal` in the delay slot
 #: of the `jal 0x00469520` that follows.
-#: The four weapon icons inside the ring. These call the same sprite
-#: primitive as the ring quadrants, but pass a DESIGN-space Y in $f13 that
-#: the callee multiplies by the scale in $f15 -- and at all four sites
+#: The blinking marker on the SELECTED direction -- its UP and DOWN cases.
+#: (An earlier version of this comment called these the weapon icons. They
+#: are not: the icons are the eight BOX_HOOKS calls. These four are the
+#: marker, gated by m_bBlinkSelected at 0x004381A8.) They call the same
+#: sprite primitive as the ring quadrants, but pass a DESIGN-space Y in $f13
+#: that the callee multiplies by the scale in $f15 -- and at all four sites
 #: $f15 is a copy of $f21, the wheel's own Y scale. So the viewport offset
 #: has to be divided by that scale before it is added, or it lands scaled
 #: twice.
@@ -544,6 +547,154 @@ MOV_F15_F26 = 0x4600D3C6
 RING_HOOK = 0x00438080
 RING_STOCK = NOP
 
+#: The same marker's RIGHT and LEFT cases, which the up/down fix never
+#: reached. They draw through the rotated-quad call at 0x00469A10, passing an
+#: explicit rectangle in native 640x448 pixels -- x 350.0 or 292-w, y 242-h
+#: or 205.0, width and height raw from the atlas, rotation +/- pi/2 -- and
+#: that call hard-codes 1.0 as BOTH output scales (0x00469A58 lui 0x3f80,
+#: stored at 0x00469A78 and 0x00469A80). No scale register reaches them, so
+#: no register swap like RING_SCALE can: in split screen they stay at the
+#: native size the ring had before its fix, twice too tall for a
+#: half-height viewport, straddling the split line and never moved into
+#: player 2's half. That is what "the flashing toggle isn't scaled with the
+#: wheel" was.
+#:
+#: 0x00469A10 itself cannot change -- 24 other HUD sites call it. So the four
+#: call sites jump through a cave that does to the rectangle what the ring
+#: now gets. Because of the 90-degree turn the VISIBLE height comes from the
+#: rectangle's WIDTH, so, with k = $f26 = SizeY/448 (built by the ring cave,
+#: which is the only way into this block) and d = (k - 1)/2:
+#:
+#:     y = k*y + h*d + viewportY      x = x - w*d      w = k*w
+#:
+#: which keeps the centre where the ring's own transform puts it. In single
+#: player k is exactly 1.0 and viewport Y is 0, so d is 0 and all four calls
+#: pass through bit-identical -- run on an R5900 interpreter as well as read.
+#:
+#: Scratch registers are $f0-$f4, $at and $v0, dead after all four sites.
+#: The delay slot at each site is a `mov.s` setting the texture coordinates,
+#: which run before the cave and so stay full-size, as they must. It uses
+#: `mula.s` / `madd.s`, the R5900's FPU accumulator forms; this game's own
+#: compiler emits each about 1,800 times.
+SIDE_HOOKS = (0x00438340, 0x004383B0, 0x004384E4, 0x00438540)
+SIDE_STOCK = 0x0C11A684                 # jal 0x00469a10
+SIDE_TARGET = 0x00469A10
+SIDE_CAVE = (
+    0x3C013F00,      # lui     $at, 0x3f00        0.5f
+    0x44810800,      # mtc1    $at, $f1
+    0x461A681A,      # mula.s  $f13, $f26         ACC = k*y
+    0x4601D0C2,      # mul.s   $f3, $f26, $f1     k/2
+    0x460118C1,      # sub.s   $f3, $f3, $f1      d = (k - 1)/2
+    0x46037B5C,      # madd.s  $f13, $f15, $f3    y = k*y + h*d
+    0x46037102,      # mul.s   $f4, $f14, $f3     w*d
+    0x46046301,      # sub.s   $f12, $f12, $f4    x = x - w*d
+    0x8F818E94,      # lw      $at, 0x8e94($gp)   G
+    0x3C020004,      # lui     $v0, 0x4
+    0x00220821,      # addu    $at, $at, $v0
+    0x8C210A04,      # lw      $at, 0xa04($at)    viewport Y
+    0x44810000,      # mtc1    $at, $f0
+    0x461A7382,      # mul.s   $f14, $f14, $f26   w = k*w
+    0x46800020,      # cvt.s.w $f0, $f0
+    0x08000000 | ((SIDE_TARGET >> 2) & 0x03FFFFFF),   # j 0x00469A10
+    0x46006B40,      # add.s   $f13, $f13, $f0    delay slot: + viewport Y
+)
+
+
+#: The label TEXT's size.
+#:
+#: The four labels are the script event
+#: `R6InteractionRoseDesVents.DrawTextCenteredInBox`, reached through
+#: ProcessEvent with an X, Y, W, H block, and it draws with
+#: `m_FontRainbow6_15pt` -- every glyph 15 pixels tall, and no smaller font is
+#: loaded. The height is added in the shared string drawer 0x0029edf0, AFTER
+#: the only scale the text path has (Canvas m_fStretchY, which moves a glyph
+#: but never resizes it):
+#:
+#:     0029f624  mul.s $f13, $f5, $f3     Y0 = StretchY * (OrgY + Y)
+#:     0029f62c  add.s $f15, $f1, $f13    Y1 = Y0 + VSize   ($t1 = VSize)
+#:     0029f640  jal   003496d0           draw the glyph quad (f12..f15)
+#:
+#: So the old label cave, which scaled the label's Y, moved the text and
+#: could never shrink it -- and multiplying by $f21 (0.9333 in single player)
+#: also lifted the single-player labels by 8 to 18 pixels.
+#:
+#: Now the label hooks ARM a pair of data words -- k = $f26 (SizeY/448, set
+#: by the ring cave; exactly 1.0 in single player) and the viewport Y -- the
+#: drawer's glyph call goes through a cave that makes it
+#:
+#:     Y0' = k*Y0 + vpY          Y1' = Y0' + k*VSize
+#:
+#: and the call after the fourth label DISARMS them back to (1.0, 0.0). The
+#: drawer draws all text in the game (13 call sites in 8 functions), and at
+#: (1.0, 0.0) every value it computes is unchanged, which is why the words
+#: SHIP as 1.0 and 0.0: a disc carrying zero there would collapse every
+#: piece of text. Every path from a label hook to the wheel's return passes
+#: the disarm; between arm and disarm the only text drawn is the four labels.
+#: Checked in an interpreter: 48,128 glyph cases bit-identical in single
+#: player, armed or not, and split screen exactly single player x k + vpY.
+LABEL_TEXT_HOOK = 0x0029F640
+LABEL_TEXT_STOCK = 0x0C0D25B4           # jal 0x003496d0
+LABEL_TEXT_TARGET = 0x003496D0
+#: `jal 0x0034a6d0` right after the fourth label; its delay slot sets $a1 and
+#: runs before the disarm, which touches only $at and $v0.
+LABEL_UNARM_HOOK = 0x00439358
+LABEL_UNARM_STOCK = 0x0C0D29B4          # jal 0x0034a6d0
+LABEL_UNARM_TARGET = 0x0034A6D0
+
+ONE_F = 0x3F800000                      # 1.0f
+
+
+def _hi_lo(va):
+    """(hi, lo) for `lui hi` + a signed 16-bit displacement reaching `va`."""
+    return ((va + 0x8000) >> 16) & 0xFFFF, va & 0xFFFF
+
+
+def _label_arm(data):
+    """Store k = $f26 and float(viewport Y). Eleven words, the old label slot."""
+    hi, lo = _hi_lo(data)
+    return (
+        0x8F818E94,                      # lw      $at, 0x8e94($gp)   G
+        0x3C020004,                      # lui     $v0, 0x4
+        0x00220821,                      # addu    $at, $at, $v0
+        0x8C210A04,                      # lw      $at, 0xa04($at)    viewport Y
+        0x3C020000 | hi,                 # lui     $v0, hi(data)
+        0x44810800,                      # mtc1    $at, $f1
+        0xE45A0000 | lo,                 # swc1    $f26, lo(data)($v0)   k
+        0x46800860,                      # cvt.s.w $f1, $f1
+        JR_RA,
+        0xE4410000 | ((lo + 4) & 0xFFFF),  # swc1  $f1, lo+4($v0)   vpY (delay)
+        NOP,
+    )
+
+
+def _label_glyph(data):
+    """Transform one glyph, then tail-jump to the quad call it replaced."""
+    hi, lo = _hi_lo(data)
+    return (
+        0x3C010000 | hi,                 # lui     $at, hi(data)
+        0xC4200000 | lo,                 # lwc1    $f0, k
+        0xC4220000 | ((lo + 4) & 0xFFFF),  # lwc1  $f2, vpY
+        0x44890800,                      # mtc1    $t1, $f1          VSize
+        0x46006B42,                      # mul.s   $f13, $f13, $f0   Y0 *= k
+        0x46800860,                      # cvt.s.w $f1, $f1
+        0x46026B40,                      # add.s   $f13, $f13, $f2   Y0 += vpY
+        0x46000842,                      # mul.s   $f1, $f1, $f0     h = k*VSize
+        0x08000000 | ((LABEL_TEXT_TARGET >> 2) & 0x03FFFFFF),
+        0x460D0BC0,                      # add.s   $f15, $f1, $f13   (delay slot)
+    )
+
+
+def _label_unarm(data):
+    """Put (1.0, 0.0) back, then tail-jump to the call it replaced."""
+    hi, lo = _hi_lo(data)
+    return (
+        0x3C020000 | hi,                 # lui     $v0, hi(data)
+        0x3C013F80,                      # lui     $at, 0x3f80       1.0f
+        0xAC410000 | lo,                 # sw      $at, k
+        0x08000000 | ((LABEL_UNARM_TARGET >> 2) & 0x03FFFFFF),
+        0xAC400000 | ((lo + 4) & 0xFFFF),  # sw    $zero, vpY (delay slot)
+    )
+
 
 def label_words(freed=True):
     """[(va, word, stockWord, note)] for the whole wheel fix.
@@ -562,12 +713,29 @@ def label_words(freed=True):
 
     out = []
 
+    # The label TEXT: arm the glyph transform at each label hook, apply it
+    # per glyph in the shared string drawer, disarm after the fourth label.
+    # See LABEL_TEXT_* for why it cannot be done at the label itself.
     text = rsedeadpath.claim("wheel_label", freed)
-    body = (MUL_F0_BY_F21,) + _read_vpy(1) + (0x46010000, JR_RA, NOP)
-    for k, word in enumerate(body):
+    data = rsedeadpath.claim("label_scale", freed)
+    for k, word in enumerate(_label_arm(data)):
         va = text + k * 4
         out.append((va, word, rsedeadpath.stock(va),
-                    "wheel: scale the label Y and put it in this viewport"))
+                    "wheel: arm the label text scale and viewport Y"))
+    for k, word in enumerate((ONE_F, 0x00000000)):
+        va = data + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: label text scale data (ships as 1.0, 0.0)"))
+    glyph = rsedeadpath.claim("label_text", freed)
+    for k, word in enumerate(_label_glyph(data)):
+        va = glyph + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: scale and place one glyph"))
+    unarm = rsedeadpath.claim("label_unarm", freed)
+    for k, word in enumerate(_label_unarm(data)):
+        va = unarm + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: put the label text scale back to 1.0, 0.0"))
 
     box = rsedeadpath.claim("wheel_box", freed)
     body = _read_vpy(0) + (0x46006B40, 0x46007BC0,
@@ -586,7 +754,7 @@ def label_words(freed=True):
     for k, word in enumerate(body):
         va = icon + k * 4
         out.append((va, word, rsedeadpath.stock(va),
-                    "wheel: put the weapon icons in this viewport"))
+                    "wheel: put the up/down marker in this viewport"))
 
     # The ring is the one element the game does NOT scale by the canvas.
     # Its four quadrants pass 1.0 for both axes, and the sprite call
@@ -632,6 +800,15 @@ def label_words(freed=True):
         out.append((site, MOV_F15_F26, RING_SCALE_STOCK,
                     "wheel: ring vertical scale at %#x" % site))
 
+    # The marker's left/right cases. It reads $f26, which only the ring cave
+    # sets, and nothing enters the marker block except by falling through
+    # the ring hook -- so this is emitted with the ring, never alone.
+    side = rsedeadpath.claim("wheel_side", freed)
+    for k, word in enumerate(SIDE_CAVE):
+        va = side + k * 4
+        out.append((va, word, rsedeadpath.stock(va),
+                    "wheel: scale the left/right marker to the viewport"))
+
     jal = lambda t: 0x0C000000 | ((t >> 2) & 0x03FFFFFF)
     for i, site in enumerate(LABEL_HOOKS):
         out.append((site, jal(text), LABEL_STOCK,
@@ -641,8 +818,15 @@ def label_words(freed=True):
                     "wheel: hook label box %d" % (i + 1)))
     for i, site in enumerate(ICON_HOOKS):
         out.append((site, jal(icon), ICON_STOCK,
-                    "wheel: hook weapon icon %d" % (i + 1)))
+                    "wheel: hook up/down marker %d" % (i + 1)))
+    for i, site in enumerate(SIDE_HOOKS):
+        out.append((site, jal(side), SIDE_STOCK,
+                    "wheel: hook left/right marker %d" % (i + 1)))
     out.append((RING_HOOK, jal(ring), RING_STOCK, "wheel: hook the ring"))
+    out.append((LABEL_TEXT_HOOK, jal(glyph), LABEL_TEXT_STOCK,
+                "wheel: every glyph goes through the label text scale"))
+    out.append((LABEL_UNARM_HOOK, jal(unarm), LABEL_UNARM_STOCK,
+                "wheel: disarm the label text scale after the fourth label"))
     return out
 
 
@@ -653,7 +837,7 @@ def label_card(prefix, group):
         prefix + "split_wheel_labels",
         "Keep the wheel's labels inside your half", BOOL, False, group,
         confidence="applied", touches="words",
-        caution="Watched in split screen on Island Estate. The wheel now appears only in the half of the player holding L1, and the ring is scaled to that half instead of drawn at native texture size, so the weapon icons sit around it rather than inside it. Two separate faults were behind that. The duplication was NOT the per-interaction gate, which works -- m_bShowMenu is +0x44 bit 0x10 and exactly one interaction holds it. It was the engine dispatcher at 0x003431d0, which loops over EVERY viewport's LocalInteractions and runs them into whichever single canvas it was handed, so player 2's wheel passed its own gate and drew into player 1's canvas; the native now tests canvas->Viewport == this->ViewportOwner. The misalignment was the RING, not the icons: its quadrants pass 1.0 for both axes so it was drawn at native texture size anchored to the canvas centre, while every other element is design space times SizeY/480 -- identical at 640x448, off by two in a 224-tall half. The ring now carries SizeY/448, exactly 1.0 in single player. STILL NOT RIGHT: the label TEXT does not scale with the rest. Its position is corrected but its size is not, so it reads large against the smaller ring. That is a different element from the geometry this fixes and needs its own pass.",
+        caution="Watched in split screen on Island Estate. The wheel now appears only in the half of the player holding L1, and the ring is scaled to that half instead of drawn at native texture size, so the weapon icons sit around it rather than inside it. Two separate faults were behind that. The duplication was NOT the per-interaction gate, which works -- m_bShowMenu is +0x44 bit 0x10 and exactly one interaction holds it. It was the engine dispatcher at 0x003431d0, which loops over EVERY viewport's LocalInteractions and runs them into whichever single canvas it was handed, so player 2's wheel passed its own gate and drew into player 1's canvas; the native now tests canvas->Viewport == this->ViewportOwner. The misalignment was the RING, not the icons: its quadrants pass 1.0 for both axes so it was drawn at native texture size anchored to the canvas centre, while every other element is design space times SizeY/480 -- identical at 640x448, off by two in a 224-tall half. The ring now carries SizeY/448, exactly 1.0 in single player. NEW AND NOT YET PLAYED: the label TEXT now scales too. Its glyphs are the font's own 15 pixels, added after the only scale the text path has, so no change at the label could shrink them -- the old fix only moved them (and nudged single player's labels up by 8 to 18 pixels while it was at it). Now the wheel arms a scale and its viewport's Y just before its four labels, the game's shared text drawer applies them to every glyph, and they are put back to 1.0 and 0.0 after the fourth label. That drawer draws ALL text in the game, which is why it ships at 1.0 and 0.0 and why it was checked in an interpreter first: 48,128 glyph cases came out bit-identical in single player, and split screen came out exactly as single player scaled to the half. Watch for: any text anywhere looking wrong while the wheel is open or after closing it; and PCSX2 may run slightly slower while the wheel is open, because the scale is written into a page of code memory.",
         requires={prefix + "split_wheel": [True]})
 
 

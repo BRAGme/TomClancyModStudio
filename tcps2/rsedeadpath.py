@@ -57,13 +57,19 @@ being told the branch has been dealt with, so that cannot be forgotten.
 from __future__ import annotations
 
 #: First word of the dead block, and how many words of it are safe to use.
-#: The block runs well past this; 24 is what has been read and checked
-#: instruction by instruction, and nothing needs more than 16.
+#:
+#: 244: the whole block, 0x0019b15c up to the epilogue at 0x0019b52c. With
+#: the entry branch retired, a control-flow walk leaves every word of it
+#: unreachable, and a scan of the entire stock image finds exactly one
+#: branch or jump into it from outside -- the entry at `ENTRY` -- and no data
+#: word pointing into it. The first 96 were proved first; the rest were
+#: needed when the wheel's label text wanted three more caves and a pair of
+#: data words.
 CAVE = 0x0019B15C
-CAVE_WORDS = 96
+CAVE_WORDS = 244
 
-#: What the game ships in the first 16 words, so every write is asserted
-#: against the real thing rather than assumed to be padding.
+#: What the game ships in every word of the block, so every write is
+#: asserted against the real thing rather than assumed to be padding.
 STOCK_WORDS = (
     0x342117E8, 0x02011821, 0x00651821, 0x90630000,
     0x106000EF, 0x00000000, 0x348417EC, 0x00051880,
@@ -89,6 +95,43 @@ STOCK_WORDS = (
     0x34420A0C, 0x8C660000, 0x02021021, 0x02A0482D,
     0x8C480000, 0x0220502D, 0x0240582D, 0x0C067130,
     0x0200202D, 0x3C010004, 0x02010821, 0x8C220A08,
+    0x04410003, 0x0002B043, 0x24420001, 0x0002B043,
+    0x8E990000, 0x8F390024, 0x0320F809, 0x0280202D,
+    0x8E990000, 0x2457FFFF, 0x8F390028, 0x0320F809,
+    0x0280202D, 0xFFB30000, 0x3C010004, 0xFFB70008,
+    0x2442FFFF, 0xFFA00010, 0x02010821, 0xFFA00018,
+    0x0200202D, 0xFFA20020, 0x0000302D, 0xFFA00028,
+    0x02C0382D, 0x8C220A00, 0x02A0482D, 0x0220502D,
+    0x0240582D, 0x3C010004, 0x02010821, 0x8C280A0C,
+    0x0C067130, 0x00562821, 0x3C010004, 0x02010821,
+    0x8C2409FC, 0x3C010004, 0x00042080, 0x342117F4,
+    0x02011821, 0x00641821, 0x8C640000, 0x10800068,
+    0x00000000, 0x8C990000, 0x8F3900A4, 0x0320F809,
+    0x00000000, 0x0040A02D, 0x0200202D, 0x0280282D,
+    0x0000302D, 0x0000382D, 0x0C06A474, 0x0000402D,
+    0x0040282D, 0x0200202D, 0x0000302D, 0x0000382D,
+    0x0000402D, 0x27898DAC, 0x0C06A124, 0x0000502D,
+    0x8F868DAC, 0x24020080, 0x0002183C, 0x24020068,
+    0x00431825, 0x24020042, 0x24C50010, 0xAF858DAC,
+    0xFCC30000, 0xFCC20008, 0x8E990000, 0x8F390024,
+    0x0320F809, 0x0280202D, 0x8E990000, 0x2456FFFF,
+    0x8F390028, 0x0320F809, 0x0280202D, 0xFFB30000,
+    0x3C010004, 0x2442FFFF, 0xFFB60008, 0xFFA20010,
+    0x02010821, 0xFFA00018, 0xFFA00020, 0xFFA00028,
+    0x8C220A08, 0x04410003, 0x00023843, 0x24420001,
+    0x00023843, 0x3C010004, 0x0200202D, 0x02010821,
+    0x02A0482D, 0x8C250A00, 0x0220502D, 0x3C010004,
+    0x02010821, 0x8C260A04, 0x3C010004, 0x02010821,
+    0x8C280A0C, 0x0C067130, 0x0240582D, 0x3C010004,
+    0x02010821, 0x8C220A08, 0x04410003, 0x0002B043,
+    0x24420001, 0x0002B043, 0x8E990000, 0x8F390024,
+    0x0320F809, 0x0280202D, 0x8E990000, 0x2457FFFF,
+    0x8F390028, 0x0320F809, 0x0280202D, 0xFFB30000,
+    0x3C010004, 0xFFB70008, 0x2442FFFF, 0xFFA00010,
+    0x02010821, 0xFFA00018, 0x02A0482D, 0xFFA20020,
+    0x0220502D, 0xFFA00028, 0x0240582D, 0x8C220A00,
+    0x0200202D, 0x0000302D, 0x02C0382D, 0x3C010004,
+    0x02010821, 0x8C280A0C, 0x0C067130, 0x00562821,
 )
 
 #: The block's only entry, and the word that sends it to the epilogue
@@ -124,6 +167,34 @@ SLOTS = {
     # left and right go through a different primitive. The weapon icons
     # are the eight box calls, which "wheel_box" already covers.
     "wheel_indicator": (42, 11),
+    # The marker's LEFT and RIGHT cases. They go through the rotated-quad
+    # call at 0x00469A10, which hard-codes a 1.0 output scale, so they kept
+    # the native size the ring had before its own fix -- twice too tall in a
+    # half-height viewport and never moved into player 2's half. 17 words:
+    # scale the rectangle's width (the visible height, after the 90-degree
+    # turn) by the ring's SizeY/448, keep its centre, add the viewport Y.
+    "wheel_side": (79, 17),
+    # The wheel's label TEXT. Its glyph height is the font's own 15 pixels,
+    # added after the only scale the text path has, so the fix lives in the
+    # shared string drawer: the wheel arms a (scale, viewport Y) pair in
+    # these two DATA words around its four labels (the "wheel_label" slot
+    # above is the arm), the drawer applies it to every glyph, and the pair
+    # is put back to (1.0, 0.0) after the fourth label. They ship as 1.0 and
+    # 0.0, which is what makes every other piece of text bit-identical.
+    "label_scale": (96, 2),
+    "label_text": (98, 10),        # per glyph: Y0 = k*Y0 + vpY, h = k*VSize
+    "label_unarm": (108, 5),       # (1.0, 0.0) again, then the real call
+    # The split-screen team panel (rsehudteam): single player's own panel
+    # code, entered from the split-screen HUD tail with a marker in the
+    # full-screen nesting counter, and every quad shifted into this half
+    # while the marker is set. Fixed addresses: the caves were assembled
+    # for exactly these words.
+    "team_quad": (113, 19),
+    "team_entry": (132, 20),
+    "team_skipbox": (152, 8),
+    "team_names": (160, 10),
+    "team_exit": (170, 18),
+    "team_roster": (188, 38),
     # Stop one player's wheel drawing into the other's half. The
     # engine dispatcher renders EVERY viewport's interaction list into
     # EACH viewport's canvas, so the per-player gate is honoured and

@@ -25,9 +25,13 @@ as before and nothing downstream has to know.
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 
+from tcps2 import applied
+
 from . import theme
+from .controls import RadioRow
 from .widgets import ActionButton, Chrome
 
 #: the sheet never grows past this much of the screen, body scrolls instead
@@ -36,6 +40,11 @@ MAX_H = 0.62
 #: the message column, in characters. Wide enough that a caution paragraph
 #: does not turn into a ladder, narrow enough to stay readable.
 COLS = 74
+
+#: the apply sheet's column. Wider than the rest so that no row of its change
+#: list has to be broken: the longest label with its badge, and the longest
+#: pair of choice labels, both fit.
+CHANGE_COLS = 84
 
 #: never shorter than this, never taller before the scrollbar takes over
 MIN_ROWS = 3
@@ -56,11 +65,17 @@ KINDS = {
 
 
 class Sheet(tk.Toplevel):
-    """One modal message, with an optional Cancel."""
+    """One modal message, with an optional Cancel.
+
+    `message` is plain text, or a list of (text, tags) runs for a sheet that
+    has to colour some of its lines. `extra(parent)`, when given, adds widgets
+    under the text before the sheet is sized, so they count toward its height.
+    """
 
     def __init__(self, master, title, message, kind="info", cancel=False,
-                 ok_text="OK", cancel_text="Cancel"):
+                 ok_text="OK", cancel_text="Cancel", cols=COLS, extra=None):
         super().__init__(master)
+        self.cols = cols
         # Invisible, but MAPPED, until it has been sized and placed.
         # `_size` calls `update`, which maps the window, so without this the
         # sheet appears at Tk's default position, gets measured, and then
@@ -114,10 +129,19 @@ class Sheet(tk.Toplevel):
         # never appears, however long the message is.
         self.bar.pack(side="right", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
-        self.text.insert("1.0", message or "")
+        for name in ("good", "warn", "bad", "dim"):
+            self.text.tag_configure(name, foreground=theme.colour(name))
+        self.text.tag_configure("mono", font=theme.F("mono", 9))
+        if isinstance(message, str) or not message:
+            self.text.insert("1.0", message or "")
+        else:
+            for run, tags in message:
+                self.text.insert("end", run, tags)
         # Read-only, but still selectable and copyable -- people paste these
         # into a message to ask what they mean.
         self.text.configure(state="disabled")
+        if extra is not None:
+            extra(panel.body)
 
         row = tk.Frame(outer, bg=p.bg)
         row.pack(fill="x", pady=(theme.px(12), 0))
@@ -180,7 +204,7 @@ class Sheet(tk.Toplevel):
         """
         wanted = self._rows()
         rows = min(wanted, MAX_ROWS)
-        self.text.configure(width=COLS, height=rows)
+        self.text.configure(width=self.cols, height=rows)
         # `update`, not `update_idletasks`: the panel takes its height from a
         # <Configure> binding, which does not fire on idle alone, so an idle
         # measurement reads a stale height and the cap below never bites.
@@ -202,12 +226,12 @@ class Sheet(tk.Toplevel):
         self.update()
 
     def _rows(self) -> int:
-        """How many display lines the message needs once wrapped at COLS."""
+        """How many display lines the message needs once wrapped at `cols`."""
         total = 0
         last = int(self.text.index("end-1c").split(".")[0])
         for n in range(1, last + 1):
             body = self.text.get("%d.0" % n, "%d.end" % n)
-            total += max(1, -(-len(body) // COLS))
+            total += max(1, -(-len(body) // self.cols))
         return max(MIN_ROWS, total)
 
     def _centre(self, master):
@@ -256,3 +280,92 @@ def ask(master, title, message, ok_text="OK", cancel_text="Cancel") -> bool:
     """Modal question. True for the affirmative, exactly like askokcancel."""
     return _run(master, title, message, "ask", True,
                 ok_text=ok_text, cancel_text=cancel_text)
+
+
+def _table(changes, width):
+    """The change list as (line, tags) pairs, no line wider than `width`.
+
+    One line a setting where it fits -- the label, the old value right-aligned
+    against the arrow, the new one -- in a fixed pitch, because the columns
+    only line up in one. Where it does not fit, the label goes above and the
+    values beneath it, rather than letting Tk wrap the line: `_rows` counts
+    characters, and a line Tk wrapped is a line it did not count, which is how
+    the end of a list ends up out of sight with no scrollbar.
+    """
+    rows = []
+    for ch in changes:
+        tone, text = theme.BADGE.get(ch.risk, ("warn", ch.risk or ""))
+        rows.append((ch.setting.label, applied.show(ch.setting, ch.before),
+                     applied.show(ch.setting, ch.after),
+                     "  " + text.upper() if ch.risk else "",
+                     ("mono", tone) if ch.risk else ("mono",)))
+    single = [r for r in rows if len(r[0]) <= width // 2]
+    lw = max((len(r[0]) for r in single), default=0)
+    ow = min(max((len(r[1]) for r in single), default=0), width // 4)
+    out = []
+    for label, old, new, badge, tags in rows:
+        line = "  %-*s  %*s  >  %s%s" % (lw, label, ow, old, new, badge)
+        if len(label) <= lw and len(old) <= ow and len(line) <= width:
+            out.append((line, tags))
+            continue
+        out.append(("  " + label + badge, tags))
+        # under the other rows' values if it fits there, indented if not
+        pair = "  %-*s  %*s  >  %s" % (lw, "", ow, old, new)
+        if len(old) > ow or len(pair) > width:
+            pair = "      %s  >  %s" % (old, new)
+        if len(pair) <= width:
+            out.append((pair, tags))
+        else:
+            out += [("      " + old, tags), ("    > " + new, tags)]
+    return out
+
+
+def confirm_changes(master, title, head, changes, notes) -> bool:
+    """The apply sheet: every setting that will change, then the plan.
+
+    Laid out like a BIOS "save changes" screen. A row that turns on something
+    not yet watched working is drawn in the warning colour, with the badge the
+    setting's own card wears. That one cue is what was missing when moving a
+    single dial carried two untested script rewrites onto a disc with it, and
+    the level load hung.
+    """
+    risky = sum(1 for ch in changes if ch.risk)
+    runs = [(head, ())]
+    if changes:
+        # the widest the table can be in the fixed pitch without wrapping
+        body = tkfont.Font(font=theme.F("body", 10)).measure("0")
+        mono = tkfont.Font(font=theme.F("mono", 9)).measure("0")
+        width = min(CHANGE_COLS, CHANGE_COLS * body // mono) - 2
+        runs.append(("\n", ()))
+        runs += [("\n" + line, tags) for line, tags in _table(changes, width)]
+    if risky:
+        runs.append((
+            "\n\n%d of these %s not been watched working in the game. If "
+            "anything misbehaves after this, %s the first thing to turn off."
+            % (risky, "has" if risky == 1 else "have",
+               "that is" if risky == 1 else "those are"), ("warn",)))
+    if notes:
+        runs.append(("\n\n" + "\n".join(notes), ()))
+    return _run(master, title, runs, "warn" if risky else "ask", True,
+                ok_text="Confirm", cols=CHANGE_COLS)
+
+
+def choose(master, title, message, options, ok_text="OK",
+           cancel_text="Cancel"):
+    """Modal pick-one from `options`, a list of (label, help) pairs.
+
+    The index chosen, or None for Cancel. The first option starts selected, so
+    Enter on its own takes it.
+    """
+    picked = tk.IntVar(master, value=0)
+
+    def rows(parent):
+        box = tk.Frame(parent, bg=theme.P.panel)
+        box.pack(fill="x", pady=(theme.px(10), 0))
+        for i, (label, help_text) in enumerate(options):
+            RadioRow(box, label, help_text, i, picked).pack(
+                fill="x", pady=(0, theme.px(7)))
+
+    ok = _run(master, title, message, "ask", True, ok_text=ok_text,
+              cancel_text=cancel_text, extra=rows)
+    return picked.get() if ok else None

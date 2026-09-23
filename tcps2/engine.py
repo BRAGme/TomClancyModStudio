@@ -24,7 +24,7 @@ import struct
 import time
 from dataclasses import dataclass, field
 
-from . import dataedit, hostroot
+from . import applied, dataedit, hostroot
 from .iso import Iso
 from .overlay import OverlayError, open_overlay
 from .soz import SozImage
@@ -370,6 +370,20 @@ def apply(iso_path, profile, values, progress=None, data_root=None,
                                                  dataedit.Store(data_folder))
             report["data"]["verified"] = good
             report["data"]["broken"] = bad
+    # Here and not in the window: the command line applies through this too,
+    # and a record only the window kept would be wrong after every one of
+    # those. Only once everything has read back, so the record never claims
+    # a disc carries settings that did not land.
+    if report["verified"] == report["applied"] and not report["data"].get("broken"):
+        # By here the disc is already patched and verified. Failing to write
+        # the note beside it -- a full disk, a permission, a sync client
+        # holding the file -- must not turn that into a failed apply, which
+        # is what an exception here would report. The record is a
+        # convenience; the disc is the thing.
+        try:
+            applied.record(folder, profile, values, report["when"])
+        except (OSError, ValueError, TypeError) as exc:
+            report["record_error"] = str(exc)
     return report
 
 
@@ -437,6 +451,16 @@ def revert(iso_path, profile, progress=None, data_root=None) -> dict:
             ov = open_overlay(iso, spec)
             out["hash_ok"] = all(ov.read_word(va) == w
                                  for va, w in (profile.stock_words or {}).items())
+    # Otherwise the next apply sheet would still compare against the apply
+    # this undid, and re-applying it would read "nothing differs" while
+    # writing all of it back onto a stock disc.
+    if out["hash_ok"]:
+        # Same reasoning as in apply(): the restore has already succeeded.
+        try:
+            applied.record_stock(folder, profile,
+                                 time.strftime("%Y-%m-%d %H:%M:%S"))
+        except (OSError, ValueError, TypeError) as exc:
+            out["record_error"] = str(exc)
     return out
 
 

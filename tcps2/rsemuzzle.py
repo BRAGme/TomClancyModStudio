@@ -66,19 +66,39 @@ any build that still contains the statement. Measured on this disc the
 offsets are `0x1DE796` in `COMMON_SS.LIN` and `COMMONOFF.LIN` and `0x1DE7A1`
 in `COMMON.LIN` -- recorded for reference, not used.
 
-The one thing the disassembly could not settle
-----------------------------------------------
+Why the flash stays on its owner's screen
+-----------------------------------------
 
-Whether player 1's flash, now a world actor parented to player 1's
-first-person weapon, stays out of player 2's viewport. The design said it
-should -- the emitters carry `m_iDrawWeaponPreDisplay`, which is what puts
-them in the per-viewport weapon pre-display pass, the same pass that draws the
-FP weapon itself -- but that flag is read by native code that is not in the
-overlay and not in any script, so it was inference either way.
+An earlier version of this note said the emitters carry
+`m_iDrawWeaponPreDisplay` and that the flag puts them in a per-viewport
+weapon pass. Nothing reads that flag. A bit-tracking scan of both overlays
+finds no reader, no script references it, and the ELF is a 143 KB loader
+with no engine code in it. On this emitter it is set only on the two smoke
+sub-emitters anyway.
 
-Play-tested on Alpine Village split screen: both players get a flash on their
-own weapon and it does not cross the split. Settled by running it, which is
-the only way it was ever going to be settled.
+The real mechanism is structural. The camera render draws the view target's
+first-person weapon, and actors attached to a bone are drawn as part of
+their parent -- so the flash, hung on the first-person gun, is drawn only in
+its owner's viewport. The world pass never draws it: the per-actor
+visibility filter at 0x00310A20 returns 0 for anything with both a Base and
+an AttachmentBone. That is why it never crossed the split.
+
+A side effect follows from the same fact and is worth knowing: with this
+option on, neither player sees the OTHER player's muzzle flash, because each
+weapon's single flash emitter now hangs under its owner's hidden hands. In
+stock split screen your flash showed on your third-person gun to the other
+player. There is one flash emitter per weapon, so no same-width edit keeps
+both.
+
+The doubled flash, found in play
+--------------------------------
+
+Player 2 then saw TWO flashes on his own gun, "one showing normal, and
+another flipped on an axis", and player 1 saw one. The second was the
+third-person flash, spawned by a native test that asks "is the shooter
+viewport 0's player" when it means "is the shooter a player". See
+THIRD_PERSON_TEST below: one overlay word, shipped under this same option
+because it is wrong without the attach and the attach is wrong without it.
 
 A companion edit, deliberately not shipped
 ------------------------------------------
@@ -144,6 +164,52 @@ SHELL_GUARD = bytes([
 ])
 SHELL_OPERAND = 25
 SHELL_SELF = 0x17
+
+
+#: The doubled flash, and the one-word fix for it.
+#:
+#: With the attach restored, player 2 saw TWO flashes on his own gun -- "one
+#: showing normal, and another flipped on an axis" -- while player 1 saw one.
+#: Every R6MuzzleFlash emitter has eight sub-emitters: 0 and 1 are smoke, 2-6
+#: are the THIRD-person flash (quads aligned to a direction, which is the
+#: "flipped" look) and 7 is the FIRST-person flash, camera-facing. The native
+#: per-shot effects routine at 0x003F6020 decides which to spawn:
+#:
+#:     0x003f663c..650  s1 = viewport 0's controller (Level -> Engine ->
+#:                      Client -> Viewports[0] -> Actor)
+#:     0x003f6770..788  s0 = the shooter's controller cast to
+#:                      R6PlayerController, or NULL for AI
+#:     0x003f6798       skip 2-6 if the weapon is silenced
+#:     0x003f67a0       bne  $s0, $s1  ->  spawn 2-6       <-- this word
+#:                      (otherwise 2-6 spawn only in behind view)
+#:
+#: So slots 2-6 are skipped only when the shooter IS viewport 0's player.
+#: Player 2 never is, so every one of his shots lit the third-person flash as
+#: well as the first-person one -- and split_muzzle hangs both on his own
+#: first-person gun. The developers made the slot-7 test split-screen aware
+#: and left this one comparing against viewport 0; it is not an
+#: m_bIsSplitScreen test, which is why an audit of those branches missed it.
+#:
+#: `beq $s0, $zero` asks the question the code meant: is the shooter AI? Same
+#: target, a nop in the delay slot, and the word before it is a nop, so this
+#: is not itself in a delay slot. Single player cannot change: its level
+#: holds exactly one R6PlayerController and it is viewport 0's, so the
+#: shooter is either s1 or NULL and both tests branch the same way on both.
+#: Split-screen player 1 and every AI are unchanged too; only player 2 in
+#: first person differs.
+#:
+#: It must ship WITH the attach, never alone. Without the attach the flash
+#: stays on the third-person gun, and this would take away the flash planes
+#: player 1 currently sees on player 2's weapon.
+THIRD_PERSON_TEST = 0x003F67A0
+TP_STOCK = 0x16110007       # bne $s0, $s1, 0x003F67C0
+TP_FIXED = 0x12000007       # beq $s0, $zero, 0x003F67C0
+
+
+def words():
+    """[(va, value, stock, note)] for the overlay half of the fix."""
+    return [(THIRD_PERSON_TEST, TP_FIXED, TP_STOCK,
+             "split screen: third-person flash only for AI or behind view")]
 
 
 class MuzzleError(Exception):
@@ -249,10 +315,19 @@ CAUTION = (
     "ScriptSize and every jump target are untouched. No bytecode is "
     "re-assembled, which is the thing that hangs this engine.\n\n"
     "PLAY-TESTED on Alpine Village split screen: both players get a flash on "
-    "their own weapon, and it does not bleed across the split. That last "
-    "part was the one thing the disassembly could not settle -- the emitters carry the flag that puts them in the per-viewport weapon pass, but that flag "
-    "is read by native code outside the overlay, so until it ran it was "
-    "inference. It is not any more.")
+    "their own weapon, and it does not cross the split -- a bone-attached "
+    "actor is drawn only with its parent, and the parent is that player's "
+    "first-person gun.\n\n"
+    "It also carries one overlay word. Player 2 saw the flash DOUBLED, one "
+    "normal and one turned on an axis: the third-person flash as well as "
+    "the first-person one. A native test at 0x003F67A0 skips the "
+    "third-person flash only when the shooter is viewport 0's player, and "
+    "player 2 never is. It now asks whether the shooter is AI instead. "
+    "Single player cannot change -- its only player IS viewport 0's. The "
+    "doubling fix is not yet play-tested.\n\n"
+    "Worth knowing: with this on, neither player sees the OTHER player's "
+    "flash. Each weapon has one flash emitter, and it now hangs on its "
+    "owner's first-person gun.")
 
 
 def card(prefix, group):

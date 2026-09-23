@@ -229,7 +229,27 @@ def _mission_tests(script):
     if len(found) != 3:
         raise CanonError("expected three mission-roster tests, found %d"
                          % len(found))
+    # Positional lifting has one way to go silently wrong: `split_squad` with
+    # canon on points the Loiselle and Weber removal tests at Price's flag.
+    # Lifted after that, all three would read Price, the Weber and Loiselle
+    # arms could never be taken, and player 2 would stay Price while the
+    # level recording expects Weber's class -- a wedge, not a no-op. So the
+    # three must be three different properties, or this refuses.
+    refs = [_flag_ref(t) for t in found]
+    if len(set(refs)) != 3:
+        raise CanonError("the roster tests do not read three different flags "
+                         "-- the squad's roster edit ran first; apply this "
+                         "edit before it")
     return dict(zip((PRICE, LOISELLE, WEBER), found))
+
+
+def _flag_ref(tok):
+    """The property reference a lifted roster test reads."""
+    for sub in tok.walk():
+        for kind, value in sub.parts:
+            if kind == "ref" and sub.name == "InstanceVariable":
+                return bytes(value)
+    raise CanonError("a roster test carries no property reference")
 
 
 def _dead_logs(script):
@@ -381,77 +401,41 @@ def card(prefix, group):
 
     return Setting(
         prefix + "canon_team", "Player 2 is the mission's own operative",
-        BOOL, False, group, confidence="broken", touches="data",
-        enabled=False,
-        disabled_reason=(
-            "Withdrawn 2026-09-15 and RE-CONFIRMED 2026-09-19 on a disc "
-            "carrying this option and nothing else -- audited off the disc, "
-            "not taken from the build script: seven overlay words, all of "
-            "them split-screen fixes, no wave words, and 2532 payload bytes "
-            "in three copies of COMMON_SS.LIN. Island Estate, split screen. "
-            "It hangs.\n\n"
-            "How it hangs, read from the console: the EE sits at "
-            "pc=0x00081fc0 in the kernel, `eret`, ra and sp zero, identical "
-            "across captures. Three counters tick at a steady 60 Hz "
-            "(0x005b2508, 0x00654378, 0x00654384) and NOTHING else in 128 MB "
-            "moves -- a vblank handler still running over a blocked main "
-            "thread. The IOP is idle too.\n\n"
-            "Worth comparing with ss_man_down, which wedges at the same "
-            "kernel address but EARLIER: its level-name buffer still reads "
-            "'menu' and not one byte of game memory changes, where this one "
-            "has already named 'Island_a_ss'. Same wedge, different "
-            "distance travelled, so they are not one bug seen twice.\n\n"
-            "And the rule both were withdrawn under is retired: ai_sidearm "
-            "re-assembles 360 bytes across 17 runs and was played through "
-            "Parade on 2026-09-19. Re-assembly alone does not hang. What "
-            "these two share that the working edits do not is that they "
-            "insert CONTROL FLOW rather than change values -- unproven, but "
-            "it is the only line left that separates the two lists. Note "
-            "the obvious version of it has already been checked: `uscode` "
-            "emits jump targets through `_mem_of`, in memory space, which is "
-            "correct for cooked bytecode.\n\n"
-            "Withdrawn after testing, 2026-09-15. It hangs the split-screen "
-            "level load -- caught on Island Estate, the map it was built for, "
-            "freezing near the end of the load. Bisected: with every other "
-            "experimental option off, the same split-screen map loaded fine, "
-            "and turning this one on alone brought the hang back. That is the "
-            "fifth attempt to hang in this function.\n\n"
-            "What has been ruled out, so the next attempt does not repeat it. "
-            "The edit is structurally correct: both inserted jumps land "
-            "exactly on the first statement of the switch arm they target "
-            "(0x1fd Loiselle, 0x283 Weber, each the byte after its Case "
-            "header), every arm still converges on the same join point, the "
-            "file length is unchanged and the package still yields its full "
-            "6,789 parseable script blocks. It is not an interaction with the "
-            "other two script edits either -- applied together, all three read "
-            "back correctly and the block count is unchanged. And it is not a "
-            "missing asset: the operative classes are not in the level "
-            "packages for EITHER mode, so Weber is no less available than "
-            "Price.\n\n"
-            "So the fault is semantic and downstream of this function, which "
-            "needs a debugger rather than more static inspection."),
+        BOOL, False, group, confidence="verified", touches="data",
         help="In split screen player 2 is Eddie Price on every mission. The "
              "story disagrees, and so does the disc: each map's INI carries the "
              "roster, and Island Estate is Chavez and Weber while the Parking "
              "Garage is Chavez and Loiselle.\n\n"
-             "Split screen builds the full team and then keeps member 1, and "
-             "member 1 is always the Price class. This makes that choice read "
-             "the mission's own roster, so on a map that leaves Price out, "
-             "player 2 becomes whoever actually went in. Because the operative "
-             "id and the character name are properties of the pawn class, the "
-             "HUD name, the name shown when player 1 puts the crosshair on "
-             "player 2, and the line called when a player goes down should all "
-             "follow from it.\n\n"
-             "Only COMMON_SS.LIN is touched -- the split-screen package -- so "
-             "single player and Terrorist Hunt are untouched by construction.",
-        caution="Experimental, and the most speculative option here: it "
-                "inserts about 250 bytes of new script into the function that "
-                "builds the team, and it has never been run. That is the same "
-                "function four earlier attempts at putting AI teammates into "
-                "split screen all hung the level load in -- those added "
-                "members, and this only changes which class one member loads, "
-                "which is a smaller change, but it is the same code.\n\n"
-                "The weapon-select portrait is the one part not traced to the "
-                "operative id, so it may keep showing Price even when "
-                "everything else changes. If a split-screen level stops "
-                "loading, this is the first thing to turn off.")
+             "This makes player 2 whoever actually went in. Because the "
+             "operative id and the character name are properties of the pawn "
+             "class, the HUD name, the name shown when player 1 puts the "
+             "crosshair on player 2, and the line called when a player goes "
+             "down should all follow from it.\n\n"
+             "It changes three levels: Island Estate (Weber) and both Parking "
+             "Garage levels (Loiselle). Every other level already has Price in "
+             "its roster, or nobody, and stays as it is.",
+        caution="Watched working on 2026-09-22: player 2 is Dieter Weber "
+                "on Island Estate and Louis Loiselle in the Parking Garage -- "
+                "name tag, HUD and the other player's crosshair name all "
+                "follow. The same script edit hung Island Estate twice before, "
+                "and the reason "
+                "is now known and fixed: a split-screen level file is a "
+                "RECORDING of what one load read, and that load never read "
+                "Weber's class. A savestate from the hang still holds the "
+                "engine's own words for it: \"Class "
+                "R6Characters.R6RainbowWeber: SERIAL SIZE MISMATCH: GOT 66, "
+                "EXPECTED 321\". The script itself did exactly what it was "
+                "built to do.\n\n"
+                "So this now also gives those three levels split-screen files "
+                "that read the operative at that moment, built from the "
+                "single-player files and checked byte for byte.\n\n"
+                "With AI teammates on as well, the AI copy of player 2's "
+                "operative is removed, so Island is Chavez and Weber and the "
+                "Garage is Chavez and Loiselle, exactly as the roster says. "
+                "One level comes out wrong the other way: Old City A (Price "
+                "only) keeps AI Loiselle and Weber, because no one-byte test "
+                "can tell its roster apart from the levels that keep them.\n\n"
+                "Not traced: the weapon-select portrait may still show Price. "
+                "Terrorist Hunt in split screen reads the same files and has "
+                "never been tried with this. If a level stops loading, turn "
+                "this off first; RESTORE DISC puts everything back.")
