@@ -29,6 +29,7 @@ copies exist.
 
 from __future__ import annotations
 
+from .. import showlog
 from ..model import BOOL, CHOICE, INT, Choice, FileEdit, Setting
 
 ENEMIES = "Enemies"
@@ -687,14 +688,55 @@ def _coop_cards(prefix):
                         "teammates appearing for the host and nobody else is "
                         "the design, not a fault. Restore game puts the "
                         "package back byte for byte."),
+        Setting(prefix + "show_log", "Log the squad being built", CHOICE,
+                "stock", "Game modes",
+                choices=[
+                    Choice("stock", "As shipped", "Quiet."),
+                    Choice("on", "Narrate the chain", ""),
+                ],
+                confidence="experimental",
+                help="A diagnostic, not a feature. The script is full of "
+                     "if (bShowLog) Log(...) lines, and bShowLog lives on "
+                     "Actor, so every class carries its own copy. R6GameInfo "
+                     "ships with it on, which is why the game mode already "
+                     "talks; R6RainbowTeam does not, so the half that would "
+                     "name the operative that failed to appear says "
+                     "nothing.\n\n"
+                     "There is no bit to flip -- a UE2 default list holds "
+                     "only what differs from the parent, and neither Actor "
+                     "nor R6RainbowTeam holds bShowLog at all -- so instead "
+                     "each of these tests has its jump pointed at the line it "
+                     "was skipping. The test still runs; both of its answers "
+                     "now reach the log. Two bytes a site, and the value "
+                     "written is an offset the function already "
+                     "contained.\n\n"
+                     "Thirty-nine sites, every one of them once per level or "
+                     "once per player: the mode coming up, the player logging "
+                     "in, the team built member by member, and the round "
+                     "state machine. The several hundred per-frame ones are "
+                     "deliberately left alone, because they would bury the "
+                     "answer.",
+                caution="Turn this on to find out why something is not "
+                        "working, then turn it back off. Where the text comes "
+                        "out is the emulator's business and not the game's: "
+                        "this build keeps UnrealScript's log machinery but "
+                        "names no log file and no drive path, so it goes out "
+                        "the debug port and xemu decides whether to show it. "
+                        "If nothing appears, that is the sink rather than "
+                        "this edit. Restore game puts both packages back "
+                        "byte for byte."),
     ]
 
 
 def _coop_edits(prefix, v):
-    if v.get(prefix + "coop_squad") != "on":
-        return []
-    return [FileEdit("coop_team", COOP_PACKAGE, {},
-                     "the System Link host builds the AI squad")]
+    out = []
+    if v.get(prefix + "coop_squad") == "on":
+        out.append(FileEdit("coop_team", COOP_PACKAGE, {},
+                            "the System Link host builds the AI squad"))
+    if v.get(prefix + "show_log") == "on":
+        out.append(FileEdit("show_log", showlog.PACKAGES, {},
+                            "the squad chain narrates itself into the log"))
+    return out
 
 
 def cards(prefix, has_templates, aim, has_script=True,

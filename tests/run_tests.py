@@ -42,7 +42,8 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import (coopteam, dataedit, engine, globfile,  # noqa: E402
-                    hunt, model, rsb, transforms, umd, xbe, xiso, xpr)
+                    hunt, model, rsb, showlog, transforms, umd, xbe,
+                    xiso, xpr)
 from tcxbox.detect import identify, scan                          # noqa: E402
 from tcxbox.model import FileEdit                                  # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
@@ -802,6 +803,98 @@ def _coop_script(data):
     return None
 
 
+def test_show_log_sites(games):
+    """Forcing the squad log on moves jump WORDS and nothing else.
+
+    The edit points each `if (bShowLog)` jump at the instruction it was
+    skipping, so the value written has to be an offset the function already
+    contains. Two things are checked that a length comparison cannot see:
+    every site's new target must be a real instruction boundary inside its
+    own function, and EVERY function in the package -- not just the ones
+    touched -- must still parse to the same disk and memory length, because
+    `ScriptSize` is a memory length and the jumps around it are memory
+    offsets.
+    """
+    checked = 0
+    for det in games:
+        if not any(st.key.endswith("_show_log") for st in det.profile.settings):
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            for key in root.match(showlog.PACKAGES):
+                shipped = store.original(key) or root.read(key)
+                found = showlog.sites(shipped)
+                must(found, "%s: no bShowLog site found in %s"
+                     % (det.profile.short, key.split("/")[-1]))
+                must(showlog.census(shipped) == (len(found), 0),
+                     "%s: %s does not read as shipped"
+                     % (det.profile.short, key.split("/")[-1]))
+
+                out, n = showlog.force_on(shipped)
+                must(n == len(found),
+                     "%s: forced %d site(s) of %d"
+                     % (det.profile.short, n, len(found)))
+                must(len(out) == len(shipped),
+                     "%s: the package length moved %d -> %d"
+                     % (det.profile.short, len(shipped), len(out)))
+
+                # only the jump words, and only their own two bytes
+                allowed = set()
+                for _o, _f, at, _stored, _want in found:
+                    allowed.update((at, at + 1))
+                moved = {i for i in range(len(shipped)) if shipped[i] != out[i]}
+                must(moved <= allowed,
+                     "%s: %d byte(s) changed outside the jump words"
+                     % (det.profile.short, len(moved - allowed)))
+                for _o, _f, at, _stored, want in found:
+                    import struct as _s
+                    must(_s.unpack_from("<H", out, at)[0] == want,
+                         "%s: a jump word did not take its new target"
+                         % det.profile.short)
+
+                # every function in the package still parses the same
+                before, after = _script_shapes(shipped), _script_shapes(out)
+                must(before and before == after,
+                     "%s: %d function(s) changed shape in %s"
+                     % (det.profile.short,
+                        sum(1 for k in before if before[k] != after.get(k)),
+                        key.split("/")[-1]))
+
+                again, n2 = showlog.force_on(out)
+                must(again == out and n2 == 0,
+                     "%s: applying twice is not the same as once"
+                     % det.profile.short)
+                must(showlog.census(out) == (0, len(found)),
+                     "%s: a forced package does not read as forced"
+                     % det.profile.short)
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d package(s): jump words only, every function's shape unmoved"
+            % checked)
+
+
+def _script_shapes(data):
+    """{owner.function: (diskLen, memLen)} for every function with script."""
+    import struct
+    from tcxbox import uscode
+    (_v, _l, _f, nc, no, ec, eo, ic, io) = coopteam._summary(data)
+    names = coopteam._names(data, nc, no)
+    rows = coopteam._exports(data, names, ec, eo)
+    imports = coopteam._imports(data, names, ic, io)
+    out = {}
+    for name, cls, pkg, size, off in rows:
+        if size <= 0 or not coopteam._resolve(rows, imports, cls).endswith(
+                "Function"):
+            continue
+        try:
+            sc = uscode.Script.at(data, coopteam._script_start(data, off))
+        except Exception:                                      # noqa: BLE001
+            continue
+        key = "%s.%s" % (coopteam._resolve(rows, imports, pkg), name)
+        out[key] = (sc.disk_len, sc.mem_len)
+    return out
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -1170,6 +1263,8 @@ def main(argv):
           lambda: test_hunt_counts(games))
     check("the System Link squad edit opens both gates",
           lambda: test_coop_team_gate(games))
+    check("forcing the squad log on moves jump words only",
+          lambda: test_show_log_sites(games))
 
     print("census")
     check("weapons split by side where the data allows",

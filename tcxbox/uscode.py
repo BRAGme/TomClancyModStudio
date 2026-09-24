@@ -126,7 +126,15 @@ OPS = {
     0x06: ("Jump", ("jump",)),
     0x07: ("JumpIfNot", ("jump", "expr")),
     0x08: ("Stop", ()),
-    0x09: ("Assert", ("line", "u8", "expr")),
+    # Assert is a line number and then the expression, with NO bDebug byte:
+    # that field is a later UE2 addition and this engine predates it. Reading
+    # one ate the first byte of the expression, which for
+    # `assert(Level.NetMode == NM_Standalone)` is the native opcode itself --
+    # the assert parsed as a bare NetMode read and the comparison leaked out
+    # to the top level. Lengths survived that (the same bytes were consumed
+    # either way, just attributed to different tokens) so nothing caught it,
+    # but any search for a comparison INSIDE an assert silently found none.
+    0x09: ("Assert", ("line", "expr")),
     0x0A: ("Case", ("case",)),
     0x0B: ("Nothing", ()),
     0x0C: ("LabelTable", ("labels",)),
