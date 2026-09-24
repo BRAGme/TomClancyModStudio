@@ -96,6 +96,11 @@ def _op_hunt_scale(plain, params):
         raise DataEditError(str(exc)) from exc
 
 
+def _op_coop_team(plain, _params):
+    from . import coopteam
+    return coopteam.open_to_system_link(plain)
+
+
 def _op_campaign(plain, params):
     return transforms.extend_campaign(plain, params.get("add", ()),
                                       replace=bool(params.get("replace")))
@@ -154,6 +159,7 @@ OPS = {
     "bump_stats": _op_bump_stats,
     "gtf_variables": _op_gtf_variables,
     "campaign": _op_campaign,
+    "coop_team": _op_coop_team,
     "hunt_scale": _op_hunt_scale,
     "ini_values": _op_ini_values,
     "scale_ini": _op_scale_ini,

@@ -39,6 +39,7 @@ HIDDEN = [
     # Imported inside the op functions rather than at module scope, so a
     # frozen build will not find them by following imports.
     "tcxbox.lin", "tcxbox.upackage", "tcxbox.hunt", "tcxbox.rsesidearm",
+    "tcxbox.uscode", "tcxbox.coopteam",
     "gui.tooltip",
     "tcxbox.art", "tcxbox.rsb", "tcxbox.xpr",
     "tcxbox.games", "tcxbox.games.ghost_recon", "tcxbox.games.ghost_recon2",

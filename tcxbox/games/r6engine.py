@@ -38,6 +38,10 @@ CHEATS = "Cheats"
 
 SETTINGS_FILE = r"R6GAMESETTINGS\.INI$"
 
+#: `R6Game.u`, inside `System\\xboxufiles.umd` -- a fixed slot, so the
+#: script edit that lands here has to keep the package's length exactly.
+COOP_PACKAGE = r"/R6GAME\.U$"
+
 #: choice value -> factor, for the three-step dials
 STEPS = {"stock": 1.0, "less": 0.5, "little_less": 0.75,
          "little_more": 1.25, "more": 1.5, "much_more": 2.0}
@@ -651,6 +655,47 @@ def _extra_cards(prefix, has_boost):
     return out
 
 
+def _coop_cards(prefix):
+    return [
+        Setting(prefix + "coop_squad", "AI teammates in System Link", CHOICE,
+                "stock", "Game modes",
+                choices=[
+                    Choice("stock", "As shipped", "Single player only."),
+                    Choice("on", "Let the host build the squad", ""),
+                ],
+                confidence="experimental",
+                help="The AI squad is built by "
+                     "R6ConsoleXbox.NotifyAfterLevelChange, behind one "
+                     "condition: the game has to be an R6GameInfo AND "
+                     "Level.NetMode has to be NM_Standalone. The first half "
+                     "is true in every mode -- R6GameInfo is the base class "
+                     "the co-op modes descend from as well. The second half "
+                     "is why a System Link session has no teammates: the host "
+                     "is NM_ListenServer and a guest is NM_Client, so "
+                     "DeployCharacters is never called and the team is never "
+                     "created.\n\n"
+                     "This changes that one comparison from == NM_Standalone "
+                     "to != NM_Client, which is true for single player and "
+                     "for the host and false only for a guest. Two bytes, "
+                     "same widths, so nothing in the function moves.",
+                caution="Experimental in the strongest sense: it rewrites "
+                        "compiled UnrealScript in R6Game.u, which every level "
+                        "load reads, and it has been verified as bytes rather "
+                        "than watched working. The guest is deliberately left "
+                        "out -- the host owns the AI and replicates it -- so "
+                        "teammates appearing for the host and nobody else is "
+                        "the design, not a fault. Restore game puts the "
+                        "package back byte for byte."),
+    ]
+
+
+def _coop_edits(prefix, v):
+    if v.get(prefix + "coop_squad") != "on":
+        return []
+    return [FileEdit("coop_team", COOP_PACKAGE, {},
+                     "the System Link host builds the AI squad")]
+
+
 def cards(prefix, has_templates, aim, has_script=True,
           has_boost=False):
     out = [
@@ -771,6 +816,7 @@ def cards(prefix, has_templates, aim, has_script=True,
                     caution="Only reaches templates that already have a "
                             "two-entry grenade table."),
         ]
+    out += _coop_cards(prefix)
     return out
 
 
@@ -861,6 +907,8 @@ def edits(prefix, v, has_templates, aim, has_script=True,
             if key == AIM_DEADZONE and ps2 == "ps2_keep_deadzone":
                 continue
             setters[key] = value
+
+    out += _coop_edits(prefix, v)
 
     curve = v.get(prefix + "aim_curve", "stock")
     if curve in aim.alts:
