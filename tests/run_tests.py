@@ -701,7 +701,7 @@ def test_aim_records_match_the_discs(games):
 
 
 def test_coop_team_gate(games):
-    """The System Link squad edit changes two bytes and nothing else.
+    """The System Link squad edit opens both gates and touches nothing else.
 
     This is the only edit in the tool that rewrites compiled UnrealScript, so
     "the file is the same length" is nowhere near enough. What has to hold is
@@ -720,29 +720,36 @@ def test_coop_team_gate(games):
         with Root(det.path) as root:
             for key in root.match(coopteam.PACKAGE):
                 shipped = store.original(key) or root.read(key)
-                gate = coopteam.find_gate(shipped)
-                must(gate is not None,
-                     "%s: the NetMode gate was not found in %s"
-                     % (det.profile.short, key))
-                op_at, const_at = gate
-                must(shipped[op_at] == coopteam.EQ_INT
-                     and shipped[const_at] == coopteam.NM_STANDALONE,
-                     "%s: the gate bytes are not the shipped ones"
-                     % det.profile.short)
+                gates = coopteam._gates(shipped)
+                must(len(gates) == len(coopteam.CALLS),
+                     "%s: found %d gate(s), expected one per call in %s"
+                     % (det.profile.short, len(gates), coopteam.CALLS))
+                named = [g[0] for g in gates]
+                must(named == list(coopteam.CALLS),
+                     "%s: the gates guard %s, expected %s"
+                     % (det.profile.short, named, list(coopteam.CALLS)))
+                for _nm, op_at, const_at in gates:
+                    must(shipped[op_at] == coopteam.EQ_INT
+                         and shipped[const_at] == coopteam.NM_STANDALONE,
+                         "%s: a gate is not in its shipped form"
+                         % det.profile.short)
 
                 out, n = coopteam.open_to_system_link(shipped)
-                must(n == 1, "%s: the edit reported no change" % det.profile.short)
+                must(n == len(gates),
+                     "%s: opened %d gate(s) of %d"
+                     % (det.profile.short, n, len(gates)))
                 must(len(out) == len(shipped),
                      "%s: the package length moved %d -> %d"
                      % (det.profile.short, len(shipped), len(out)))
+                want = sorted(x for g in gates for x in g[1:])
                 moved = [i for i in range(len(shipped)) if shipped[i] != out[i]]
-                must(moved == [op_at, const_at],
-                     "%s: %d byte(s) changed, expected exactly the two at %s"
-                     % (det.profile.short, len(moved), (op_at, const_at)))
-                must(out[op_at] == coopteam.NE_INT
-                     and out[const_at] == coopteam.NM_CLIENT,
-                     "%s: the two bytes are not != NM_Client"
-                     % det.profile.short)
+                must(moved == want,
+                     "%s: %d byte(s) changed, expected exactly %s"
+                     % (det.profile.short, len(moved), want))
+                for _nm, op_at, const_at in gates:
+                    must(out[op_at] == coopteam.NE_INT
+                         and out[const_at] == coopteam.NM_CLIENT,
+                         "%s: a gate is not != NM_Client" % det.profile.short)
 
                 # the rewritten function must parse to the same shape
                 before, after = _coop_script(shipped), _coop_script(out)
@@ -755,16 +762,29 @@ def test_coop_team_gate(games):
                 must(again == out and n2 == 0,
                      "%s: applying twice is not the same as once"
                      % det.profile.short)
-                must(coopteam.census(shipped) == (True, False),
+                must(coopteam.census(shipped) == (len(gates), 0),
                      "%s: a shipped package does not read as shipped"
                      % det.profile.short)
-                must(coopteam.census(out) == (False, True),
+                must(coopteam.census(out) == (0, len(gates)),
                      "%s: an edited package does not read as edited"
+                     % det.profile.short)
+                # a package with only the first gate opened -- which an
+                # earlier version of this module produced, and which is how
+                # the shortfall was found -- must be finished, not refused.
+                half = bytearray(shipped)
+                half[gates[0][1]] = coopteam.NE_INT
+                half[gates[0][2]] = coopteam.NM_CLIENT
+                must(coopteam.census(bytes(half)) == (len(gates) - 1, 1),
+                     "%s: a half-applied package is misread"
+                     % det.profile.short)
+                done, n3 = coopteam.open_to_system_link(bytes(half))
+                must(n3 == len(gates) - 1 and done == out,
+                     "%s: a half-applied package was not finished"
                      % det.profile.short)
                 checked += 1
     must(checked > 0, "nothing was checked")
-    return ("%d package(s): two bytes changed, script shape and length "
-            "unmoved" % checked)
+    return ("%d package(s): both gates opened, four bytes changed, script "
+            "shape and length unmoved" % checked)
 
 
 def _coop_script(data):
@@ -1148,7 +1168,7 @@ def main(argv):
           lambda: test_aim_records_match_the_discs(games))
     check("hunt spawn counts re-pack into the same bytes",
           lambda: test_hunt_counts(games))
-    check("the System Link squad edit moves two bytes only",
+    check("the System Link squad edit opens both gates",
           lambda: test_coop_team_gate(games))
 
     print("census")
