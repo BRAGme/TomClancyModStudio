@@ -895,6 +895,66 @@ def _script_shapes(data):
     return out
 
 
+def test_reach_probes(games):
+    """The two visible markers are found, and each forces exactly one jump.
+
+    The value of this edit is that its effects can be SEEN, so the thing to
+    protect is that it stays two bytes: both probes must land in the same
+    function set they are declared for, both must move only their own jump
+    word, and -- as with the log edit -- every function in the package must
+    still parse to the same disk and memory length.
+    """
+    checked = 0
+    for det in games:
+        if not any(st.key.endswith("_reach_probe")
+                   for st in det.profile.settings):
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            for key in root.match(showlog.PACKAGES):
+                shipped = store.original(key) or root.read(key)
+                found = showlog.probe_sites(shipped)
+                if not found:
+                    continue
+                named = sorted((o, f) for o, f, _a, _s, _w in found)
+                must(named == sorted(showlog.PROBES),
+                     "%s: probes landed on %s, expected %s"
+                     % (det.profile.short, named, sorted(showlog.PROBES)))
+                must(showlog.probe_census(shipped) == (len(found), 0),
+                     "%s: the probes do not read as shipped"
+                     % det.profile.short)
+
+                out, n = showlog.force_probes(shipped)
+                must(n == len(found),
+                     "%s: forced %d probe(s) of %d"
+                     % (det.profile.short, n, len(found)))
+                must(len(out) == len(shipped),
+                     "%s: the package length moved" % det.profile.short)
+                allowed = set()
+                for _o, _f, at, _st, _w in found:
+                    allowed.update((at, at + 1))
+                moved = {i for i in range(len(shipped)) if shipped[i] != out[i]}
+                must(moved <= allowed,
+                     "%s: %d byte(s) changed outside the jump words"
+                     % (det.profile.short, len(moved - allowed)))
+
+                before, after = _script_shapes(shipped), _script_shapes(out)
+                must(before and before == after,
+                     "%s: a function changed shape" % det.profile.short)
+
+                again, n2 = showlog.force_probes(out)
+                must(again == out and n2 == 0,
+                     "%s: applying twice is not the same as once"
+                     % det.profile.short)
+                must(showlog.probe_census(out) == (0, len(found)),
+                     "%s: a forced package does not read as forced"
+                     % det.profile.short)
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d package(s): both markers forced, two bytes, shapes unmoved"
+            % checked)
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -1265,6 +1325,8 @@ def main(argv):
           lambda: test_coop_team_gate(games))
     check("forcing the squad log on moves jump words only",
           lambda: test_show_log_sites(games))
+    check("the reach probes force two visible conditions",
+          lambda: test_reach_probes(games))
 
     print("census")
     check("weapons split by side where the data allows",

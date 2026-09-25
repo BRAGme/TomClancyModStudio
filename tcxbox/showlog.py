@@ -126,22 +126,40 @@ def _ref_index(raw):
 
 
 def _condition(tok):
-    """(condTok, propertyIndex) for `if (someBool)`, else None."""
+    """(condTok, [propertyIndex, ...]) for `if (someBool)`, else None.
+
+    The condition is not always a bare `BoolVariable`: reaching a property on
+    another object wraps it in a `Context`, as
+    `if (Player.Level.m_bIsTrainingMap)` does. So the whole condition is
+    searched for bool reads, while the token whose end the jump is pointed at
+    stays the OUTERMOST one -- the fall-through is one past the entire
+    condition, not one past the bool inside it.
+    """
     if tok.name != "JumpIfNot":
         return None
     exprs = [v for k, v in tok.parts if k == "expr"]
-    if not exprs or exprs[0].name != "BoolVariable":
+    if not exprs:
         return None
-    inner = [v for k, v in exprs[0].parts if k == "expr"]
-    if not inner or inner[0].name != "InstanceVariable":
-        return None
-    refs = [v for k, v in inner[0].parts if k == "ref"]
-    if not refs or not isinstance(refs[0], (bytes, bytearray)):
-        return None
-    return exprs[0], _ref_index(refs[0])
+    cond = exprs[0]
+    found = []
+    for sub in cond.walk():
+        if sub.name != "BoolVariable":
+            continue
+        inner = [v for k, v in sub.parts if k == "expr"]
+        if not inner or inner[0].name != "InstanceVariable":
+            continue
+        refs = [v for k, v in inner[0].parts if k == "ref"]
+        if refs and isinstance(refs[0], (bytes, bytearray)):
+            found.append(_ref_index(refs[0]))
+    return (cond, found) if found else None
 
 
 def sites(data: bytes):
+    """Every `if (bShowLog)` site in the once-per-load chain."""
+    return _collect(data, WANTED, {FLAG})
+
+
+def _collect(data: bytes, wanted_fns, flags):
     """[(owner, function, wordOffset, stored, wanted)] for every site.
 
     `wordOffset` is where the jump's u16 sits on disk; `stored` is what it
@@ -155,7 +173,7 @@ def sites(data: bytes):
     except CoopTeamError:
         return []
     names = _names(data, nc, no)
-    if FLAG not in names:
+    if not (flags & set(names)):
         return []
     rows = _exports(data, names, ec, eo)
     imports = _imports(data, names, ic, io)
@@ -176,7 +194,7 @@ def sites(data: bytes):
         if size <= 0 or not _resolve(rows, imports, cls).endswith("Function"):
             continue
         owner = _resolve(rows, imports, pkg)
-        if (owner, name) not in WANTED:
+        if (owner, name) not in wanted_fns:
             continue
         uscode._parse_one = noting
         try:
@@ -195,8 +213,8 @@ def sites(data: bytes):
                 found = _condition(tok)
                 if found is None:
                     continue
-                cond, idx = found
-                if _resolve(rows, imports, idx) != FLAG:
+                cond, idxs = found
+                if not any(_resolve(rows, imports, i) in flags for i in idxs):
                     continue
                 word_at = where[id(tok)] + 1          # past the opcode byte
                 stored = struct.unpack_from("<H", data, word_at)[0]
@@ -224,10 +242,72 @@ def force_on(data: bytes):
     Returns (bytes, sitesForced). Idempotent: a site already pointing at its
     own fall-through is left alone.
     """
+    return _force(data, sites(data))
+
+
+def _force(data, found):
     out, moved = bytearray(data), 0
-    for _o, _f, word_at, stored, wanted in sites(data):
+    for _o, _f, word_at, stored, wanted in found:
         if stored == wanted:
             continue
         struct.pack_into("<H", out, word_at, wanted)
         moved += 1
     return (bytes(out), moved) if moved else (data, 0)
+
+
+# ---------------------------------------------------------------------------
+# reach probes: the same trick, but on conditions with a VISIBLE effect
+# ---------------------------------------------------------------------------
+#
+# The log cannot be read. There is no log sink in this build -- no `.log`, no
+# `Core.System`, no output-device name anywhere in the XBE, in ASCII or in
+# UTF-16; only `execLog`, the native's own registration string. `Log()` is
+# callable and goes nowhere.
+#
+# So the same two-byte retarget is pointed at two conditions whose bodies the
+# player can SEE, which turns "did execution get this far" into something
+# answerable by looking at the screen:
+#
+#   R6ConsoleXbox.NotifyAfterLevelChange   if (Level.m_bIsTrainingMap)
+#                                              CheatManager.GodAll(true,true)
+#       -> god mode means the console function ran all the way to its end,
+#          which means both NetMode gates were passed.
+#
+#   R6GameInfo.SpawnAIandInitGoInGame      if (m_bUnlockAllDoors)
+#                                              every door unlockdoor()
+#       -> unlocked doors mean the second gate was passed and the spawn-and-
+#          init step ran.
+#
+# Read together they say where the chain stops. If BOTH show up in System Link
+# and there are still no teammates, then the squad is being built and then
+# thrown away afterwards -- which points at the third conditional at the end
+# of the same function, the one that sends a multiplayer game straight to
+# `BetweenRound`.
+
+PROBES = frozenset({
+    ("R6ConsoleXbox", "NotifyAfterLevelChange"),
+    ("R6GameInfo", "SpawnAIandInitGoInGame"),
+})
+
+#: the two conditions, by the property each one reads
+PROBE_FLAGS = frozenset({"m_bIsTrainingMap", "m_bUnlockAllDoors"})
+
+
+def probe_sites(data: bytes):
+    """The two visible-effect conditions, same shape as `sites`."""
+    return _collect(data, PROBES, PROBE_FLAGS)
+
+
+def probe_census(data: bytes):
+    shipped = forced = 0
+    for _o, _f, _at, stored, wanted in probe_sites(data):
+        if stored == wanted:
+            forced += 1
+        else:
+            shipped += 1
+    return shipped, forced
+
+
+def force_probes(data: bytes):
+    """Make god mode and the door unlock happen unconditionally."""
+    return _force(data, probe_sites(data))

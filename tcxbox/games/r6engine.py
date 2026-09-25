@@ -710,21 +710,56 @@ def _coop_cards(prefix):
                      "now reach the log. Two bytes a site, and the value "
                      "written is an offset the function already "
                      "contained.\n\n"
-                     "Thirty-nine sites, every one of them once per level or "
+                     "Forty sites, every one of them once per level or "
                      "once per player: the mode coming up, the player logging "
                      "in, the team built member by member, and the round "
                      "state machine. The several hundred per-frame ones are "
                      "deliberately left alone, because they would bury the "
                      "answer.",
-                caution="Turn this on to find out why something is not "
-                        "working, then turn it back off. Where the text comes "
-                        "out is the emulator's business and not the game's: "
-                        "this build keeps UnrealScript's log machinery but "
-                        "names no log file and no drive path, so it goes out "
-                        "the debug port and xemu decides whether to show it. "
-                        "If nothing appears, that is the sink rather than "
-                        "this edit. Restore game puts both packages back "
-                        "byte for byte."),
+                caution="This build has NOWHERE TO PUT THE TEXT, and that was "
+                        "checked rather than assumed: the executable contains "
+                        "no log file name, no drive path and no output-device "
+                        "name, in ASCII or in UTF-16 -- only execLog, the "
+                        "native's own registration string. Log() is callable "
+                        "and goes nowhere. Use \"Show where the squad chain "
+                        "stops\" instead, which asks the same question in a "
+                        "form you can see. Kept because it costs two bytes a "
+                        "site and a debugger, or a build with the device "
+                        "linked back in, would read it. Restore game puts "
+                        "both packages back byte for byte."),
+        Setting(prefix + "reach_probe", "Show where the squad chain stops",
+                CHOICE, "stock", "Game modes",
+                choices=[
+                    Choice("stock", "As shipped", "No probe."),
+                    Choice("on", "Turn the two markers on", ""),
+                ],
+                confidence="experimental",
+                help="A diagnostic you read off the screen, because the log "
+                     "cannot be read at all in this build.\n\n"
+                     "Two conditions in the squad's chain already guard "
+                     "effects you can SEE, and each has its jump pointed at "
+                     "the body it was skipping, exactly as the log option "
+                     "does. NotifyAfterLevelChange turns on god mode for a "
+                     "training map; SpawnAIandInitGoInGame unlocks every door "
+                     "when the level asks it to. Forced on, they answer a "
+                     "question the game will not otherwise tell you:\n\n"
+                     "  * invulnerable = the console's level-change handler "
+                     "ran all the way to its end, so both NetMode gates "
+                     "passed;\n"
+                     "  * every door unlocked = the second gate passed and "
+                     "the spawn-and-init step ran.\n\n"
+                     "If BOTH show up in System Link and there are still no "
+                     "teammates, the squad is being built and then thrown "
+                     "away, which points at the third conditional at the end "
+                     "of that same function -- the one that sends a "
+                     "multiplayer game straight to BetweenRound. If neither "
+                     "shows up, the handler is not running there at all.",
+                caution="This makes you invulnerable and opens every locked "
+                        "door, on every map, in every mode. It is a "
+                        "measuring instrument, not a way to play -- turn it "
+                        "off once it has told you what you needed. Two bytes, "
+                        "both of them a jump word inside R6Game.u, and "
+                        "Restore game puts the package back byte for byte."),
     ]
 
 
@@ -736,6 +771,9 @@ def _coop_edits(prefix, v):
     if v.get(prefix + "show_log") == "on":
         out.append(FileEdit("show_log", showlog.PACKAGES, {},
                             "the squad chain narrates itself into the log"))
+    if v.get(prefix + "reach_probe") == "on":
+        out.append(FileEdit("reach_probe", COOP_PACKAGE, {},
+                            "two visible markers show how far the chain got"))
     return out
 
 
