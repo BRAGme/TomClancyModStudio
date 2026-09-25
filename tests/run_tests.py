@@ -42,8 +42,8 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import (coopteam, dataedit, engine, globfile,  # noqa: E402
-                    hunt, model, rsb, showlog, transforms, umd, xbe,
-                    xboxhdd, xiso, xpr)
+                    hunt, lin, model, rsb, showlog, transforms, umd,
+                    xbe, xboxhdd, xiso, xpr)
 from tcxbox.detect import identify, scan                          # noqa: E402
 from tcxbox.model import FileEdit                                  # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
@@ -966,6 +966,84 @@ def test_hdd_cache_reader(games):
                entry["size"], checked))
 
 
+def test_coop_team_in_the_streaming_pack(games):
+    """The gate is edited in COMMON.LIN too, which is the copy that runs.
+
+    `R6Game.u` inside `xboxufiles.umd` is not what the console executes --
+    `System\\COMMON.LIN` carries the same script and that is what loads. The
+    edit was verified byte-for-byte on the package through several rounds of
+    play-testing and did nothing, because it was being written to the copy
+    nobody reads.
+
+    Two things are checked. First that the `.LIN` finder agrees with the
+    package finder when pointed at the package, since that is the only place
+    where the right answer is independently known. Then that it locates and
+    opens the gate inside the pack, changing two bytes of the decompressed
+    stream and leaving both the stream and the container the same length --
+    `lin.substitute` has to fit the chunk back into its own budget.
+    """
+    checked = 0
+    for det in games:
+        if not any(st.key.endswith("_coop_squad")
+                   for st in det.profile.settings):
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            # the cross-check: same answer as _gates, on the package
+            for key in root.match(coopteam.PACKAGE):
+                pkg = store.original(key) or root.read(key)
+                known = [(o, c) for _n, o, c in coopteam._gates(pkg)]
+                must(coopteam._lin_gates(pkg) == known,
+                     "%s: the pack finder disagrees with the package finder "
+                     "(%s vs %s)" % (det.profile.short,
+                                     coopteam._lin_gates(pkg), known))
+
+            for key in root.match(coopteam.LIN_CONTAINER):
+                shipped = store.original(key) or root.read(key)
+                if not lin.is_lin(shipped):
+                    continue
+                plain = lin.decompress(shipped)
+                gates = coopteam._lin_gates(plain)
+                must(len(gates) == 1,
+                     "%s: found %d gate(s) in %s, expected one"
+                     % (det.profile.short, len(gates), key.split("/")[-1]))
+                op_at, const_at = gates[0]
+                must(plain[op_at] == coopteam.EQ_INT
+                     and plain[const_at] == coopteam.NM_STANDALONE,
+                     "%s: the packed gate is not in its shipped form"
+                     % det.profile.short)
+                must(coopteam.census(shipped) == (1, 0),
+                     "%s: the pack does not read as shipped"
+                     % det.profile.short)
+
+                out, n = coopteam.open_to_system_link(shipped)
+                must(n == 1, "%s: the pack edit reported %d change(s)"
+                     % (det.profile.short, n))
+                must(len(out) == len(shipped),
+                     "%s: the container length moved %d -> %d"
+                     % (det.profile.short, len(shipped), len(out)))
+                after = lin.decompress(out)
+                must(len(after) == len(plain),
+                     "%s: the decompressed stream length moved"
+                     % det.profile.short)
+                moved = [i for i in range(len(plain)) if plain[i] != after[i]]
+                must(moved == [op_at, const_at],
+                     "%s: %d byte(s) changed in the stream, expected the two "
+                     "at %s" % (det.profile.short, len(moved),
+                                (op_at, const_at)))
+                must(coopteam.census(out) == (0, 1),
+                     "%s: the edited pack does not read as edited"
+                     % det.profile.short)
+                again, n2 = coopteam.open_to_system_link(out)
+                must(again == out and n2 == 0,
+                     "%s: applying twice is not the same as once"
+                     % det.profile.short)
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d streaming pack(s): gate located through the name table, two "
+            "bytes changed, container and stream lengths unmoved" % checked)
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -1334,6 +1412,8 @@ def main(argv):
           lambda: test_hunt_counts(games))
     check("the squad edit opens one gate and leaves the other",
           lambda: test_coop_team_gate(games))
+    check("the squad edit also reaches the streaming pack",
+          lambda: test_coop_team_in_the_streaming_pack(games))
     check("forcing the squad log on moves jump words only",
           lambda: test_show_log_sites(games))
     check("the emulator hard-drive cache reads back right",

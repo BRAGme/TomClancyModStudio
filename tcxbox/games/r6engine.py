@@ -29,7 +29,7 @@ copies exist.
 
 from __future__ import annotations
 
-from .. import showlog
+from .. import coopteam, showlog
 from ..model import BOOL, CHOICE, INT, Choice, FileEdit, Setting
 
 ENEMIES = "Enemies"
@@ -745,7 +745,9 @@ def _coop_cards(prefix):
 def _coop_edits(prefix, v):
     out = []
     if v.get(prefix + "coop_squad") == "on":
-        out.append(FileEdit("coop_team", COOP_PACKAGE, {},
+        # Both copies. The script is in `R6Game.u` AND again in the streaming
+        # pack, and the pack is the one the console runs.
+        out.append(FileEdit("coop_team", coopteam.TARGETS, {},
                             "the System Link host builds the AI squad"))
     if v.get(prefix + "show_log") == "on":
         out.append(FileEdit("show_log", showlog.PACKAGES, {},

@@ -113,6 +113,7 @@ applying twice is the same as applying once.
 
 from __future__ import annotations
 
+import re
 import struct
 
 #: native 154 and native 155, as single-byte native opcodes
@@ -122,8 +123,16 @@ EQ_INT, NE_INT = 0x9A, 0x9B
 NM_STANDALONE, NM_CLIENT = 0, 3
 
 PACKAGE = r"/R6GAME\.U$"
+#: ...and the SAME script again, inside the streaming pack the game actually
+#: runs. See "Two copies" below. Both are edited, so the pattern matches both.
+LIN_CONTAINER = r"/COMMON\.LIN$"
+TARGETS = r"(/R6GAME\.U|/COMMON\.LIN)$"
+
 FUNCTION = "NotifyAfterLevelChange"
 OWNER = "R6ConsoleXbox"
+#: the class the gate's other half tests, which is what anchors the search
+#: inside the streaming pack
+ISA_NAME = "R6GameInfo"
 #: ONE call. `SpawnAIandInitGoInGame` is deliberately NOT here -- see the
 #: "Only one gate" section above.
 CALLS = ("DeployCharacters",)
@@ -317,6 +326,99 @@ def _gates(data):
     return out
 
 
+# ---------------------------------------------------------------------------
+# the same gate, in the copy the console actually executes
+# ---------------------------------------------------------------------------
+#
+# `System\COMMON.LIN` carries its own copy of this script, and THAT is what
+# runs. Patching only `R6Game.u` inside `xboxufiles.umd` changes nothing, which
+# is why several rounds of this edit were verified byte-for-byte on the disc
+# and had no effect in game whatsoever. Read out of a snapshot of the console's
+# own memory: no `!= NM_Client` anywhere, only the shipped `== NM_Standalone`.
+#
+# The copy is not a whole package sitting in the stream -- the cooker relaid
+# the tables, so only about 350 bytes around the gate match `R6Game.u` byte for
+# byte and `_gates` cannot parse it. But `upackage` already knows the useful
+# half of this: a package's NAME TABLE survives the relaying even when its
+# export table does not. So the gate is found the same way the rest of this
+# module finds things -- structurally, never at an address:
+#
+#   * the package is the one whose names carry `R6ConsoleXbox`,
+#     `NotifyAfterLevelChange`, `DeployCharacters` and `R6GameInfo`;
+#   * `IsA('R6GameInfo')` compiles to `NameConst` plus that name's index, and
+#     that is the left half of this very gate, so it sits a handful of bytes
+#     in front of the comparison;
+#   * the comparison itself has a fixed 22-byte shape, below.
+#
+# Cross-checked by running the same finder over the standalone `R6Game.u`,
+# where the answer is already known from `_gates`; a test pins the two to
+# agree.
+
+#: `NameConst`
+NAME_CONST = 0x21
+#: how far in front of the comparison the anchor is allowed to sit
+ANCHOR_REACH = 24
+
+#: The comparison, as the compiler emits it:
+#:
+#:     <op> Conv39 Conv3A Context( ...13 bytes... ) Conv39 Conv3A ByteConst <n>
+#:     EndFunctionParms
+#:
+#: The thirteen are the nested `Player.Level.NetMode` read, whose compact
+#: indices differ per package and are none of this module's business.
+#: Built with `re.escape` rather than written out: several of these opcodes
+#: are regex metacharacters as bytes -- `ByteConst` is 0x24, which is `$`, and
+#: an unescaped one anchors the pattern to the end of the buffer and matches
+#: nothing at all, quietly.
+_SHAPE = re.compile(
+    b"[\x9a\x9b]"
+    + re.escape(bytes([0x39, 0x3A, 0x19]))          # Conv Conv Context
+    + b"[\x00-\xff]{13}"                            # Player.Level.NetMode
+    + re.escape(bytes([0x39, 0x3A, 0x24]))          # Conv Conv ByteConst
+    + b"[\x00-\xff]"                                # the ENetMode constant
+    + re.escape(bytes([0x16])),                     # EndFunctionParms
+    re.S)
+
+
+def _lin_gates(plain: bytes):
+    """[(opOffset, constOffset)] for the gate in a DECOMPRESSED .LIN."""
+    from . import upackage
+
+    found = set()
+    for _base, pkg in upackage.packages(plain):
+        try:
+            names = pkg.names()
+        except Exception:                                      # noqa: BLE001
+            continue
+        if not {OWNER, FUNCTION, ISA_NAME, CALLS[0]} <= set(names):
+            continue
+        anchor = (bytes([NAME_CONST])
+                  + upackage.encode_compact(names.index(ISA_NAME)))
+        # The bytecode is NOT in the same span as the table that names it --
+        # that is what the two-range gather means -- so the whole pack is
+        # searched, not the package the names came from. On Rainbow Six 3's
+        # COMMON.LIN the names are in one package and the script sits about a
+        # megabyte further on, and the anchor occurs exactly once in the
+        # entire stream.
+        for m in _SHAPE.finditer(plain):
+            before = plain[max(0, m.start() - ANCHOR_REACH):m.start()]
+            if anchor in before:
+                found.add((m.start(), m.start() + 20))
+    return sorted(found)
+
+
+def _lin_edit(plain: bytes):
+    """Open the gate in a decompressed .LIN. Returns (bytes, opened)."""
+    out, moved = bytearray(plain), 0
+    for op_at, const_at in _lin_gates(plain):
+        if plain[op_at] != EQ_INT or plain[const_at] != NM_STANDALONE:
+            continue
+        out[op_at] = NE_INT
+        out[const_at] = NM_CLIENT
+        moved += 1
+    return bytes(out), moved
+
+
 def find_gate(data: bytes):
     """The first gate still in its shipped form, or None. Kept for callers
     that only care whether there is anything left to do."""
@@ -327,12 +429,27 @@ def find_gate(data: bytes):
 
 
 def census(data: bytes):
-    """(shipped, opened) -- how many of the gates are in each state."""
+    """(shipped, opened) -- how many of the gates are in each state.
+
+    Takes either the standalone package or the streaming pack that carries a
+    second copy of the same script.
+    """
+    from . import lin
+
+    if lin.is_lin(data):
+        try:
+            plain = lin.decompress(data)
+        except lin.LinError:
+            return 0, 0
+        found = [(o, c) for o, c in _lin_gates(plain)]
+    else:
+        plain = data
+        found = [(o, c) for _n, o, c in _gates(data)]
     shipped = opened = 0
-    for _name, op_at, const_at in _gates(data):
-        if data[op_at] == EQ_INT and data[const_at] == NM_STANDALONE:
+    for op_at, const_at in found:
+        if plain[op_at] == EQ_INT and plain[const_at] == NM_STANDALONE:
             shipped += 1
-        elif data[op_at] == NE_INT and data[const_at] == NM_CLIENT:
+        elif plain[op_at] == NE_INT and plain[const_at] == NM_CLIENT:
             opened += 1
     return shipped, opened
 
@@ -345,6 +462,24 @@ def open_to_system_link(data: bytes):
     a package where only the first gate was opened -- which an earlier version
     of this module produced -- is finished rather than refused.
     """
+    from . import lin
+
+    if lin.is_lin(data):
+        # The streaming pack -- the copy the console actually runs. The edit
+        # keeps the length, so the chunk re-deflates into its own budget.
+        try:
+            done = [0]
+
+            def edit(plain):
+                new, n = _lin_edit(plain)
+                done[0] = n
+                return new
+
+            out, _touched = lin.substitute(data, edit)
+        except lin.LinError:
+            return data, 0
+        return (out, done[0]) if done[0] else (data, 0)
+
     out, moved = bytearray(data), 0
     for _name, op_at, const_at in _gates(data):
         if data[op_at] != EQ_INT or data[const_at] != NM_STANDALONE:
