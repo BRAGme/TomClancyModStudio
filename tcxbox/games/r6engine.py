@@ -665,29 +665,40 @@ def _coop_cards(prefix):
                     Choice("on", "Let the host build the squad", ""),
                 ],
                 confidence="experimental",
-                help="The squad is done in two steps after a level loads, "
-                     "and each sits behind its own test on Level.NetMode: "
-                     "DeployCharacters builds the team, then "
-                     "SpawnAIandInitGoInGame spawns the operatives. Both "
-                     "ask for NM_Standalone, and a System Link host is "
-                     "NM_ListenServer, so neither runs and the squad is "
-                     "never there.\n\n"
-                     "Both tests become != NM_Client instead: true for "
-                     "single player and for the host, false only for a "
-                     "guest, whose teammates are replicated to it by the "
-                     "host. Four bytes in all, same widths, so nothing in "
-                     "the function moves.\n\n"
-                     "Opening only the first was tried and was not enough: "
-                     "the team object was built and nobody appeared, "
-                     "because the pawns come from the second.",
-                caution="Experimental in the strongest sense: it rewrites "
-                        "compiled UnrealScript in R6Game.u, which every level "
-                        "load reads, and it has been verified as bytes rather "
-                        "than watched working. The guest is deliberately left "
-                        "out -- the host owns the AI and replicates it -- so "
-                        "teammates appearing for the host and nobody else is "
-                        "the design, not a fault. Restore game puts the "
-                        "package back byte for byte."),
+                help="DeployCharacters is the only thing on the disc that "
+                     "builds the Rainbow squad -- an xref over every package "
+                     "finds exactly one caller, in the console's "
+                     "level-change handler, behind a test for "
+                     "Level.NetMode == NM_Standalone. A System Link host is "
+                     "NM_ListenServer, so it never runs.\n\n"
+                     "That test becomes != NM_Client: true for single player "
+                     "and for the host, false only for a guest, which the "
+                     "host would replicate to. Two bytes, same widths, so "
+                     "nothing in the function moves.\n\n"
+                     "SpawnAIandInitGoInGame sits behind a second such test "
+                     "and is deliberately LEFT SHUT. The same xref shows "
+                     "BetweenRound.BeginState already calls it, and a "
+                     "multiplayer game is sent into BetweenRound a few "
+                     "instructions later, so opening it only made it run "
+                     "twice -- and it drives SpawnAI, which first-initialises "
+                     "every deployment zone on the map.",
+                caution="THIS DOES NOT WORK YET, and it is better to say so "
+                        "here than to let you find out. Applied and tested in "
+                        "System Link, the squad still does not appear; single "
+                        "player is unaffected. What the tracing rules out is "
+                        "everything downstream -- CreateTeamMember refuses "
+                        "only NM_Client, its Spawn-and-Possess branch has no "
+                        "NetMode test at all, and the co-op FindPlayerStart "
+                        "hands out real insertion zones. What is left is "
+                        "timing: this builds the squad at level load, and the "
+                        "next thing that function does is start the "
+                        "multiplayer round, whose BetweenRound.EndState walks "
+                        "every player calling ResetPlayerTeam. Moving the "
+                        "build into the round needs an added call, and "
+                        "R6Game.u sits in a fixed-length slot. Kept because "
+                        "it is the only lever there is and it costs two "
+                        "bytes. Restore game puts the package back byte for "
+                        "byte."),
         Setting(prefix + "show_log", "Log the squad being built", CHOICE,
                 "stock", "Game modes",
                 choices=[
@@ -721,45 +732,13 @@ def _coop_cards(prefix):
                         "no log file name, no drive path and no output-device "
                         "name, in ASCII or in UTF-16 -- only execLog, the "
                         "native's own registration string. Log() is callable "
-                        "and goes nowhere. Use \"Show where the squad chain "
-                        "stops\" instead, which asks the same question in a "
-                        "form you can see. Kept because it costs two bytes a "
-                        "site and a debugger, or a build with the device "
-                        "linked back in, would read it. Restore game puts "
-                        "both packages back byte for byte."),
-        Setting(prefix + "reach_probe", "Show where the squad chain stops",
-                CHOICE, "stock", "Game modes",
-                choices=[
-                    Choice("stock", "As shipped", "No probe."),
-                    Choice("on", "Turn the two markers on", ""),
-                ],
-                confidence="experimental",
-                help="A diagnostic you read off the screen, because the log "
-                     "cannot be read at all in this build.\n\n"
-                     "Two conditions in the squad's chain already guard "
-                     "effects you can SEE, and each has its jump pointed at "
-                     "the body it was skipping, exactly as the log option "
-                     "does. NotifyAfterLevelChange turns on god mode for a "
-                     "training map; SpawnAIandInitGoInGame unlocks every door "
-                     "when the level asks it to. Forced on, they answer a "
-                     "question the game will not otherwise tell you:\n\n"
-                     "  * invulnerable = the console's level-change handler "
-                     "ran all the way to its end, so both NetMode gates "
-                     "passed;\n"
-                     "  * every door unlocked = the second gate passed and "
-                     "the spawn-and-init step ran.\n\n"
-                     "If BOTH show up in System Link and there are still no "
-                     "teammates, the squad is being built and then thrown "
-                     "away, which points at the third conditional at the end "
-                     "of that same function -- the one that sends a "
-                     "multiplayer game straight to BetweenRound. If neither "
-                     "shows up, the handler is not running there at all.",
-                caution="This makes you invulnerable and opens every locked "
-                        "door, on every map, in every mode. It is a "
-                        "measuring instrument, not a way to play -- turn it "
-                        "off once it has told you what you needed. Two bytes, "
-                        "both of them a jump word inside R6Game.u, and "
-                        "Restore game puts the package back byte for byte."),
+                        "and the text goes nowhere, so on a stock emulator "
+                        "this option tells you nothing. It is kept because it "
+                        "costs two bytes a site and moves nothing, so a "
+                        "debugger attached to the title -- or a build with an "
+                        "output device linked back in -- would read it. "
+                        "Restore game puts both packages back byte for "
+                        "byte."),
     ]
 
 
@@ -771,9 +750,6 @@ def _coop_edits(prefix, v):
     if v.get(prefix + "show_log") == "on":
         out.append(FileEdit("show_log", showlog.PACKAGES, {},
                             "the squad chain narrates itself into the log"))
-    if v.get(prefix + "reach_probe") == "on":
-        out.append(FileEdit("reach_probe", COOP_PACKAGE, {},
-                            "two visible markers show how far the chain got"))
     return out
 
 

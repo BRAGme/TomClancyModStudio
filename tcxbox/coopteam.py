@@ -1,10 +1,9 @@
-"""AI teammates in System Link: two comparisons, four bytes.
+"""AI teammates in System Link: one comparison, two bytes.
 
 What stops them
 ---------------
 
-`R6ConsoleXbox.NotifyAfterLevelChange` runs after a level loads and does the
-squad in TWO steps, each behind its own NetMode test::
+`R6ConsoleXbox.NotifyAfterLevelChange` runs after a level loads::
 
     Player = GetLocalPlayerController();
 
@@ -14,23 +13,57 @@ squad in TWO steps, each behind its own NetMode test::
 
     if ( Level.NetMode == NM_Standalone
              && Level.Game.IsA('R6AbstractGameInfo') )
-            R6AbstractGameInfo(Level.Game).SpawnAIandInitGoInGame();  // spawns it
+            R6AbstractGameInfo(Level.Game).SpawnAIandInitGoInGame();
 
-Both `IsA` halves pass in every mode -- `R6GameInfo` and `R6AbstractGameInfo`
-are base classes the co-op modes descend from as well. Both NetMode halves fail
-in a System Link game: the host is `NM_ListenServer`, a guest is `NM_Client`,
-neither is `NM_Standalone`.
+    ...
+    if ( Level.Game.IsA('R6MultiPlayerGameInfo')
+             && Level.NetMode != NM_Standalone )
+            Level.Game.GotoState('BetweenRound');        // the round starts
 
-**Opening only the first one is not enough, and that was tried.** With just
-`DeployCharacters` reachable the team object is built and single player is
-unaffected, but no operatives appear in System Link, because the pawns are
-spawned by `SpawnAIandInitGoInGame` behind the second gate. Two gates, or
-nothing.
+Every `IsA` passes in co-op -- `R6GameInfo` and `R6AbstractGameInfo` are base
+classes the co-op modes descend from, `R6CoopStoryModeGame -> R6CoOpMode ->
+R6MultiPlayerGameInfo -> R6GameInfo`. The NetMode halves are what differ: a
+System Link host is `NM_ListenServer`, a guest is `NM_Client`.
+
+`DeployCharacters` is the ONLY thing anywhere that builds the squad -- an xref
+over every package on the disc finds exactly one caller, this one -- so this
+gate is the only lever there is.
+
+Only one gate
+-------------
+
+`SpawnAIandInitGoInGame` was opened too, in an earlier version, and that was
+wrong. The same xref shows `BetweenRound.BeginState` already calls it,
+unconditionally, and the third conditional above is what sends a multiplayer
+game into `BetweenRound` a few instructions later. So multiplayer runs it
+anyway; opening the second gate only made it run TWICE, and it drives
+`SpawnAI`, which is::
+
+    foreach AllActors(R6DeploymentZone, pZone) pZone.InitZone();
+
+with `InitZone` being a one-line call to the native `FirstInit`. Making every
+deployment zone on the map first-initialise a second time is not something to
+do on purpose, and it bought nothing. That gate is left shut.
+
+What this does NOT fix
+----------------------
+
+The squad still does not appear in System Link with this applied, and it is
+honest to say so here rather than only on the card. What the tracing rules out
+is everything downstream: `R6RainbowTeam.CreateTeamMember` refuses only
+`NM_Client`, its AI branch (`Spawn(R6RainbowAI)` then `Possess`) has no NetMode
+test at all, and `R6CoOpMode.FindPlayerStart` hands out real insertion zones
+(`FindTeamInsertionZone(m_byNextPlayerIndex++)`), so start points are fine.
+What remains is timing: this gate builds the squad at level load, and the very
+next thing the function does is start the multiplayer round, whose
+`BetweenRound.EndState` walks every player calling `ResetPlayerTeam`. Moving
+the build into the round would mean ADDING a call, and `R6Game.u` sits in a
+fixed-length `.umd` slot.
 
 The change
 ----------
 
-The same two-byte edit at each gate, turning::
+A two-byte edit at that one gate, turning::
 
     Level.NetMode == NM_Standalone      ->      Level.NetMode != NM_Client
 
@@ -45,8 +78,8 @@ only for a pure client:
   where                NetMode    result
   ===================  =========  ===================================
   single player        0          true -- unchanged
-  System Link host     2          true -- the squad deploys and spawns
-  System Link guest    3          false -- the host replicates to it
+  System Link host     2          true -- the squad is built
+  System Link guest    3          false -- the host would replicate to it
   ===================  =========  ===================================
 
 Both opcodes were read out of the disc's own `Core.u` rather than remembered:
@@ -61,7 +94,7 @@ on `GodAll`, which has nothing to do with any of this.
 Why this is safe to write
 -------------------------
 
-Each edit changes two bytes and moves nothing: same opcode width, same operand
+The edit changes two bytes and moves nothing: same opcode width, same operand
 width, so every jump offset in the function still lands where it did and
 `R6Game.u` keeps the length its `.umd` slot demands. What it cannot do is prove
 the game likes the result -- see the card's caution.
@@ -91,9 +124,9 @@ NM_STANDALONE, NM_CLIENT = 0, 3
 PACKAGE = r"/R6GAME\.U$"
 FUNCTION = "NotifyAfterLevelChange"
 OWNER = "R6ConsoleXbox"
-#: the two calls, in the order the function makes them. The first
-#: builds the team object; the second spawns the operatives.
-CALLS = ("DeployCharacters", "SpawnAIandInitGoInGame")
+#: ONE call. `SpawnAIandInitGoInGame` is deliberately NOT here -- see the
+#: "Only one gate" section above.
+CALLS = ("DeployCharacters",)
 
 MAGIC = 0x9E2A83C1
 

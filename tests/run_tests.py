@@ -735,6 +735,10 @@ def test_coop_team_gate(games):
                          "%s: a gate is not in its shipped form"
                          % det.profile.short)
 
+                must(len(gates) == 1,
+                     "%s: expected exactly one gate, found %d"
+                     % (det.profile.short, len(gates)))
+
                 out, n = coopteam.open_to_system_link(shipped)
                 must(n == len(gates),
                      "%s: opened %d gate(s) of %d"
@@ -769,23 +773,36 @@ def test_coop_team_gate(games):
                 must(coopteam.census(out) == (0, len(gates)),
                      "%s: an edited package does not read as edited"
                      % det.profile.short)
-                # a package with only the first gate opened -- which an
-                # earlier version of this module produced, and which is how
-                # the shortfall was found -- must be finished, not refused.
-                half = bytearray(shipped)
-                half[gates[0][1]] = coopteam.NE_INT
-                half[gates[0][2]] = coopteam.NM_CLIENT
-                must(coopteam.census(bytes(half)) == (len(gates) - 1, 1),
-                     "%s: a half-applied package is misread"
+                # The SpawnAIandInitGoInGame gate must STAY SHUT. It was
+                # opened once and that was a mistake: BetweenRound.BeginState
+                # already calls that function and a multiplayer game reaches
+                # BetweenRound moments later, so opening it only made every
+                # deployment zone on the map first-initialise twice. Pinned
+                # here because the cost of rediscovering it is a play-test.
+                second = _other_gate(shipped, "SpawnAIandInitGoInGame")
+                must(second is not None,
+                     "%s: the second gate was not located at all"
                      % det.profile.short)
-                done, n3 = coopteam.open_to_system_link(bytes(half))
-                must(n3 == len(gates) - 1 and done == out,
-                     "%s: a half-applied package was not finished"
-                     % det.profile.short)
+                op_at, const_at = second
+                must(out[op_at] == coopteam.EQ_INT
+                     and out[const_at] == coopteam.NM_STANDALONE,
+                     "%s: the SpawnAIandInitGoInGame gate was opened; it is "
+                     "redundant and must stay shut" % det.profile.short)
                 checked += 1
     must(checked > 0, "nothing was checked")
-    return ("%d package(s): both gates opened, four bytes changed, script "
-            "shape and length unmoved" % checked)
+    return ("%d package(s): one gate opened, two bytes changed, the "
+            "SpawnAI gate left shut, script shape unmoved" % checked)
+
+
+def _other_gate(data, call_name):
+    """Locate a gate coopteam does NOT open, so a test can prove it shut."""
+    was = coopteam.CALLS
+    try:
+        coopteam.CALLS = (call_name,)
+        found = coopteam._gates(data)
+    finally:
+        coopteam.CALLS = was
+    return (found[0][1], found[0][2]) if found else None
 
 
 def _coop_script(data):
@@ -893,66 +910,6 @@ def _script_shapes(data):
         key = "%s.%s" % (coopteam._resolve(rows, imports, pkg), name)
         out[key] = (sc.disk_len, sc.mem_len)
     return out
-
-
-def test_reach_probes(games):
-    """The two visible markers are found, and each forces exactly one jump.
-
-    The value of this edit is that its effects can be SEEN, so the thing to
-    protect is that it stays two bytes: both probes must land in the same
-    function set they are declared for, both must move only their own jump
-    word, and -- as with the log edit -- every function in the package must
-    still parse to the same disk and memory length.
-    """
-    checked = 0
-    for det in games:
-        if not any(st.key.endswith("_reach_probe")
-                   for st in det.profile.settings):
-            continue
-        store = dataedit.Store(engine.backup_dir_for(det.path))
-        with Root(det.path) as root:
-            for key in root.match(showlog.PACKAGES):
-                shipped = store.original(key) or root.read(key)
-                found = showlog.probe_sites(shipped)
-                if not found:
-                    continue
-                named = sorted((o, f) for o, f, _a, _s, _w in found)
-                must(named == sorted(showlog.PROBES),
-                     "%s: probes landed on %s, expected %s"
-                     % (det.profile.short, named, sorted(showlog.PROBES)))
-                must(showlog.probe_census(shipped) == (len(found), 0),
-                     "%s: the probes do not read as shipped"
-                     % det.profile.short)
-
-                out, n = showlog.force_probes(shipped)
-                must(n == len(found),
-                     "%s: forced %d probe(s) of %d"
-                     % (det.profile.short, n, len(found)))
-                must(len(out) == len(shipped),
-                     "%s: the package length moved" % det.profile.short)
-                allowed = set()
-                for _o, _f, at, _st, _w in found:
-                    allowed.update((at, at + 1))
-                moved = {i for i in range(len(shipped)) if shipped[i] != out[i]}
-                must(moved <= allowed,
-                     "%s: %d byte(s) changed outside the jump words"
-                     % (det.profile.short, len(moved - allowed)))
-
-                before, after = _script_shapes(shipped), _script_shapes(out)
-                must(before and before == after,
-                     "%s: a function changed shape" % det.profile.short)
-
-                again, n2 = showlog.force_probes(out)
-                must(again == out and n2 == 0,
-                     "%s: applying twice is not the same as once"
-                     % det.profile.short)
-                must(showlog.probe_census(out) == (0, len(found)),
-                     "%s: a forced package does not read as forced"
-                     % det.profile.short)
-                checked += 1
-    must(checked > 0, "nothing was checked")
-    return ("%d package(s): both markers forced, two bytes, shapes unmoved"
-            % checked)
 
 
 def test_clamps(_games):
@@ -1321,12 +1278,10 @@ def main(argv):
           lambda: test_aim_records_match_the_discs(games))
     check("hunt spawn counts re-pack into the same bytes",
           lambda: test_hunt_counts(games))
-    check("the System Link squad edit opens both gates",
+    check("the squad edit opens one gate and leaves the other",
           lambda: test_coop_team_gate(games))
     check("forcing the squad log on moves jump words only",
           lambda: test_show_log_sites(games))
-    check("the reach probes force two visible conditions",
-          lambda: test_reach_probes(games))
 
     print("census")
     check("weapons split by side where the data allows",

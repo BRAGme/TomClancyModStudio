@@ -51,21 +51,22 @@ walks once: the game mode coming up, the player logging in, the team being
 built member by member, and the round state machine, which is the other
 suspect for a squad that is created and then thrown away.
 
-Reading it back
----------------
+Reading it back -- you cannot, on a stock xemu
+----------------------------------------------
 
-The log device is the emulator's, not the game's: this build keeps UE2's log
-machinery (`ScriptWarning` and `Assertion failed: ` are both still in the XBE)
-but names no log file and no drive path, so the text goes out the debug port
-and it is xemu that decides whether to show it. If nothing appears there, that
-is the sink, not this edit -- the bytes are checked before and after either
-way.
+**There is no log sink in this build**, and that was checked rather than
+assumed. `default.xbe` contains no log file name, no drive path, no
+`Core.System` and no output-device name, searched in both ASCII and UTF-16.
+The only trace of the machinery is `execLog`, the native's own registration
+string. `ScriptWarning` and `Assertion failed: ` exist as format strings and
+prove nothing about where a line would go. `Log()` is callable and the text
+goes nowhere.
 
-One thing is already visible without any of this: `R6GameInfo.DeployCharacters`
-opens with ``assert(Level.NetMode == NM_Standalone)`` at line 998. In a System
-Link game that assertion is false, so a host that reaches the function at all
-should be saying "Assertion failed, line 998" on its own. Its absence would
-mean the function is never reached; its presence would mean it is.
+So this module cannot answer a question on its own today. It is kept because
+it costs two bytes a site and moves nothing, so a debugger attached to the
+title -- or a build with an output device linked back in -- would read it. For
+anything that has to be answered by looking at the screen, this is the wrong
+tool; diagnose through an effect the player can see instead.
 """
 
 from __future__ import annotations
@@ -253,61 +254,3 @@ def _force(data, found):
         struct.pack_into("<H", out, word_at, wanted)
         moved += 1
     return (bytes(out), moved) if moved else (data, 0)
-
-
-# ---------------------------------------------------------------------------
-# reach probes: the same trick, but on conditions with a VISIBLE effect
-# ---------------------------------------------------------------------------
-#
-# The log cannot be read. There is no log sink in this build -- no `.log`, no
-# `Core.System`, no output-device name anywhere in the XBE, in ASCII or in
-# UTF-16; only `execLog`, the native's own registration string. `Log()` is
-# callable and goes nowhere.
-#
-# So the same two-byte retarget is pointed at two conditions whose bodies the
-# player can SEE, which turns "did execution get this far" into something
-# answerable by looking at the screen:
-#
-#   R6ConsoleXbox.NotifyAfterLevelChange   if (Level.m_bIsTrainingMap)
-#                                              CheatManager.GodAll(true,true)
-#       -> god mode means the console function ran all the way to its end,
-#          which means both NetMode gates were passed.
-#
-#   R6GameInfo.SpawnAIandInitGoInGame      if (m_bUnlockAllDoors)
-#                                              every door unlockdoor()
-#       -> unlocked doors mean the second gate was passed and the spawn-and-
-#          init step ran.
-#
-# Read together they say where the chain stops. If BOTH show up in System Link
-# and there are still no teammates, then the squad is being built and then
-# thrown away afterwards -- which points at the third conditional at the end
-# of the same function, the one that sends a multiplayer game straight to
-# `BetweenRound`.
-
-PROBES = frozenset({
-    ("R6ConsoleXbox", "NotifyAfterLevelChange"),
-    ("R6GameInfo", "SpawnAIandInitGoInGame"),
-})
-
-#: the two conditions, by the property each one reads
-PROBE_FLAGS = frozenset({"m_bIsTrainingMap", "m_bUnlockAllDoors"})
-
-
-def probe_sites(data: bytes):
-    """The two visible-effect conditions, same shape as `sites`."""
-    return _collect(data, PROBES, PROBE_FLAGS)
-
-
-def probe_census(data: bytes):
-    shipped = forced = 0
-    for _o, _f, _at, stored, wanted in probe_sites(data):
-        if stored == wanted:
-            forced += 1
-        else:
-            shipped += 1
-    return shipped, forced
-
-
-def force_probes(data: bytes):
-    """Make god mode and the door unlock happen unconditionally."""
-    return _force(data, probe_sites(data))

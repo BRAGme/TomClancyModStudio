@@ -106,11 +106,6 @@ def _op_show_log(plain, _params):
     return showlog.force_on(plain)
 
 
-def _op_reach_probe(plain, _params):
-    from . import showlog
-    return showlog.force_probes(plain)
-
-
 def _op_campaign(plain, params):
     return transforms.extend_campaign(plain, params.get("add", ()),
                                       replace=bool(params.get("replace")))
@@ -171,7 +166,6 @@ OPS = {
     "campaign": _op_campaign,
     "coop_team": _op_coop_team,
     "show_log": _op_show_log,
-    "reach_probe": _op_reach_probe,
     "hunt_scale": _op_hunt_scale,
     "ini_values": _op_ini_values,
     "scale_ini": _op_scale_ini,
