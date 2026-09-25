@@ -120,7 +120,72 @@ def plan(game_path, profile, values, root=None) -> Plan:
     return Plan(profile.title, rows, warnings)
 
 
-def apply(game_path, profile, values, progress=None, root=None) -> dict:
+def _container_bytes(game_path):
+    """The cached script bundle as this game ships it, or None.
+
+    A folder install keeps it as a real file; a disc image keeps it as an
+    entry. Either way it is the whole container, because the copy on the hard
+    drive is the whole container.
+    """
+    from . import xboxhdd
+    path = str(game_path)
+    if os.path.isdir(path):
+        want = xboxhdd.CONTAINER_ISO.strip("/").split("/")
+        here = path
+        for part in want:
+            found = None
+            try:
+                for name in os.listdir(here):
+                    if name.lower() == part.lower():
+                        found = os.path.join(here, name)
+                        break
+            except OSError:
+                return None
+            if found is None:
+                return None
+            here = found
+        with open(here, "rb") as fh:
+            return fh.read()
+    from . import xiso
+    if not xiso.is_xiso(path):
+        return None
+    with xiso.Xiso(path) as d:
+        entry = d.files.get(xboxhdd.CONTAINER_ISO)
+        if entry is None:
+            return None
+        return d.read(entry)
+
+
+def sync_hdd_cache(game_path, progress=None):
+    """Put the edited script bundle where the Xbox will actually read it.
+
+    Rainbow Six 3 copies `xboxufiles.umd` to the emulator's hard drive once
+    and reuses that copy forever, so a patch that only reaches the disc is
+    never executed. See `tcxbox.xboxhdd` for the evidence. Returns a report,
+    or None when there is nothing to do -- no emulator, no such container.
+    """
+    from . import xboxhdd
+    try:
+        payload = _container_bytes(game_path)
+    except (OSError, ValueError):
+        return None
+    if payload is None:
+        return None
+    hdd = xboxhdd.find_image()
+    if not hdd:
+        return {"skipped": "no emulator hard drive configured"}
+    if progress:
+        progress("Syncing the copy the Xbox actually reads")
+    try:
+        out = xboxhdd.sync(hdd, payload)
+    except xboxhdd.HddError as exc:
+        return {"error": str(exc), "image": hdd}
+    out["image"] = hdd
+    return out
+
+
+def apply(game_path, profile, values, progress=None, root=None,
+          sync_cache=False) -> dict:
     values = profile.normalise(values)
     edits = profile.build_data(values) if profile.build_data else []
     folder = backup_dir_for(game_path)
@@ -151,10 +216,12 @@ def apply(game_path, profile, values, progress=None, root=None) -> dict:
     with Root(game_path) as check:
         good, bad = dataedit.verify_data(check, store)
     report["verified"], report["broken"] = good, bad
+    if sync_cache:
+        report["cache"] = sync_hdd_cache(game_path, progress)
     return report
 
 
-def revert(game_path, profile, progress=None) -> dict:
+def revert(game_path, profile, progress=None, sync_cache=False) -> dict:
     folder = backup_dir_for(game_path)
     store = dataedit.Store(folder)
     if not store.keys():
@@ -163,4 +230,9 @@ def revert(game_path, profile, progress=None) -> dict:
     with Root(game_path, writable=True) as r:
         out = dataedit.revert_data(r, store, progress=progress)
     out["restored"] = out["files"] > 0
+    # Putting the disc back is only half of it: the hard drive would still be
+    # running the edited bundle, so a "restore" that skipped this would leave
+    # the game modded with nothing on the disc to show for it.
+    if sync_cache:
+        out["cache"] = sync_hdd_cache(game_path, progress)
     return out

@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tcxbox import (coopteam, dataedit, engine, globfile,  # noqa: E402
                     hunt, model, rsb, showlog, transforms, umd, xbe,
-                    xiso, xpr)
+                    xboxhdd, xiso, xpr)
 from tcxbox.detect import identify, scan                          # noqa: E402
 from tcxbox.model import FileEdit                                  # noqa: E402
 from tcxbox.gamedir import Root                                   # noqa: E402
@@ -912,6 +912,60 @@ def _script_shapes(data):
     return out
 
 
+def test_hdd_cache_reader(games):
+    """The cached bundle is located and reassembled correctly. Reads only.
+
+    This is the reader behind the sync that keeps the emulator's hard drive
+    in step with the disc, and getting it wrong would write 5 MB into the
+    wrong clusters of somebody's Xbox hard drive. So the whole chain is
+    exercised -- xemu's config, the qcow2 cluster map, the FATX directory and
+    the file's extent list -- and the bytes it reassembles must parse as the
+    same bundle, with the same file list, as the one on the disc. A wrong
+    chain reassembles garbage and cannot fake that.
+
+    Nothing is written. `dry_run` is passed, and the image is opened
+    read-only.
+    """
+    hdd = xboxhdd.find_image()
+    if not hdd:
+        return "no emulator hard drive configured, so nothing to check"
+
+    entry, extents = xboxhdd.cached_state(hdd)
+    if entry is None:
+        return "no bundle cached on %s yet" % os.path.basename(hdd)
+    must(sum(ln for _o, ln in extents) == entry["size"],
+         "the extents cover %d bytes, the entry says %d"
+         % (sum(ln for _o, ln in extents), entry["size"]))
+
+    with xboxhdd.Qcow2(hdd) as img:
+        cached = b"".join(img.read(off, ln) for off, ln in extents)
+    must(len(cached) == entry["size"], "reassembled the wrong length")
+    must(umd.is_umd(cached),
+         "the reassembled bytes are not a .umd bundle -- the cluster chain "
+         "is wrong")
+
+    inside = [e.name for e in umd.parse(cached)[0]]
+    must(inside, "the cached bundle parsed but holds no files")
+
+    # and it must agree with the disc it was copied from
+    checked = 0
+    for det in games:
+        payload = engine._container_bytes(det.path)
+        if payload is None or len(payload) != entry["size"]:
+            continue
+        theirs = [e.name for e in umd.parse(payload)[0]]
+        if theirs != inside:
+            continue
+        out = xboxhdd.sync(hdd, payload, dry_run=True)
+        must(out["found"] and out["size"] == len(payload),
+             "a dry run disagreed with the entry it just read")
+        checked += 1
+    return ("%s: %d file(s) in the cached bundle, %d extent(s), %d bytes, "
+            "matched against %d disc(s)"
+            % (os.path.basename(hdd), len(inside), len(extents),
+               entry["size"], checked))
+
+
 def test_clamps(_games):
     plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
     out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
@@ -1282,6 +1336,8 @@ def main(argv):
           lambda: test_coop_team_gate(games))
     check("forcing the squad log on moves jump words only",
           lambda: test_show_log_sites(games))
+    check("the emulator hard-drive cache reads back right",
+          lambda: test_hdd_cache_reader(games))
 
     print("census")
     check("weapons split by side where the data allows",

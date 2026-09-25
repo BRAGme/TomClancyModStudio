@@ -967,7 +967,8 @@ class App(tk.Tk):
             self._set_buttons(True)
 
         self._run(lambda: engine.apply(path, profile, vals,
-                                       progress=lambda m: self._post("  " + m)),
+                                       progress=lambda m: self._post("  " + m),
+                                       sync_cache=True),
                   done)
 
     def _revert(self):
@@ -992,7 +993,8 @@ class App(tk.Tk):
             self._set_buttons(True)
 
         self._run(lambda: engine.revert(path, profile,
-                                        progress=lambda m: self._post("  " + m)),
+                                        progress=lambda m: self._post("  " + m),
+                                        sync_cache=True),
                   done)
 
     # -- preferences -------------------------------------------------------

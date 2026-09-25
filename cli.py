@@ -166,21 +166,46 @@ def cmd_apply(args):
     det = _require(args.folder)
     values = _values_from_args(det.profile, args)
     report = engine.apply(det.path, det.profile, values,
-                          progress=lambda m: print("  " + m))
+                          progress=lambda m: print("  " + m),
+                          sync_cache=True)
     print("rewrote %d file(s), put %d back, %d read back cleanly, %d broken"
           % (report["files"], report["restored"], report["verified"],
              report["broken"]))
     for op, n in sorted((report.get("changes") or {}).items()):
         print("  %-20s %d value(s)" % (op, n))
+    _say_cache(report.get("cache"))
     print("backup: %s" % report["backup"])
     return 1 if report["broken"] else 0
 
 
 def cmd_revert(args):
     det = _require(args.folder)
-    out = engine.revert(det.path, det.profile, progress=lambda m: print("  " + m))
+    out = engine.revert(det.path, det.profile,
+                        progress=lambda m: print("  " + m), sync_cache=True)
     print("restored %d file(s)" % out["files"])
+    _say_cache(out.get("cache"))
     return 0
+
+
+def _say_cache(cache):
+    """Report the emulator hard drive, which is what the Xbox actually reads."""
+    if not cache:
+        return
+    if cache.get("error"):
+        print("hard-drive cache NOT synced: %s" % cache["error"])
+    elif cache.get("skipped"):
+        print("hard-drive cache: %s" % cache["skipped"])
+    elif not cache.get("found"):
+        print("hard-drive cache: nothing cached yet, the game will copy it")
+    elif cache.get("identical"):
+        print("hard-drive cache: already matched (%d bytes)" % cache["size"])
+    else:
+        note = ""
+        if cache.get("snapshots"):
+            note = ("; %d emulator snapshot(s) share those clusters and see "
+                    "the change" % cache["snapshots"])
+        print("hard-drive cache: wrote %d bytes to %s%s"
+              % (cache["written"], cache["container"], note))
 
 
 def main(argv=None):
