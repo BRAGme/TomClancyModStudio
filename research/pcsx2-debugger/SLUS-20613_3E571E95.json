@@ -1,0 +1,76 @@
+{
+    "Breakpoints": [
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "003991e0",
+            "DESCRIPTION": "SOAF PORT 7/7 - HandleLoadSkybox: map load finished, sky next. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047b730",
+            "DESCRIPTION": "SOAF PORT 6/7 - LoadObjects: reading .AOL (placed objects). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0044d890",
+            "DESCRIPTION": "SOAF PORT 5/7 - CGraphicSystem::LoadMissionMap: reading .MAZ/.SHT/.BMZ. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c020",
+            "DESCRIPTION": "SOAF PORT 4/7 - LoadPortals: reading .POL (portals between rooms). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c340",
+            "DESCRIPTION": "SOAF PORT 3/7 - LoadFromMol: reading .MOL (models + rooms). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c9f0",
+            "DESCRIPTION": "SOAF PORT 2/7 - MAPLoader::LoadWithSim: the map loader starts. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "00388d60",
+            "DESCRIPTION": "SOAF PORT 1/7 - HandleLoadMap: the map-load message arrived. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        }
+    ],
+    "SavedAddresses": [],
+    "Version": "0.01"
+}

@@ -657,3 +657,81 @@ that fires before the exception is the step that fails:
 
 After that, the failing function can be mirrored in Python over SOAF's file
 and Ghost Recon's to find the field that differs.
+
+## 15. Breakpoints settle it: the load fails in `LoadFromMol`
+
+### 15a. The run
+
+The seven load steps from §14d were set as execute breakpoints
+(`research/pcsx2-debugger/SLUS-20613_3E571E95.json`) and probe 5 was booted
+into Training `T01`. Hit counts:
+
+| # | step | hits |
+|---|---|---|
+| 1 | `HandleLoadMap` | **1** |
+| 2 | `MAPLoader::LoadWithSim` | **1** |
+| 3 | `MAPLoader::LoadFromMol` | **1** |
+| 4 | `MAPLoader::LoadPortals` | 0 |
+| 5 | `CGraphicSystem::LoadMissionMap` | 0 |
+| 6 | `MAPLoader::LoadObjects` | 0 |
+| 7 | `HandleLoadSkybox` | 0 |
+
+**The load enters `LoadFromMol` and never reaches `LoadPortals`.** This comes
+from breakpoints, not inference. It supersedes the residue-based guesses in
+§12b and §14c, and it fits the model-loading frames (`RSModelManager` /
+`RSQOBLoader`) left in probe 5's crash state.
+
+After step 3 the game showed EE 98% at 8% speed. With the debugger attached
+this is probably the same load crawling toward the `0xCDCDCDCD` crash seen
+without it, not a separate hang. It was not run to completion under the
+debugger.
+
+### 15b. What slot 5 could not show
+
+That state was saved mid-grind, but it caught the CPU inside an interrupt
+handler's system call (`EPC = iSignalSema+0x8`, kernel stack). The only saved
+game-register block in kernel memory (`0x78000`) is a stale debug-print frame
+(`$ra = kputs`). So it cannot show where in `LoadFromMol` the time goes. A
+savestate taken at a random moment does not reliably land in the game thread.
+The debugger's **Pause** button with the Stack tab open would.
+
+### 15c. What `LoadFromMol` does
+
+`MAPLoader::LoadFromMol` (`0x0047C340`, 1,404 bytes):
+
+1. opens the `.mol`, reads an 8-byte preamble (`04 00 00 00 01 00 00 00` in
+   both games)
+2. reads the top chunk header
+3. for each model chunk: reads its header, lower-cases the name, calls
+   `RSModelManager::FindModel(name)`, wraps the chunk's bytes in a
+   `strstreambuf`, and hands them to **`ROBLoader::LoadGeometryChunk`**; then
+   `RSModel::CalculateBoundingSpheres` and a run of virtual calls, then skips
+   the rest of the chunk.
+
+So a `.MOL` is a list of models, and the failure is inside one model's geometry
+load or the virtual calls after it.
+
+**Chunk header** (`RSQOBLoader::ReadChunkHeader`, `0x0047E390`):
+`u32 size, u32 type, name` with length-prefixed, NUL-terminated names. If the
+name is `Version`, a `u32` version and the real name follow. `size` counts the
+payload after the whole header. Checked against the file: Sum of All Fears'
+top chunk declares 664,715 payload bytes. The 8-byte preamble plus the 33-byte
+header plus 664,715 is exactly the file's 664,756 bytes.
+
+### 15d. Pending
+
+A walk of every chunk in Sum of All Fears' `TRAINING.MOL` against every chunk
+in all 36 Ghost Recon `.MOL` files is running, looking for a chunk type or
+version Sum of All Fears uses that Ghost Recon never does. That is the prime
+suspect for a handler Ghost Recon's loader lacks, which is how a call through
+never-written memory (`0xCDCDCDCD`) would arise. No result is recorded here
+until it finishes.
+
+### 15e. Tooling note
+
+PCSX2 1.7.5641 reads debugger settings from **`inis\debuggersettings\`**, not
+the top-level `debuggersettings\`. The first copy of this breakpoint file went
+to the wrong folder, following an existing Rainbow Six 3 file that had never
+been loaded from there. `research/pcsx2-debugger/README.md` has the format,
+checked against PCSX2's source (`X` is the enabled flag, `TYPE 8` is an
+execute breakpoint).

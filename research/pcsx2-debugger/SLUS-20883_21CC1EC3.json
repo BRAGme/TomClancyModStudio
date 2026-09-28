@@ -1,0 +1,122 @@
+{
+    "Breakpoints": [
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "0034f250",
+            "DESCRIPTION": "CONTROL - per-frame render pass. This MUST break almost immediately. If it does, breakpoints work: disable this one in the UI, resume, and watch 003f4a80.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f4a80",
+            "DESCRIPTION": "FP WEAPON UPDATE (slot 0x174) - read $ra for the caller, $a0 for the weapon.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f53b0",
+            "DESCRIPTION": "FP paired (slot 0x170) - read $ra if this one hits instead.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "0040af28",
+            "DESCRIPTION": "DISABLED while hunting the FP weapon - AR6DZoneWave init - s0 = the wave actor. Read s0 to get its address.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "0040a878",
+            "DESCRIPTION": "DISABLED while hunting the FP weapon - A WAVE JUST FIRED - s2 = wave actor, m_iNextWaveTrigger being rearmed",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "0044f170",
+            "DESCRIPTION": "DISABLED (mp.soz only) Blowfish SetKey(this, keyPtr, keyLen) - read a1/a2",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "0044aed0",
+            "DESCRIPTION": "DISABLED (mp.soz only) Blowfish wrapper(this, flag, key=a2, keylen=a3)",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "00448840",
+            "DESCRIPTION": "DISABLED (mp.soz only) cipher factory(type=a0, key=a1, keylen=a2)",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        }
+    ],
+    "SavedAddresses": [
+        {
+            "ADDRESS": "0040af28",
+            "LABEL": "DZoneWave_Init",
+            "DESCRIPTION": "sp.soz: m_iNbSpawned=aTerrorist.Count; m_iNbToSpawn=RandRange(min,max)+difficulty bonus; m_iNextWaveTrigger=RandRange(m_RemainingTrigger)"
+        },
+        {
+            "ADDRESS": "0040a780",
+            "LABEL": "DZoneWave_Advance",
+            "DESCRIPTION": "sp.soz: prunes dead terrorists, compares live count to m_iNextWaveTrigger, releases RandRange(m_NumberInWave) capped at remaining"
+        },
+        {
+            "ADDRESS": "0040a878",
+            "LABEL": "DZoneWave_WaveFired",
+            "DESCRIPTION": "sp.soz: sw v0,0x480(s2) - m_iNextWaveTrigger rearmed, i.e. a wave just released"
+        },
+        {
+            "ADDRESS": "0058ceb0",
+            "LABEL": "blowfish_P_default",
+            "DESCRIPTION": "pi-derived P-array template"
+        },
+        {
+            "ADDRESS": "0058cf00",
+            "LABEL": "blowfish_S_default",
+            "DESCRIPTION": "pi-derived S-boxes template"
+        },
+        {
+            "ADDRESS": "003f4a80",
+            "LABEL": "FPWeapon_Update",
+            "DESCRIPTION": "sp.soz: weapon vtable slot 0x174. Gates inside all pass in split screen, so the CALL is what is missing. Breakpoint here in SINGLE PLAYER and read $ra."
+        },
+        {
+            "ADDRESS": "003f53b0",
+            "LABEL": "FPWeapon_Paired",
+            "DESCRIPTION": "sp.soz: weapon vtable slot 0x170, repeats the m_bUseFirstPersonWeapon test at 003f5438"
+        }
+    ],
+    "Version": "0.01"
+}
