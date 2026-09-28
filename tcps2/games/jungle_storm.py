@@ -877,10 +877,10 @@ def _settings():
                      "squad and the enemy alike. The grenade is the unused "
                      "SQUIRREL.PRJ rewritten; the label replaces the PC-only "
                      "'Toggle Console' line in every strings file.",
-                caution="Never played. What the smoke looks like is the "
-                        "game's; pick among the three below. The AI never "
-                        "switches to smoke on its own; an AI soldier whose "
-                        "slot you set to SMOKE throws smoke when it throws."),
+                caution="Played 2026-09-28: a smoke kit's grenade made a "
+                        "cloud (large type 3). Switching with reload in the "
+                        "field is not yet seen working in play. The AI side "
+                        "is 'AI throws smoke' below."),
         Setting("js_smoke_kits", "Smoke grenade kits", CHOICE, "second", "Weapons",
                 confidence="experimental",
                 choices=[
@@ -897,6 +897,27 @@ def _settings():
                      "the start. The kit picture still shows grenades; the "
                      "item is named SMOKE. Reload still switches FRAG / SMOKE "
                      "in the field. Needs 'Smoke grenades'."),
+        Setting("js_smoke_ai", "AI throws smoke", CHOICE, "all", "Weapons",
+                confidence="experimental",
+                choices=[
+                    Choice("off", "Never", ""),
+                    Choice("squad", "Your squad", ""),
+                    Choice("enemies", "Enemies", "Everyone not in your squad."),
+                    Choice("all", "Everyone", ""),
+                ],
+                help="When a soldier runs for cover (the game's own "
+                     "RunForCover: an open fight, a hold or suppress order, "
+                     "dodging a grenade) and his threat is 12-90 m away, "
+                     "one time in two he first throws a smoke grenade 10 m "
+                     "toward it, then runs. He must carry grenades (any "
+                     "kit's frags do: the throw comes out as smoke) and no "
+                     "grenade launcher, and his fireteam must not have used "
+                     "a grenade in the last 30 s. Across the whole mission "
+                     "the AI pops smoke at most once every 15 s and never "
+                     "while 2 clouds are already up (frame rate: a cloud is "
+                     "a lot of particles). A smoke throw ignores the check "
+                     "for branches in its first metres. Needs 'Smoke "
+                     "grenades'."),
         Setting("js_smoke_look", "Smoke grenade cloud", CHOICE, "smoke_large_type3", "Weapons",
                 confidence="experimental",
                 choices=[

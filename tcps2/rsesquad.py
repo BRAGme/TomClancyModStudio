@@ -132,6 +132,50 @@ after `PawnKilled`'s new jump keep `m_Team`, which only the old test used.
 Everything that print referenced is used again later in the function, and
 `bShowLog` reads False on the team in every savestate.
 
+Who leads
+---------
+
+The AI follow `m_Team[0]`, whoever gives the order: `R6RainbowAI.Tick`
+sets each AI's pace member to `m_Team[m_iID - 1]`, so the first AI follows
+slot 0 and the rest follow in single file. Every "follow" order ends in
+`InstructPlayerTeamToFollowLead()`, which takes no requester. So a regroup
+from player 2 sent them after player 1, alive or dead.
+
+The lead now moves between the two players. Slot 0 and `m_TeamLeader` hold
+the leader, and the other player sits just past every AI, at
+`m_iMemberCount + m_iMembersLost`. A hand-off swaps those two slots.
+`TeamMemberDead`'s player branch hands off when the dead pawn led, or when a
+living player who does not lead calls it: `(DeadPawn == m_Team[0]) !=
+DeadPawn.IsAlive()`. `regrouponme` now calls it with its own pawn before the
+follow order, and `ToggleTeamHold`'s follow branch calls `regrouponme`, so
+the square button, the wheel's Regroup and its Hold toggle all move the lead
+to whoever asked. A leader's death moves it to the other player. The branch
+also runs the function's own ladder clear first: a player who dies on the
+ladder never dismounts, and only `EndClimbingSetUp` clears his climbing flag.
+
+The swap and the refresh live in `RainbowDebugTeam`. That is a debug dump
+whose only caller is the console command `LogTeamInfo`, which no binding
+reaches. It swaps slot 0 with the other player's slot, sets `m_TeamLeader`,
+and refreshes each AI: `Promote()` copies the new leader into the AI's own
+`m_TeamLeader`, and `SwapTeamMembers(i, i)` puts back the `m_iID` that
+Promote decremented and re-points the pace member. It does nothing when that
+slot is empty, as on Trieste, where each player has his own team.
+
+The team ladder climb had the same assumption. `PlayerBeginClimbingLadder`
+starts the team's climb for any player, so player 2's own climb froze the AI
+on player 1's ladder and blocked orders. `TeamLeaderIsClimbingLadder` now
+also requires `m_TeamLeader.Controller.IsInState('PlayerBeginClimbingLadder')`.
+`MemberFinishedClimbingLadder` now returns for any player who is not the
+leader, so a non-leader's dismount no longer ends the team's climb or sends
+the AI to follow.
+
+These keep each rewritten region at its stock length, with every later
+statement where it was. Six functions change. `TeamMemberDead`,
+`RainbowDebugTeam`, `ToggleTeamHold` and `MemberFinishedClimbingLadder` still
+reference exactly the objects they did. `regrouponme` gains its own class's
+`m_pawn` and gives up `bCheatFlying`, a cheat flag, for room.
+`TeamLeaderIsClimbingLadder` loses its `bShowLog` prints.
+
 What is NOT established
 -----------------------
 
@@ -297,29 +341,113 @@ ORDER_AIM = bytes.fromhex("1b7901192e0519014f01050004019405000c017a0e16")
 ORDER_AIM_NEW = bytes.fromhex("1b7901192e051900580205000401b305000c017a0e16")
 KNOWN_ORDER_OFFSET = 0x145CBF
 
-#: `TeamMemberDead` mem 0x0000-0x00a7, see "When someone dies". The four
-#: statements after the gate move down whole. The debug print's bytes become
-#: a jump and dead filler.
+#: `TeamMemberDead` mem 0x0000-0x0182, see "When someone dies" and "Who
+#: leads". The four statements after the gate and the leader path's own
+#: statements move whole. The debug prints' bytes become dead filler.
 _DEAD_BODY = bytes.fromhex(
     "1b7a1116"                                  # UpdateEscortList()
     "1b540f16"                                  # UpdateTeamGadgetStatus()
     "0f004f0f393a19004a0a050001012c"            # iMemberId = DeadPawn.m_iID
     "0f1919004a0a050004019405000401a52a")       # DeadPawn.Controller.Enemy = None
+#: mem 0x00a7-0x0182 as shipped: `if (iMemberId == 0)`, the leader path.
+_LEADER_PATH = bytes.fromhex(
+    "0782019a004f0f2516070d012d0192e770703956171f205465616d4d656d626572446561"
+    "642829203a20746865206c656164657220776173206b696c6c65642e2e2e746865206e65"
+    "77206c65616465722069733d001639561a26010a16160f014f011a26010a0772012d0192"
+    "e7703956171f206c6561646572206f662074686973207465616d206973206120706c6179"
+    "65722c20736f207761697420756e74696c20706c61796572206368616e676573206d656d"
+    "62657273001616a6011616a501700616040b")
 DEAD_GATE = (
     bytes.fromhex("071d00" "1919018f05000401a60600042d01ed01" "040b")
     + _DEAD_BODY
     + bytes.fromhex(
         "07a7002d0192e7707070703956171f20205465616d4d656d62657244656164282920"
         "646561645061776e3d00163956004a0a161f20694d656d62657249643d0016395300"
-        "4f0f1616"))
-DEAD_GATE_NEW = (
-    bytes.fromhex("073100" "82"                 # if (Level.Game.m_bIsSplitScreen
+        "4f0f1616")
+    + _LEADER_PATH)
+#: The first form of this edit: a player's death just returned.
+DEAD_GATE_V1 = (
+    bytes.fromhex("073100" "82"
                   "1919018f05000401a60600042d01ed01"
-                  "181000" "19004a0a0600042d01b7" "16"  # && DeadPawn.m_bIsPlayer)
-                  "040b")                       #     return;
+                  "181000" "19004a0a0600042d01b7" "16"
+                  "040b")
     + _DEAD_BODY
-    + bytes.fromhex("06a700" "004a0a" + "0b" * 51))
+    + bytes.fromhex("06a700" "004a0a" + "0b" * 51)
+    + _LEADER_PATH)
+#: The second form (lead hand-off, 2026-09-23). Its gate touched `DeadPawn`
+#: before anything touched `iMemberId`, the reverse of stock -- and a
+#: function's first touches of its OWN package's objects are the order the
+#: loader creates and then reads them in. Oil Refinery's load fell 9 bytes out
+#: of step ("R63rdWeapons.SubSR2: SERIAL SIZE MISMATCH: GOT 536, EXPECTED
+#: 527"). Kept only so a disc carrying it is upgraded.
+DEAD_GATE_V2 = (
+    bytes.fromhex("074500" "82"                 # if (Level.Game.m_bIsSplitScreen
+                  "1919018f05000401a60600042d01ed01"
+                  "181000" "19004a0a0600042d01b7" "16"  # && DeadPawn.m_bIsPlayer) {
+                  "074200" "81" "1b7f0f16" "16" #   if (!RainbowAIAreStillClimbingLadder())
+                  "142d016c0228"                #     m_bTeamIsClimbingLadder = false;
+                  "06ab01")                     #   goto 0x01ab, the hand-off test }
+    + _DEAD_BODY                                # 0x0045
+    + bytes.fromhex("0782019a004f0f2516"        # if (iMemberId == 0) {  an AI-led team
+                    "0f014f011a26010a"          #   m_TeamLeader = m_Team[1];
+                    "a6011616" "a501700616"     #   m_iMemberCount--; m_iMembersLost++;
+                    "040b"                      #   return; }
+                    "0192" "004a0a" "006c33")   # dead: bShowLog, DeadPawn, bReIssueTeamOrder
+    + b"\x0b" * 203)
+#: The gate, preceded by a bare read of `iMemberId` so the two locals are
+#: first touched in stock order; the bytes come out of the dead filler's
+#: `DeadPawn`, which the gate still references.
+DEAD_GATE_NEW = (
+    bytes.fromhex("004f0f"                     # iMemberId;  (first touch, as stock)
+                  "074a00" "82"                 # if (Level.Game.m_bIsSplitScreen
+                  "1919018f05000401a60600042d01ed01"
+                  "181000" "19004a0a0600042d01b7" "16"  # && DeadPawn.m_bIsPlayer) {
+                  "074700" "81" "1b7f0f16" "16" #   if (!RainbowAIAreStillClimbingLadder())
+                  "142d016c0228"                #     m_bTeamIsClimbingLadder = false;
+                  "06ab01")                     #   goto 0x01ab, the hand-off test }
+    + _DEAD_BODY                                # 0x004a
+    + bytes.fromhex("0782019a004f0f2516"        # if (iMemberId == 0) {  an AI-led team
+                    "0f014f011a26010a"          #   m_TeamLeader = m_Team[1];
+                    "a6011616" "a501700616"     #   m_iMemberCount--; m_iMembersLost++;
+                    "040b"                      #   return; }
+                    "0192" "006c33")            # dead: bShowLog, bReIssueTeamOrder
+    + b"" * 203)
 KNOWN_DEAD_GATE_OFFSET = 0x1409BC
+
+#: `TeamMemberDead` mem 0x01a8-0x023c, a `bShowLog` print in the AI path.
+DEAD_LOG = bytes.fromhex(
+    "073c022d0192e770707070707070703956171f205465616d4d656d626572446561642829"
+    "203a206d656d6265722000163956004a0a161f20776173206b696c6c65642e2e2e6d5f69"
+    "49643d00163953004f0f161f206d5f695465616d416374696f6e3d001639530117161f20"
+    "62526549737375655465616d4f726465723d001639542d006c331616")
+DEAD_LOG_NEW = (
+    bytes.fromhex("063c02"                      # 0x01a8: goto 0x023c
+                  "07d301"                      # 0x01ab: if ((DeadPawn == m_Team[0])
+                  "f3" "72004a0a1a25010a16"
+                  "19004a0a0600041b0416" "16"   #          != DeadPawn.IsAlive())
+                  "1b721016"                    #   RainbowDebugTeam();  the hand-off
+                  "040b")                       # 0x01d3: return;
+    + b"\x0b" * 103)
+#: The same region as `rsedowncall` leaves it: the return at 0x01d3 goes on to
+#: the player-down call-out at 0x0381. The hand-off is unchanged.
+DEAD_LOG_CALL = DEAD_LOG_NEW[:31] + bytes.fromhex("068103") + b"\x0b" * 102
+KNOWN_DEAD_LOG_OFFSET = 0x140B24
+
+#: `CreatePlayerTeam`'s `bTerroHunt = (Level.Game.m_eGameTypeFlag == 4)`. The
+#: roster removals skip on it, so single-player Terrorist Hunt keeps all four
+#: operatives. Split-screen Terrorist Hunt is type 10 (measured, and the same
+#: test Ubisoft wrote for Trieste's rescue arm at mem 0x031F), so routed into
+#: this arm it lost the operatives the mission's roster leaves out -- both AI
+#: on Airport and Penthouse. COMMON_SS only: the other two keep 4.
+#: WITHDRAWN 2026-09-24, not applied (it was on the disc with split_callouts
+#: when Terrorist Hunt on the Garage hung). The skins reason first given here
+#: was wrong -- skins, heads and caps load for all four operatives anyway --
+#: but `bTerroHunt` also picks CreateTeamMember's Terrorist Hunt loadout, which
+#: differs on three maps, so it stays off. `rsethuntai` adds the AI instead.
+BTERRO = bytes.fromhex("142d0053049a393a1919018f05000401a605000101f001393a24"
+                       "04" "16")
+BTERRO_NEW = BTERRO[:-2] + b"\x0a" + BTERRO[-1:]
+KNOWN_BTERRO_OFFSET = 0x147137
 
 #: `R6MObjAcceptableRainbowLosses.PawnKilled` mem 0x0434-0x050a: the jump to
 #: "has been incapacitated" (0x0528) unless both players are down.
@@ -342,6 +470,114 @@ WIPED_TEST_NEW = bytes.fromhex(
     "060a05"                                    # -> 0x050a, over the dead bytes
     + "001d" * 5 + "01d701" "01b6" + "0b" * 66)
 KNOWN_WIPED_OFFSET = 0x1D6CE2
+
+#: `R6PlayerController.regrouponme`, the whole function (79 / 105 bytes).
+REGROUP = bytes.fromhex(
+    "075800848484847201202a161807002d01c902161807002d01cb0316181d0081191a2519"
+    "0120050010010a0600041b041616161810001901200600042d016c0216040b1901200600"
+    "001b660516040b")
+REGROUP_NEW = bytes.fromhex(
+    "072c00" "84" "84" "7201202a16"             # if (m_TeamManager == None
+    "1807002d01c90216"                          #     || bOnlySpectator
+    "1810001901200600042d016c0216"              #     || m_TeamManager.m_bTeamIsClimbingLadder)
+    "040b"                                      #   return;
+    "1901200b00001b5010010b16"                  # m_TeamManager.TeamMemberDead(m_pawn);  the hand-off
+    "1901200600001b660516"                      # m_TeamManager.InstructPlayerTeamToFollowLead();
+    "040b"                                      # return;
+    "010a" + "0b" * 19)                         # dead: m_Team
+KNOWN_REGROUP_OFFSET = 0x11515E
+
+#: `R6PlayerController.ToggleTeamHold` mem 0x00ab: the follow branch's call,
+#: and the jump after it, which only makes the pattern unique.
+TOGGLE_FOLLOW = bytes.fromhex("1901200600001b660516" "061801")
+TOGGLE_FOLLOW_NEW = bytes.fromhex(
+    "1b420816"                                  # regrouponme();
+    "06ba00" "01200b"                           # goto 0x00ba; dead: m_TeamManager
+    "061801")
+KNOWN_TOGGLE_OFFSET = 0x1153D6
+
+#: `R6RainbowTeam.RainbowDebugTeam`, the whole function (764 / 850 bytes): a
+#: debug dump, reached only from the console command `LogTeamInfo`. It becomes
+#: the hand-off.
+HANDOFF = bytes.fromhex(
+    "e770707070701f20205241494e424f57204445425547205445414d203a206d5f5465616d"
+    "4c65616465723d003956014f01161f206d5f694d656d626572436f756e743d0016395301"
+    "16161f206d5f694d656d626572734c6f73743d0016395301700616160f0050052507e201"
+    "960050059201160170061616e7707070707070701f207465616d206c6973743a20693d00"
+    "3953005005161f203a20001639561a005005010a161f2c206d5f6949443d00163952191a"
+    "005005010a050001012c161f206d5f5465616d5b695d2e6d5f654865616c74683d001639"
+    "52191a005005010a05000101fa01161607d801970050052516e7701f2020202020202020"
+    "2d2d2d2d2d20207061776e207374617465203d003957191a005005010a030004611c1616"
+    "16e7701f20202020202020202d2d2d2d2d2020636f6e74726f6c6c657220737461746520"
+    "3d00395719191a005005010a0500040194030004611c161616e7701f2020202020202020"
+    "2d2d2d2d2d202070616365206d656d626572203d003956192e12191a005005010a050004"
+    "019405000401251616a500500516067200e7701f20206d5f625465616d49735365706172"
+    "6174656446726f6d4c6561646572203d0039542d0160011616e7701f20206d5f62546561"
+    "6d4973526567726f7570696e67202020202020202020203d0039542d01730d1616e7701f"
+    "20206d5f625465616d4973486f6c64696e67506f736974696f6e20202020203d0039542d"
+    "0150031616e7701f20206d5f62434157616974696e67466f725a756c75476f436f646520"
+    "2020203d0039542d01371616e7701f20206d5f62506c6179657252657175657374656454"
+    "65616d5265666f726d203d0039542d014b0c1616e7701f20206d5f66456e676167696e67"
+    "54696d6572202020202020202020202020203d003955017b191616e7701f20206d5f6254"
+    "65616d4973456e676167696e67456e656d79202020202020203d0039542d01520c1616e7"
+    "701f20206d5f655465616d537461746520202020202020202020202020202020203d0039"
+    "52015d031616040b")
+HANDOFF_NEW = (
+    bytes.fromhex(
+        "071a00" "72" "1a" "92011601700616" "010a" "2a16"  # if (m_Team[count + lost] == None)
+        "040b"                                              #   return;
+        "1b5402" "25" "92011601700616" "16"               # SwapTeamMembers(0, count + lost);
+        "0f014f01" "1a25010a"                               # m_TeamLeader = m_Team[0];
+        "0f00500526"                                        # i = 1;
+        "078d00" "96005005011616"                           # while (i < m_iMemberCount) {
+        "192e12191a005005010a0500040194" "0600001b661616"   #   R6RainbowAI(m_Team[i].Controller).Promote();
+        "1b540200500500500516"                              #   SwapTeamMembers(i, i);
+        "a500500516"                                        #   i++;
+        "064100"                                            # }
+        "040b"                                              # return;
+        # dead: every other object the debug dump referenced, then padding
+        "0125" "012c" "0137" "014b0c" "015003" "016001" "01730d" "01520c"
+        "017b19" "015d03" "01fa01" "0125" + "014b0c" * 5)
+    + b"\x0b" * 622)
+KNOWN_HANDOFF_OFFSET = 0x146D2E
+
+#: `R6RainbowTeam.TeamLeaderIsClimbingLadder` mem 0x0000-0x015f: its two
+#: early returns and three `bShowLog` prints, merged into one test.
+LADDER_START = bytes.fromhex(
+    "07aa00842d0160011809009a011626161607a8002d0192e7703956171f205465616d4c65"
+    "616465724973436c696d62696e674c61646465722829207761732063616c6c65642e2e2e"
+    "2e207465616d206973207365706172617465642066726f6d206c65616465722c206f7220"
+    "7468657265206973206f6e6c79206f6e65206d656d62657220696e207468697320746561"
+    "6d2c20736f20657869742e2e2e001616040b0720012d016c02071e012d0192e770395617"
+    "1f205465616d4c65616465724973436c696d62696e674c61646465722829207761732063"
+    "616c6c65642e2e2e2e20627574206d5f625465616d4973436c696d62696e674c61646465"
+    "723d3d7472756520736f20657869742e2e2e001616040b075f012d0192e7703956171f20"
+    "5465616d4c65616465724973436c696d62696e674c61646465722829207761732063616c"
+    "6c65642e2e2e2e20001616")
+LADDER_START_NEW = (
+    bytes.fromhex(
+        "075f01" "84" "84" "84"                     # if (m_bTeamIsSeparatedFromLeader
+        "2d016001" "1809009a0116261616"             #     || m_iMemberCount == 1
+        "1807002d016c0216"                          #     || m_bTeamIsClimbingLadder
+        "181d00" "81" "1919014f010500040194"        #     || !m_TeamLeader.Controller
+        "0800046119215f0616" "1616"                 #          .IsInState('PlayerBeginClimbingLadder'))
+        "040b"                                      #   return;
+        "014f01")                                   # dead: m_TeamLeader
+    + b"\x0b" * 278)
+KNOWN_LADDER_START_OFFSET = 0x14439E
+
+#: `R6RainbowTeam.MemberFinishedClimbingLadder` mem 0x0055: the leader's
+#: early return, re-expressed so any player who does not lead returns too.
+#: Same operands, same operators' count: the width cannot change.
+LADDER_END = bytes.fromhex(
+    "0797008282722e01006115014f0116181000190061150600042d01b716181400842d0160"
+    "011809009a011626161616")
+LADDER_END_NEW = bytes.fromhex(
+    "079700" "82" "190061150600042d01b7"            # if (member.m_bIsPlayer
+    "182a00" "84" "84" "772e01006115014f0116"       #     && (R6Rainbow(member) != m_TeamLeader
+    "1807002d01600116"                              #         || m_bTeamIsSeparatedFromLeader
+    "1809009a011626161616")                         #         || m_iMemberCount == 1))
+KNOWN_LADDER_END_OFFSET = 0x144076
 
 #: `CreateTeamMember`'s count maintenance, see the notes above.
 COUNT_SIG = bytes([
@@ -400,10 +636,14 @@ class SquadError(Exception):
 
 
 def _roster_site(plain: bytes, who: str) -> int:
+    from .rsethuntai import ROSTER_MISS
     found = []
     for flag in (ROSTER_STOCK[who], ROSTER_PRICE):
         probe = bytearray(ROSTER_SIGS[who])
         probe[ROSTER_FLAG] = flag
+        found += _find_all(plain, bytes(probe))
+        # rsethuntai re-lays the arm these tests sit in: same test, new miss
+        probe[1:3] = ROSTER_MISS[who].to_bytes(2, "little")
         found += _find_all(plain, bytes(probe))
     if len(found) != 1:
         raise SquadError("expected exactly 1 %s removal test, found %d"
@@ -499,9 +739,15 @@ def _pair_site(plain: bytes, stock: bytes, new: bytes, what: str,
 
 def keeps_player2_out(plain: bytes) -> bool:
     """True if split screen moves player 2 out of the AI squad after skins."""
+    from .rsethuntai import REGION_A_NEW
+    thunt = LAYOUT_CODE_NEW[:70] + REGION_A_NEW      # rsethuntai's form: the
+    if len(_find_all(plain, thunt)) == 1:            # padding after the return
+        code = not _find_all(plain, LAYOUT_CODE) and not _find_all(plain, LAYOUT_CODE_NEW)
+    else:
+        code = _pair_site(plain, LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block",
+                          (LAYOUT_CODE_V1,))[1]
     return (_pair_site(plain, LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call")[1]
-            and _pair_site(plain, LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block",
-                           (LAYOUT_CODE_V1,))[1])
+            and code)
 
 
 def orders_from_requester(plain: bytes) -> bool:
@@ -510,7 +756,27 @@ def orders_from_requester(plain: bytes) -> bool:
 
 def buries_dead_ai(plain: bytes) -> bool:
     """True if a dead AI leaves the counted squad in split screen."""
-    return _pair_site(plain, DEAD_GATE, DEAD_GATE_NEW, "TeamMemberDead gate")[1]
+    return _pair_site(plain, DEAD_GATE, DEAD_GATE_NEW, "TeamMemberDead gate",
+                      (DEAD_GATE_V1, DEAD_GATE_V2))[1]
+
+
+def hands_off_lead(plain: bytes) -> bool:
+    """True if the AI follow whichever player led last, see "Who leads"."""
+    if len(_find_all(plain, DEAD_LOG_CALL)) == 1:     # rsedowncall's form
+        dead_log = not _find_all(plain, DEAD_LOG) and not _find_all(plain, DEAD_LOG_NEW)
+    else:
+        dead_log = _pair_site(plain, DEAD_LOG, DEAD_LOG_NEW,
+                              "TeamMemberDead hand-off test")[1]
+    return dead_log and all(_pair_site(plain, stock, new, what)[1] for stock, new, what in (
+        (REGROUP, REGROUP_NEW, "regrouponme"),
+        (TOGGLE_FOLLOW, TOGGLE_FOLLOW_NEW, "ToggleTeamHold follow call"),
+        (HANDOFF, HANDOFF_NEW, "hand-off routine")))
+
+
+def ladder_is_leaders(plain: bytes) -> bool:
+    """True if only the leader's climb starts and ends the team's climb."""
+    return (_pair_site(plain, LADDER_START, LADDER_START_NEW, "ladder start")[1]
+            and _pair_site(plain, LADDER_END, LADDER_END_NEW, "ladder end")[1])
 
 
 def fails_on_both_players(plain: bytes) -> bool:
@@ -597,13 +863,33 @@ def apply(plain: bytes, enable: bool = True, canon: bool = False):
         out[lat] = lwant
         changed += 1
 
+    # Two options build on this one's regions. Their forms contain this edit,
+    # so applying again keeps them; reverting just the region would strand
+    # the rest of their code, so it refuses. (Every apply starts from the
+    # shipped file; this is for a tool that runs squad on a built one.)
+    from .rsethuntai import REGION_A_NEW
+    layered = {"cover-spot block": (LAYOUT_CODE_NEW[:70] + REGION_A_NEW,),
+               "TeamMemberDead hand-off test": (DEAD_LOG_CALL,)}
     for stock, new, what, older in (
             (LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call", ()),
             (LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block", (LAYOUT_CODE_V1,)),
             (ORDER_AIM, ORDER_AIM_NEW, "order aim", ()),
-            (DEAD_GATE, DEAD_GATE_NEW, "TeamMemberDead gate", ()),
-            (WIPED_TEST, WIPED_TEST_NEW, "wiped-out test", ())):
-        at_pair, _is_new = _pair_site(plain, stock, new, what, older)
+            (DEAD_GATE, DEAD_GATE_NEW, "TeamMemberDead gate", (DEAD_GATE_V1, DEAD_GATE_V2)),
+            (WIPED_TEST, WIPED_TEST_NEW, "wiped-out test", ()),
+            (DEAD_LOG, DEAD_LOG_NEW, "TeamMemberDead hand-off test", ()),
+            (REGROUP, REGROUP_NEW, "regrouponme", ()),
+            (TOGGLE_FOLLOW, TOGGLE_FOLLOW_NEW, "ToggleTeamHold follow call", ()),
+            (HANDOFF, HANDOFF_NEW, "hand-off routine", ()),
+            (LADDER_START, LADDER_START_NEW, "ladder start", ()),
+            (LADDER_END, LADDER_END_NEW, "ladder end", ())):
+        keep = layered.get(what, ())
+        at_pair, _is_new = _pair_site(plain, stock, new, what, older + keep)
+        if plain[at_pair:at_pair + len(stock)] in keep:
+            if not enable:
+                raise SquadError("the %s carries another option's edit on top "
+                                 "of this one; put the shipped file back "
+                                 "instead" % what)
+            continue
         # Compared with the form wanted, not with "is it new": an older
         # version is neither stock nor new and has to be rewritten either way.
         want_bytes = new if enable else stock
@@ -650,8 +936,15 @@ CAUTION = (
     "looked at team slot 1, which is now an AI. A dead AI now leaves the "
     "squad as in single player; before, it stayed counted, and a death on a "
     "ladder left the team 'CLIMBING LADDER' and refusing orders from both "
-    "players. Known limit: if player 1 dies the AI keep following his "
-    "position.\n\n"
+    "players.\n\n"
+    "Who they follow (not yet watched in game): the player who last ordered "
+    "a regroup or follow -- square, or the wheel's Regroup -- and, if the "
+    "leader dies, the other player. Before, they always followed player 1, "
+    "even dead. Only the leader's own ladder climb takes the team up a "
+    "ladder; the other player climbs alone. Expected limit, not seen: a "
+    "two-part mission carries team slot 0's health and ammunition into its "
+    "B level, so if player 2 led at the end of part A, player 1 should start "
+    "part B with player 2's.\n\n"
     "Why it works where six earlier attempts did not:\n\n"
     "Every one of them wedged the load for the same reason, whatever code it "
     "patched: a split-screen level file is a RECORDING of what one boot read, "

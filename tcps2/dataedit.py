@@ -129,6 +129,101 @@ def _op_split_team_orders(plain, params):
     return rseorders.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_split_hands(plain, params):
+    from . import rsehands
+    return rsehands.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_dead_flashlight(plain, params):
+    from . import rseflashlight
+    return rseflashlight.apply(plain, str(params.get("mode", "on")))
+
+
+def _op_split_callouts(plain, params):
+    from . import rsecallouts
+    return rsecallouts.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_split_down_callouts(plain, params):
+    from . import rsedowncall
+    return rsedowncall.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_gun_audio_fix(plain, params):
+    from . import rsegunaudio
+    return rsegunaudio.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_corpse_hitbox(plain, params):
+    from . import rsecorpsehit
+    return rsecorpsehit.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_hostage_rainbow_voice(plain, params):
+    from . import rsehostagerun
+    return rsehostagerun.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_rogue_tango(plain, params):
+    from . import rseroguecall
+    return rseroguecall.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_split_thunt_ai(plain, params):
+    from . import rsethuntai
+    return rsethuntai.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_breach_stun(plain, params):
+    from . import rsegadget
+    return rsegadget.apply(plain, float(params.get("metres", 10)))
+
+
+def _op_friendly_fire(plain, params):
+    from . import rseff
+    return rseff.apply(plain, str(params["which"]),
+                       bool(params.get("enable", True)))
+
+
+def _op_uzi_flashlight(plain, params):
+    from . import rseuzilight
+    return rseuzilight.apply(plain, float(params.get("x", rseuzilight.DEFAULT_X)),
+                             float(params.get("z", rseuzilight.DEFAULT_Z)))
+
+
+def _op_smoke_ramp(plain, params):
+    from . import rsesmoke
+    return rsesmoke.apply(plain, params["seconds"],
+                          bool(params.get("enable", True)))
+
+
+def _op_hostage_follow_voice(plain, params):
+    from . import rsefollowleg
+    return rsefollowleg.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_ai_weapon_sound(plain, params):
+    from . import rsesoundgate
+    return rsesoundgate.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_spectate(plain, params):
+    from . import rsespectate
+    return rsespectate.apply(plain, str(params["which"]),
+                             bool(params.get("enable", True)))
+
+
+def _op_keep_viewport(plain, params):
+    from . import rseviewport
+    return rseviewport.apply(plain, bool(params.get("enable", True)))
+
+
+def _op_ai_hunt(plain, params):
+    from . import rseaihunt
+    return rseaihunt.apply(plain, str(params["which"]),
+                           bool(params.get("enable", True)))
+
+
 def _op_canon_team(plain, params):
     from . import rsecanon
     return rsecanon.apply(plain, bool(params.get("enable", True)))
@@ -243,6 +338,33 @@ _WANTS_SIBLING = {"team_recording": _team_recording_sibling}
 #: in `apply_data` for why every other op is not, and why these are.
 _RECORDING_OPS = {"team_recording"}
 
+#: Ops allowed to make a cooked container LONGER.
+#:
+#: The length rule below is a PROXY for the real one -- "do not change which
+#: objects load, or in what order" -- because a length change is the one
+#: mechanical symptom of that which is catchable from here. An op only belongs
+#: in this set once it has been shown to trip the proxy WITHOUT breaking the
+#: rule, and the showing has to be specific.
+#:
+#: `uzi_flashlight` adds a socket record to a weapon's static mesh. What was
+#: established before it was let through:
+#:   * The socket tags are INLINE length-prefixed strings, not name-table
+#:     indices -- proven because records step by 57, 59 and 61 bytes, following
+#:     len("TagCase"), len("TagGadget") and len("TagMagazine"), which a
+#:     fixed-width index cannot do. So no name, import or export is added, and
+#:     no object reference the recorded boot never resolved is introduced.
+#:   * No SerialSize or SerialOffset governs this data at all: the packages'
+#:     own tables do not describe these arrays (one declares a six-byte export
+#:     while spanning 0x31221). What keeps the read stream in step is the
+#:     array's COUNT byte, and stepping it 3 -> 4 makes the deserialiser
+#:     consume exactly the bytes inserted.
+#:   * Every package magic still lands where it did, each moved by exactly the
+#:     bytes inserted ahead of it -- the same measure the withdrawn
+#:     `frag_warning` work used.
+#: That last op is the cautionary tale: it also grew a container, and the
+#: growth was NOT what broke it. Three new imports were.
+_GROWS_SAFELY = {"uzi_flashlight"}
+
 
 def _op_zone_counts(plain, params):
     from . import r6zones
@@ -293,6 +415,24 @@ OPS = {
     "canon_team": _op_canon_team,
     "split_cycle": _op_split_cycle,
     "split_team_orders": _op_split_team_orders,
+    "split_callouts": _op_split_callouts,
+    "split_down_callouts": _op_split_down_callouts,
+    "rogue_tango": _op_rogue_tango,
+    "hostage_rainbow_voice": _op_hostage_rainbow_voice,
+    "corpse_hitbox": _op_corpse_hitbox,
+    "gun_audio_fix": _op_gun_audio_fix,
+    "split_thunt_ai": _op_split_thunt_ai,
+    "breach_stun": _op_breach_stun,
+    "friendly_fire": _op_friendly_fire,
+    "ai_hunt": _op_ai_hunt,
+    "keep_viewport": _op_keep_viewport,
+    "spectate": _op_spectate,
+    "ai_weapon_sound": _op_ai_weapon_sound,
+    "hostage_follow_voice": _op_hostage_follow_voice,
+    "smoke_ramp": _op_smoke_ramp,
+    "uzi_flashlight": _op_uzi_flashlight,
+    "dead_flashlight": _op_dead_flashlight,
+    "split_hands": _op_split_hands,
     "split_draw": _op_split_draw,
     "rpg_speed": _op_rpg_speed,
     "scale_ballistics": _op_scale_ballistics,
@@ -311,7 +451,7 @@ OPS = {
 
 #: files that are raw binary and must never be run through a container sniffer
 _RAW_SUFFIXES = (".GUNS", ".CGSB", ".PROJS", ".ITEMS", ".PROS", ".WSFB",
-                 ".CMSB", ".CGSB", ".ACMS", ".MISSIONS")
+                 ".CMSB", ".CGSB", ".ACMS", ".MISSIONS", ".SB1")
 
 
 def _unpack(original, path=""):
@@ -722,7 +862,8 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                 # boot read it.
                 raw = ent.path.upper().endswith(_RAW_SUFFIXES)
                 if (len(new) != len(plain) and (kind != "plain" or raw)
-                        and edit.op not in _RECORDING_OPS):
+                        and edit.op not in _RECORDING_OPS
+                        and edit.op not in _GROWS_SAFELY):
                     raise DataEditError(
                         "%s: %s changed the file length by %+d, which a %s "
                         "container is not allowed to do -- see the note in "

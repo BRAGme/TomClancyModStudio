@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import re
 import hashlib
+import io
 import os
 import shutil
 import struct
@@ -92,6 +93,7 @@ def main():
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     work = tempfile.mkdtemp(prefix="tcms-test-")
     try:
         run(args, work)
@@ -138,14 +140,74 @@ def main():
         run_switch_off_restores(args, work)
         run_team_recordings(args)
         run_recording_first(args)
+        run_creation_order(args)
+        run_callouts(args)
+        run_flashlight_hands_pass(args)
+        run_thunt_team(args)
+        run_downcall(args)
+        run_hostage_rainbow_voice(args)
+        run_thunt_ai(args)
+        run_fps_uncap(args)
+        run_stun_and_spawn_fix(args)
+        run_breach_stun(args)
+        run_claymore_prox(args)
+        run_blast_decals(args)
+        run_friendly_fire(args)
+        run_property_bools(args)
+        run_impact_puffs(args)
+        run_keep_viewport(args)
+        run_hostage_follow(args)
+        run_ai_hunt(args)
+        run_wave_hunt_retired(args)
+        run_game_presence(args)
+        run_badge_honesty()
         run_combination_warnings()
+        run_xbox_notes()
         run_applied_record(args, work)
+        # Carrying the profile onto a pressing it was not built for.
+        # Lives in its own file because it builds its own overlays.
+        from tests_revision import run_revisions
+        run_revisions(args, work)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
+
+
+#: Every badge that is NOT a claim to have been watched in the running
+#: game. The checks below say "marked unplayed", and that is what they
+#: mean -- `applied` and `measured` are promotions earned by reading the
+#: disc back, not by playing. Pinning them to the single literal
+#: "experimental" made 13 checks fail the moment the 1.0 badge pass
+#: promoted options that nobody had played, which is a false alarm: the
+#: thing worth catching is an option quietly claiming "verified".
+#: Every badge the window can draw. Per-option checks assert only that a
+#: card wears one of these -- NOT which. Pinning each site to a literal
+#: made a deliberate, evidence-backed promotion of 23 options look like
+#: ten regressions, twice in one night. Whether a badge is HONEST is one
+#: question asked in one place: run_badge_honesty.
+BADGES = ("verified", "applied", "measured", "experimental",
+          "untested", "broken")
+
+
+def _changed(a, b, chunk=4096):
+    """{indices where a and b differ}, screened in chunks.
+
+    A flat `[i for i in range(len(a)) if a[i] != b[i]]` over a 5 MB game
+    package is five million Python iterations, and it has twice been written
+    with the transform called INSIDE the comprehension -- once per byte.
+    Compare blocks first and only walk the ones that actually differ.
+    """
+    if len(a) != len(b):
+        raise ValueError("lengths differ: %d vs %d" % (len(a), len(b)))
+    out = set()
+    for c in range(0, len(a), chunk):
+        sa, sb = a[c:c + chunk], b[c:c + chunk]
+        if sa != sb:
+            out.update(c + i for i in range(len(sa)) if sa[i] != sb[i])
+    return out
 
 
 def _stock_bytes(iso_path, arc, path):
@@ -1243,8 +1305,8 @@ def run(args, work):
     check("and it is off unless asked for",
           not [e for e in PROFILE.build_edits(PROFILE.defaults())
                if 0x0048DC34 <= e.va <= 0x0048DCD0])
-    check("it is offered as measured, not yet heard in game",
-          PROFILE.setting("ss_clark").confidence == "applied"
+    check("it is offered, and the window knows how to draw its badge",
+          PROFILE.setting("ss_clark").confidence in BADGES
           and PROFILE.setting("ss_clark").group == "Split Screen")
 
     print("\n[apply]")
@@ -1843,6 +1905,15 @@ def run(args, work):
     OA = LB + len(rsesquad.LAYOUT_CODE) + 48
     DG = OA + len(rsesquad.ORDER_AIM) + 48
     WT = DG + len(rsesquad.DEAD_GATE) + 48
+    LEAD = [rsesquad.DEAD_LOG, rsesquad.REGROUP, rsesquad.TOGGLE_FOLLOW,
+            rsesquad.HANDOFF, rsesquad.LADDER_START, rsesquad.LADDER_END]
+    LEAD_NEW = [rsesquad.DEAD_LOG_NEW, rsesquad.REGROUP_NEW,
+                rsesquad.TOGGLE_FOLLOW_NEW, rsesquad.HANDOFF_NEW,
+                rsesquad.LADDER_START_NEW, rsesquad.LADDER_END_NEW]
+    LD = [WT + len(rsesquad.WIPED_TEST) + 48]
+    for _b in LEAD[:-1]:
+        LD.append(LD[-1] + len(_b) + 48)
+    BT = LD[-1] + len(LEAD[-1]) + 48
     pad = (bytes(48) + rsesquad.RESCUE_SIG + bytes(48) + rsesquad.EXIT_SIG
            + bytes(48) + rsesquad.COUNT_SIG + bytes(48)
            + rsesquad.ROSTER_SIGS["L"] + bytes(48)
@@ -1852,14 +1923,17 @@ def run(args, work):
            + rsesquad.LAYOUT_CODE + bytes(48)
            + rsesquad.ORDER_AIM + bytes(48)
            + rsesquad.DEAD_GATE + bytes(48)
-           + rsesquad.WIPED_TEST + bytes(48))
+           + rsesquad.WIPED_TEST + bytes(48)
+           + b"".join(_b + bytes(48) for _b in LEAD)
+           + rsesquad.BTERRO + bytes(48))
     check("the stock rescue test leaves the arm when the map is no rescue",
           rsesquad.reads(pad) == rsesquad.SKIP_TARGET == 0x0354)
     check("and stock split screen pins the member count",
           not rsesquad.counts(pad)
           and pad[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_STOCK == 0x77)
     got, n = rsesquad.apply(pad, True)
-    check("the fix makes all nine edits, never some", n == 9)
+    check("the fix makes all fifteen edits, never some", n == 15,
+          "%d" % n)
     check("a miss now falls into the single-player AI arm",
           rsesquad.reads(got) == rsesquad.ARM_TARGET == 0x0420)
     check("and the count increments instead of resetting",
@@ -1869,16 +1943,22 @@ def run(args, work):
                  | set(range(LB, LB + len(rsesquad.LAYOUT_CODE)))
                  | set(range(OA, OA + len(rsesquad.ORDER_AIM)))
                  | set(range(DG, DG + len(rsesquad.DEAD_GATE)))
-                 | set(range(WT, WT + len(rsesquad.WIPED_TEST))))
+                 | set(range(WT, WT + len(rsesquad.WIPED_TEST)))
+                 | {i for _o, _b in zip(LD, LEAD)
+                    for i in range(_o, _o + len(_b))})
     moved = [i for i in range(len(pad))
              if pad[i] != got[i] and i not in rewritten]
-    check("outside the five rewritten regions, exactly five bytes move",
-          len(moved) == 5)
+    check("outside the eleven rewritten regions, exactly five bytes move",
+          len(moved) == 5, str(moved))
     check("the jump operand, the comparison, Trieste's count reset and the "
           "skin loop's jump",
           moved == [R + rsesquad.RESCUE_JUMP + 1, R + rsesquad.RESCUE_JUMP + 2,
                     X + rsesquad.EXIT_LET, C + rsesquad.COUNT_OPERAND,
                     SK + rsesquad.SKINS_OPERAND])
+    # Withdrawn 2026-09-24 (see rsesquad.BTERRO): bTerroHunt also picks the
+    # Terrorist Hunt loadout; rsethuntai adds Terrorist Hunt's AI instead.
+    check("Terrorist Hunt's roster test is left as shipped",
+          got[BT + len(rsesquad.BTERRO) - 2] == 0x04)
     exit_now = bytearray(rsesquad.EXIT_SIG)
     exit_now[rsesquad.EXIT_LET] = rsesquad.EX_NOTHING
     check("the arm's own exit JUMP is left alone, so Trieste builds its pair "
@@ -1922,8 +2002,29 @@ def run(args, work):
           and not rsesquad.fails_on_both_players(pad)
           and got[WT:WT + len(rsesquad.WIPED_TEST)] == rsesquad.WIPED_TEST_NEW)
     check("both death regions keep their width",
-          len(rsesquad.DEAD_GATE_NEW) == len(rsesquad.DEAD_GATE) == 133
+          len(rsesquad.DEAD_GATE_NEW) == len(rsesquad.DEAD_GATE)
+          == len(rsesquad.DEAD_GATE_V1) == 331
           and len(rsesquad.WIPED_TEST_NEW) == len(rsesquad.WIPED_TEST) == 160)
+    check("the lead follows whoever orders the regroup, and a leader's death "
+          "passes it on", rsesquad.hands_off_lead(got)
+          and not rsesquad.hands_off_lead(pad)
+          and all(got[_o:_o + len(_n)] == _n
+                  for _o, _n in zip(LD[:4], LEAD_NEW[:4])))
+    check("only the leader's climb starts or ends the team's climb",
+          rsesquad.ladder_is_leaders(got)
+          and not rsesquad.ladder_is_leaders(pad)
+          and all(got[_o:_o + len(_n)] == _n
+                  for _o, _n in zip(LD[4:], LEAD_NEW[4:])))
+    check("every hand-off and ladder region keeps its width",
+          [len(_b) for _b in LEAD] == [len(_n) for _n in LEAD_NEW]
+          == [136, 79, 13, 764, 335, 47])
+    _v1 = bytearray(pad)
+    _v1[DG:DG + len(rsesquad.DEAD_GATE)] = rsesquad.DEAD_GATE_V1
+    _up, _un = rsesquad.apply(bytes(_v1), True)
+    check("a disc carrying the first death edit is upgraded in place",
+          _up == got and _un == 15, "%d" % _un)
+    check("and put back to stock from there",
+          rsesquad.apply(bytes(_v1), False)[0] == pad)
     check("split screen now skins, heads and caps the whole team",
           rsesquad.skins_everyone(got) and not rsesquad.skins_everyone(pad)
           and got[SK + rsesquad.SKINS_OPERAND] == rsesquad.SKINS_FIXED == 0x30)
@@ -2635,11 +2736,21 @@ def run_rse_weapons(args):
         profile = BY_ID[pid]
         print("\n[%s -- the weapons page]" % profile.short)
 
-        cards = [x for x in profile.settings if x.group == "Weapons"]
-        check("there are eight cards, four per side", len(cards) == 8,
-              str(len(cards)))
+        # The gun-stat cards specifically, NOT everything on the page.
+        # This used to count the whole group and demand exactly eight,
+        # which stopped being true the moment a profile put anything else
+        # under Weapons -- Jungle Storm has carried smoke and quick-trigger
+        # cards there for a while. It went unnoticed because the check only
+        # runs when that game's ISO is passed, and it usually is not.
+        stat = ("mag", "rate", "recoil", "spread")
+        cards = [x for x in profile.settings
+                 if x.group == "Weapons"
+                 and x.key.rsplit("_", 1)[-1] in stat]
+        check("there are eight gun-stat cards, four per side",
+              len(cards) == 8, str(sorted(c.key for c in cards)))
         check("and they are all data edits",
-              all(c.touches == "data" for c in cards))
+              all(c.touches == "data" for c in cards),
+              str([c.key for c in cards if c.touches != "data"]))
         check("leaving them alone writes nothing",
               not [e for e in profile.build_data(dict(profile.defaults()))
                    if e.op == "scale_gun"])
@@ -3839,6 +3950,52 @@ def run_split_orders(args):
                       jump.op == 0x06 and jump.parts[0][1].op == 0x07
                       and (rseorders.BRACKET_LEFT + rseorders.BRACKET_RIGHT)
                       in on[at:at + 4 + rseorders.DISK_LEN])
+
+                def _order(script):
+                    """The function's own objects, in first-touch order."""
+                    seen, out = set(), []
+                    for top in script.toks:
+                        for t in top.walk():
+                            n = 0
+                            for kind, val in t.parts:
+                                if kind != "ref":
+                                    continue
+                                if not (t.op in (0x0E, 0x1B, 0x21, 0x38)
+                                        or (t.op == 0x40 and n == 1)):
+                                    v = uscode.compact_decode(val, 0)[0]
+                                    if v > 0 and v not in seen:
+                                        seen.add(v)
+                                        out.append(v)
+                                n += 1
+                    return out
+                # The first version reached strText and m_bDisableClear early,
+                # and Oil Refinery's split-screen load hung on it.
+                check("and first-touches its own objects in the shipped order",
+                      _order(new) == _order(old), "%d objects" % len(_order(old)))
+                text = new.statement_at(rseorders.ZULU_TEXT)
+                check("the L1 hint's text is drawn where it shipped, its 58 "
+                      "written the way the function writes the hint's x",
+                      text.op == 0x1B and text.mlen
+                      == old.statement_at(rseorders.ZULU_TEXT).mlen - 1
+                      and rseorders.CAST_58 in on[at:at + 4 + rseorders.DISK_LEN]
+                      and new.statement_at(rseorders.RETURN_AT - 1).op == 0x06)
+                check("the menu's two ways out, which never push, take the "
+                      "function's first return",
+                      all(new.statement_at(m).parts[0][1].mstart
+                          == rseorders.EARLY_RETURN
+                          for m in (rseorders.MENU_DONE, rseorders.MENU_TEST))
+                      and new.statement_at(rseorders.EARLY_RETURN).op == 0x04)
+                real = rseorders.WITHDRAWN_SHA1
+                rseorders.WITHDRAWN_SHA1 = rseorders.STOCK_SHA1
+                try:
+                    rseorders.apply(plain)
+                    said = ""
+                except rseorders.OrdersError as exc:
+                    said = str(exc)
+                finally:
+                    rseorders.WITHDRAWN_SHA1 = real
+                check("a file still carrying the withdrawn first version is "
+                      "named, not guessed at", "withdrawn" in said, said)
                 packed = dataedit._repack(kind, raw, on)
                 check("the container keeps its length",
                       len(packed) == len(raw), "%d -> %d" % (len(raw), len(packed)))
@@ -3854,8 +4011,8 @@ def run_split_orders(args):
           "%d" % len(seen))
     profile = BY_ID["r6_3_slus20883"]
     s = profile.setting("split_team_orders")
-    check("the option reaches the profile, marked unplayed",
-          s is not None and s.confidence == "experimental" and s.enabled)
+    check("the option reaches the profile, badged",
+          s is not None and s.confidence in BADGES and s.enabled)
     check("and needs the AI and the wheel's per-viewport drawing",
           s.requires == {"split_squad": [True], "split_wheel_labels": [True]})
     need = {"split_squad": True, "split_wheel": True,
@@ -4250,10 +4407,14 @@ def run_enemy_flashlights(args):
     if not args.rs3data:
         return
     print(chr(10) + "[Rainbow Six 3 -- enemy flashlights]")
+    # Shipped bytes, not the disc's: the counts asserted below are the ones
+    # the game SHIPPED, so a disc with enemy_flashlight already applied would
+    # fail them for the wrong reason. The ai_cover checks were bitten by
+    # exactly that on 2026-09-25.
     with Iso(args.rs3data) as iso:
         arc = [v for v in vokes.open_archives(iso)
                if "VOKES0" in str(getattr(v.r, "name", "")).upper()][0]
-        container = arc.read_file("/COMMON.LIN")
+        container = _stock_bytes(args.rs3data, arc, "/COMMON.LIN")
     plain = lin.decompress(container)
 
     def share_of(buf):
@@ -5120,7 +5281,10 @@ def run_op_contract(args):
                       edit.select)
                 continue
             arc = where[hit]
-            raw = arc.read_entry(arc.files[hit])
+            # STOCK, not the live disc: these ops are pinned by CONTENT, so
+            # one that has already been applied would not find its own stock
+            # bytes and would fail for the wrong reason entirely.
+            raw = _stock_bytes(args.rs3data, arc, hit)
             plain = lin.decompress(raw) if lin.is_lin(raw) else raw
             fn = dataedit.OPS[op]
             try:
@@ -5128,7 +5292,7 @@ def run_op_contract(args):
                     got = fn(plain, edit.params, raw)
                 elif op in dataedit._WANTS_SIBLING:
                     sib = dataedit._WANTS_SIBLING[op](hit).upper()
-                    sraw = where[sib].read_entry(where[sib].files[sib])
+                    sraw = _stock_bytes(args.rs3data, where[sib], sib)
                     got = fn(plain, edit.params,
                              lin.decompress(sraw) if lin.is_lin(sraw) else sraw)
                 else:
@@ -5202,13 +5366,21 @@ def run_ai_cover(args):
 
     if not args.rs3data:
         return
+    # The file as it SHIPPED, not as it is on the disc now. Every check below
+    # is about what the transforms do to stock data -- the seven rungs, the
+    # shipped thresholds, and the byte-for-byte revert -- so reading a disc
+    # the player has since patched fails them for the wrong reason. It did:
+    # with ai_cover applied to the disc, "carries the shipped thresholds"
+    # and both revert checks failed while the option was working correctly
+    # (2026-09-25).
     with Iso(args.rs3data) as iso:
         arcs = vokes.open_archives(iso)
         plain = {}
         for path in ("/COMMON.LIN", "/COMMON_SS.LIN"):
             for a in arcs:
                 if path in a.files:
-                    plain[path] = lin.decompress(a.read_file(path))
+                    plain[path] = lin.decompress(
+                        _stock_bytes(args.rs3data, a, path))
                     break
     for path, data in sorted(plain.items()):
         _COVER_BYTES.append(data)
@@ -5356,16 +5528,20 @@ def run_split_shadows(args):
           st.touches == "words")
     # Play-tested on Crespo Foundation, the Garage projection screen and
     # Alcatraz -- three maps this card nominates itself -- with no shadow on
-    # any of them. Forcing the branch true is not enough, so it is withdrawn
-    # rather than left on offer as an experiment that cannot work.
-    check("it is withdrawn as not working", st.confidence == "broken"
-          and not st.enabled)
-    check("and names the maps it was tried on",
-          "Alcatraz" in st.disabled_reason and "Garage" in st.disabled_reason)
-    check("and emits no word even when stored true",
-          not [e for e in profile.build_edits(
-                  profile.effective(dict(profile.defaults(), split_shadows=True)))
-               if e.va == 0x00446EA8])
+    # any of them. That test was never the gate: 2026-09-24 found the level
+    # render's own split-screen skip at 0x00351E7C, and the card now clears it.
+    check("it is back on offer, badged",
+          st.confidence in BADGES and st.enabled)
+    img = SozImage.unpack(stock_container(args), SP.base_va)
+    check("the real gate is the level render's bnez on the split flag",
+          img.read_word(rseshadow.PROJECTOR_BRANCH)
+          == rseshadow.PROJECTOR_BRANCH_STOCK == 0x14400424
+          and img.read_word(rseshadow.PROJECTOR_BRANCH + 4) == 0
+          and STOCK.get(rseshadow.PROJECTOR_BRANCH) == 0x14400424)
+    on = {e.va: e.value for e in profile.build_edits(
+        profile.effective(dict(profile.defaults(), split_shadows=True)))}
+    check("turning it on writes that one word as a nop, and not the old test",
+          on.get(rseshadow.PROJECTOR_BRANCH) == 0 and 0x00446EA8 not in on)
     check("leaving it off writes no word",
           not [e for e in profile.build_edits(profile.effective({}))
                if e.va == rseshadow.SHADOW_GATE])
@@ -5376,7 +5552,7 @@ def run_split_shadows(args):
     check("the module still builds exactly that one word",
           rseshadow.SHADOW_GATE == 0x00446EA8 and forced == 0x34420001
           and stock == 0x30420001)
-    check("turning it on writes nothing now that it is withdrawn",
+    check("the retired test is never written",
           not [e for e in profile.build_edits(
                   profile.effective({"split_shadows": True}))
                if e.va == rseshadow.SHADOW_GATE])
@@ -5580,6 +5756,193 @@ def run_vokes_regrow(args):
         check("a file that truly outgrows its slot still moves", moved)
 
 
+def run_wave_hunt_retired(args):
+    """`wave_hunt` set a flag on the wrong object (2026-09-26).
+
+    It wrote m_bHuntFromStart -- bit 0x40 of +0x388 -- on the WAVE actor.
+    The one place that flag is ever read is
+    AR6DeploymentZone::InitTerrorist at 0x00386B88, which sets m_eStrategy
+    to 3 (HuntRainbow) when bit 0x40 is set and bit 0x20 is clear, reading
+    the word off `this`. And `this` is never the wave: AR6DZoneWave
+    overrides the spawn-at-init slot with a stub returning 0, and its
+    SpawnATerrorist picks a point out of m_aSpawningPoint and calls THAT
+    point's spawner, so `this` is the R6DZonePoint all the way down --
+    which is also what pawn->m_DZone is set to. Every word below is read
+    from the PRISTINE container, because the live disc is patched.
+    """
+    print()
+    print("[Rainbow Six 3 -- the wave hunt switch, and why it did nothing]")
+    if not (args.soz or args.iso or args.rs3data):
+        print("  SKIP  needs --soz, --iso or --rs3data")
+        return
+    img = SozImage.unpack(stock_container(args), PROFILE.overlays[0].base_va)
+    check("the container we are reading really is the pristine one",
+          hashlib.sha1(bytes(img.image)).hexdigest()
+          == PROFILE.overlays[0].image_sha1)
+    rw = img.read_word
+
+    check("the three words it used to take are the dead pair and the mfhi",
+          [rw(a) for a in (0x0040AF4C, 0x0040AF50, 0x0040AF54)]
+          == [0x00000000, 0x00000000, 0x00001010])
+    # `this` is the point, not the wave: the wave picks out of
+    # m_aSpawningPoint at +0x484 and dispatches vtable+0x188 on it.
+    check("the wave delegates the spawn to a point it picked",
+          rw(0x0040AC9C) == 0x26B00484        # addiu $s0, $s5, 0x484
+          and rw(0x0040ACC0) == 0x8C440000    # lw   $a0, ($v0)
+          and rw(0x0040ACC4) == 0x8C990000    # lw   $t9, ($a0)
+          and rw(0x0040ACC8) == 0x8F390188    # lw   $t9, 0x188($t9)
+          and rw(0x0040ACCC) == 0x0320F809)   # jalr $t9
+    check("its spawn-at-init slot is a stub that returns zero, so the base "
+          "loop spawns nothing for a wave",
+          rw(0x0040AF00) == 0x03E00008        # jr   $ra
+          and rw(0x0040AF04) == 0x0000102D)   # move $v0, $zero
+    check("and across the whole of the wave's own code there is not one "
+          "load or store of the flag's offset",
+          not [va for va in range(0x0040AB60, 0x0040AFE0, 4)
+               if (rw(va) >> 26) in (0x20, 0x21, 0x23, 0x24,
+                                     0x25, 0x28, 0x29, 0x2B)
+               and (rw(va) & 0xFFFF) == 0x0388])
+    # The only reader, and it reads `this`, which InitTerrorist then stores
+    # as pawn->m_DZone.
+    check("the only reader tests bit 0x20 then bit 0x40 and writes strategy "
+          "3 into the pawn",
+          rw(0x00386B60) == 0x92830388        # lbu $v1, 0x388($s4)
+          and rw(0x00386B80) == 0x24020003    # addiu $v0, $zero, 3
+          and rw(0x00386B88) == 0xA2620942)   # sb $v0, 0x942($s3)
+    check("and the object it read that from is the one it records as the "
+          "pawn's own zone", rw(0x00386B04) == 0xAE74096C)  # sw $s4,0x96c($s3)
+
+    # The picker is NOT capped by the eligible count: an empty filtered list
+    # falls through to the full array and the release still runs.
+    check("an empty eligible list falls back to the whole point array",
+          rw(0x0040AC94) == 0x14400002        # bnez $v0, +2
+          and rw(0x0040AC98) == 0x27B00098)   # addiu $s0, $sp, 0x98
+    check("and the stasis extract is a dsrl32, not the dsra32 the notes used "
+          "to print", (rw(0x0040A78C) & 0x3F) == 0x3E)
+    notes = io.open("docs/PATCHES.md", encoding="utf-8").read()
+    check("the notes say so too", "dsrl32 $v0, $v0, 31" in notes
+          and "dsra32 $v0, $v0, 31" not in notes)
+    check("and no longer claim the eligible count caps the release",
+          "the cap is the number of eligible points" not in notes)
+
+
+def run_game_presence(args):
+    """The Discord button drives drp.exe rather than speaking to Discord
+    itself. Everything here is READ-ONLY on purpose: start(), stop() and
+    set_startup() touch a program the person running the suite may well
+    have going, and a test that kills their presence to prove it can is a
+    test that should not exist."""
+    print("\n[Discord: presence for the game]")
+    import sys as _sys
+    from gui import gamepresence as gp
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    check("it is Windows-only, and says so rather than pretending",
+          gp.SUPPORTED == (_sys.platform == "win32"))
+
+    cands = gp.candidates()
+    check("the bundled folder beside the exe is looked in FIRST, so a "
+          "shipped copy beats a stray one",
+          bool(cands) and cands[0].endswith(
+              os.path.join(gp.BUNDLED_DIR, gp.EXE_NAME)),
+          cands[0] if cands else "no candidates")
+    check("every candidate is an absolute path",
+          all(os.path.isabs(c) for c in cands))
+    check("and none is listed twice", len(set(cands)) == len(cands))
+
+    st = gp.status()
+    check("status answers every question the sheet asks",
+          set(st) == {"supported", "exe", "installed", "running"},
+          "%r" % (sorted(st),))
+    check("installed agrees with whether an exe was found",
+          st["installed"] == (st["exe"] is not None))
+    check("an exe it reports is one that is really there",
+          st["exe"] is None or os.path.isfile(st["exe"]))
+    check("nothing is claimed to be running when nothing is installed",
+          st["installed"] or not st["running"])
+
+    # The retired in-process client must not creep back into the window.
+    src = io.open(os.path.join(here, "gui", "app.py"),
+                  encoding="utf-8").read()
+    check("the window no longer drives Discord itself",
+          "from . import presence" not in src and "self.presence" not in src)
+    head = io.open(os.path.join(here, "gui", "presence.py"),
+                   encoding="utf-8").read()[:400]
+    check("and the retired module is kept, carrying its reason",
+          "RETIRED" in head)
+    # The sheet is BUILT here, not merely imported. It shipped with a
+    # `configure(text=...)` on an ActionButton, which is a tk.Canvas and
+    # has no -text option: Tk raised inside _refresh, and the button sat
+    # reading "Turn on" while the line under it said it was already
+    # running. Nothing short of constructing it would have caught that.
+    import tkinter as _tk
+    try:
+        root = _tk.Tk()
+    except Exception as exc:                        # noqa: BLE001
+        print("  SKIP  no display: %s" % exc)
+        return
+    try:
+        root.withdraw()
+        root.geometry("900x600+0+0")
+        root.update_idletasks()
+        from gui import discorddialog
+
+        real = gp.status
+        seen = {}
+        for running in (True, False):
+            for installed in (True, False):
+                gp.status = (lambda r=running, i=installed: {
+                    "supported": True, "installed": i,
+                    "exe": "X" if i else None, "running": r and i})
+                dlg = discorddialog.DiscordDialog(root)
+                dlg._refresh()
+                seen[(running, installed)] = (dlg.toggle_btn.text,
+                                              dlg.toggle_btn.enabled)
+                dlg.grab_release()
+                dlg.destroy()
+        gp.status = real
+
+        check("the sheet builds and refreshes without raising",
+              len(seen) == 4)
+        check("the button offers to turn it OFF when it is running",
+              seen[(True, True)][0] == "Turn off",
+              "%r" % (seen[(True, True)],))
+        check("and to turn it ON when it is not",
+              seen[(False, True)][0] == "Turn on",
+              "%r" % (seen[(False, True)],))
+        check("the button is dead when drp is not installed, so it cannot "
+          "promise something it has no way to do",
+              not seen[(True, False)][1] and not seen[(False, False)][1])
+    finally:
+        try:
+            root.destroy()
+        except Exception:                           # noqa: BLE001
+            pass
+
+def run_badge_honesty():
+    """No option may claim it was watched working while its own caution
+    opens by saying it never was. That combination shipped in 1.0's first
+    build on four cards, three of them only because `confidence` used to
+    default to "verified" -- so a card that set nothing claimed the most."""
+    print("\n[badges say what the cautions say]")
+    import re as _re
+    lead = _re.compile(
+        r"^\s*(not yet played|never played|not play-tested)\b", _re.I)
+    for prof in (PROFILE,):
+        liars = [s.key for s in prof.settings
+                 if s.confidence == "verified" and lead.match(s.caution or "")]
+        check("no card claims VERIFIED IN GAME while its caution opens by "
+              "saying it was never played", not liars, ", ".join(liars))
+        blank = [s.key for s in prof.settings if not s.confidence]
+        check("every option carries a badge", not blank, ", ".join(blank))
+        known = ("verified", "applied", "measured", "experimental",
+                 "untested", "broken")
+        odd = [s.key for s in prof.settings if s.confidence not in known]
+        check("and it is one the window knows how to draw", not odd,
+              ", ".join(odd))
+
+
 def run_combination_warnings():
     """Settings that are fine alone and fill the console together.
 
@@ -5596,28 +5959,76 @@ def run_combination_warnings():
     def oom(vals):
         """Just the memory warnings.
 
-        Wave mode also warns on its own now, because it stops Terrorist Hunt
-        loading, and that note rides along with every config here -- they all
-        have wave mode on, since that is what feeds the zones. Filtering it
-        keeps these checks about the thing they were written for; the note
-        itself is asserted directly, just above.
+        Wave mode carries two notes of its own -- one about Terrorist Hunt,
+        one about the map-wide spawn picker -- and both ride along with every
+        config here, since they all have wave mode on and the picker defaults
+        on. Filtering them keeps these checks about the thing they were
+        written for; both notes are asserted directly, just above.
         """
         return [w for w in combination_warnings(vals)
-                if "Terrorist Hunt" not in w]
+                if "Terrorist Hunt" not in w and "frames a second" not in w]
 
     check("an untouched config says nothing",
           not oom(base), str(oom(base)))
 
+    # 2026-09-25: split-screen Terrorist Hunt AND practice were both played
+    # with wave mode on (Shipyard) and both load, so the old blanket "this
+    # stops Terrorist Hunt loading" is retired. What is left is the narrower
+    # combination it was really measured on: waves feeding with the map-wide
+    # spawn points OFF, so every wave asks ONE zone for all its points.
     # A stored profile ignores a changed default, so the warning is what
-    # actually reaches someone who turned wave mode on before it was known
-    # to hang Terrorist Hunt.
-    check("wave mode warns on its own, not only in combination",
-          any("Terrorist Hunt" in w for w in combination_warnings(base)),
-          str(combination_warnings(base)))
-    check("and a config without it says nothing about it",
+    # actually reaches someone carrying that combination.
+    check("waves without the map-wide spawn points still warn",
+          any("Terrorist Hunt" in w for w in
+              combination_warnings(dict(base, wave_mapwide=False))),
+          str(combination_warnings(dict(base, wave_mapwide=False))))
+    check("but waves as played -- map-wide on -- say nothing",
+          not any("Terrorist Hunt" in w for w in
+                  combination_warnings(dict(base, wave_mapwide=True))),
+          str(combination_warnings(dict(base, wave_mapwide=True))))
+    check("and a config without wave mode says nothing about it",
           not any("Terrorist Hunt" in w for w in
                   combination_warnings(dict(base, wave_enable=False))))
 
+    # The spawn runaway (Shipyard, 2026-09-25). The engine credits a new
+    # enemy to the spawn POINT's owning zone, not to the zone that asked, and
+    # most points have no owner -- 14 of Shipyard's 18. So a map-wide pick
+    # builds and places the enemy fine, credits nobody, and the asking zone
+    # stays under its trigger and releases again next frame, forever. The
+    # release size only scales the waste, so the warning keys on the PICKER,
+    # not on the size. This is the config the user was playing.
+    played = dict(base, wave_mapwide=True, wave_size=5, wave_trigger=2,
+                  wave_total=60, wave_gate="always", wave_hunt=True)
+    runaway = [w for w in combination_warnings(played) if "frames a second" in w]
+    check("the map-wide picker says its fix rides in the cheat file",
+          len(runaway) == 1 and "CHEAT FILE" in runaway[0]
+          and "save a fresh one" in runaway[0], str(runaway))
+    check("and the release size does not change that -- the picker is the bug",
+          len([w for w in combination_warnings(dict(played, wave_size=1))
+               if "frames a second" in w]) == 1)
+    check("turning the picker off clears it",
+          not [w for w in combination_warnings(
+              dict(played, wave_mapwide=False)) if "frames a second" in w])
+
+    # ---- wave_hunt, withdrawn 2026-09-26 ---------------------------------
+    # It set m_bHuntFromStart (bit 0x40 of +0x388) on the WAVE actor. The one
+    # place that flag is read is AR6DeploymentZone::InitTerrorist at
+    # 0x00386B88, which reads it off `this` -- and `this` is never the wave.
+    # AR6DZoneWave overrides the "spawn at init" slot with a stub returning 0,
+    # and its SpawnATerrorist picks a point and calls THAT point's spawner
+    # through vtable+0x188, so `this` is the R6DZonePoint the whole way down.
+    wh = PROFILE.setting("wave_hunt")
+    check("the wave hunt switch is withdrawn, with a reason that says why",
+          wh is not None and not wh.enabled and wh.confidence == "broken"
+          and wh.default is False
+          and "SPAWN POINT" in wh.disabled_reason)
+    check("and it emits nothing at its old site, in any configuration",
+          not [e for kw in ({}, {"wave_hunt": True},
+                            {"wave_enable": True, "wave_hunt": True})
+               for e in PROFILE.build_edits(
+                   PROFILE.effective(dict(PROFILE.defaults(), **kw)))
+               if getattr(e, "va", None) in (0x0040AF4C, 0x0040AF50,
+                                             0x0040AF54)])
     bodies_only = dict(base, bodies="never", wave_gate="stock")
     check("bodies alone with the zones behaving is fine",
           not oom(bodies_only), str(oom(bodies_only)))
@@ -5684,7 +6095,30 @@ def run_switch_off_restores(args, work):
         key = "/COMMON.LIN"
         if key.upper() not in arc.files:
             return
+        # From the BACKUP, not from the disc. `ai_finite_ammo` switches
+        # `ai_sidearm` on, so an applied disc already carries the very edit
+        # this applies -- and applying it twice is refused, which aborted the
+        # whole suite rather than failing one check. The shadow is seeded
+        # with the pristine bytes so everything below sees stock whatever
+        # the disc happens to hold.
+        real_store = dataedit.Store(engine.backup_dir_for(iso_path))
+        pristine = None
+        for k in real_store.index:
+            if k.endswith("/COMMON.LIN"):
+                pristine = real_store.original(
+                    real_store.index[k]["archive"], "/COMMON.LIN")[0]
+                break
+        if pristine is None:
+            print("  SKIP  no stored COMMON.LIN to compare against")
+            return
+        ent = arc.files[key.upper()]
+        if len(pristine) != ent.size:
+            print("  SKIP  the stored COMMON.LIN is not this disc's revision")
+            return
+        arc.r.write(ent.offset, pristine)
         stock = arc.read_file(key)
+        check("the shadow really is showing us the pristine file",
+              stock == pristine)
         store = dataedit.Store(os.path.join(work, "switchoff"))
         real = dataedit._archives
         dataedit._archives = lambda _iso, _profile: {arc.r.name.upper(): arc}
@@ -5780,6 +6214,2953 @@ def run_recording_first(args):
               got != rsesplice.splice(stock, sib))
 
 
+
+def run_xbox_notes():
+    """Each enemy card says how far it is from the Xbox build -- RS3 only."""
+    print("\n[enemy cards: the Xbox comparison]")
+    from tcps2.games.r6_3 import XBOX_NOTES
+    check('every noted card carries its note',
+          all('Compared with the Xbox build: ' + XBOX_NOTES[k]
+              in PROFILE.setting(k).help for k in XBOX_NOTES))
+    check('the only enemy INI key that differs is named with both values',
+          '0.40' in XBOX_NOTES['terro_skill']
+          and '0.20' in XBOX_NOTES['terro_skill'])
+    leak = [(p.id, st.key) for p in ALL_PROFILES if p is not PROFILE
+            for st in p.settings
+            if 'Compared with the Xbox build' in (st.help or '')]
+    check("no other game's cards pick the notes up", not leak, str(leak[:3]))
+
+
+def run_callouts(args):
+    """Split-screen call-outs: a downed player announced, kills complimented.
+
+    Read-only, on the shipped COMMON_SS from the backup store. The load-order
+    half of the proof is run_creation_order, which carries this option in its
+    split-screen set; this checks the three blocks themselves.
+    """
+    print("\n[split screen: teammates call out downs and kills]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rsecallouts, upackage
+    from tcps2.uscode import Script
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith("/COMMON_SS.LIN")]
+    if not keys:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    stock = lin.decompress(store.original(store.index[keys[0]]["archive"],
+                                          "/COMMON_SS.LIN")[0])
+    at = {b.name: b.find(stock) for b in rsecallouts.BLOCKS}
+    check("the three functions are where they were measured",
+          all(at[b.name] == b.known for b in rsecallouts.BLOCKS),
+          str({k: hex(v) for k, v in at.items()}))
+    check("and are the code this disc shipped",
+          all(b.state(stock) == "stock" for b in rsecallouts.BLOCKS))
+    on, n = rsecallouts.apply(stock, True)
+    check("turning it on rewrites all three, at the file's length",
+          n == 3 and len(on) == len(stock) and rsecallouts.reads(on)
+          and not rsecallouts.reads(stock))
+    check("and asking twice is a no-op", rsecallouts.apply(on, True) == (on, 0))
+    spans = [(at[b.name], at[b.name] + len(b.new)) for b in rsecallouts.BLOCKS]
+    moved = [i for i in range(len(stock)) if stock[i] != on[i]]
+    check("nothing outside the three functions moves",
+          moved and all(any(a <= i < z for a, z in spans) for i in moved))
+    same = True
+    for b in rsecallouts.BLOCKS:
+        old, new = Script.at(stock, at[b.name]), Script.at(on, at[b.name])
+        same &= (old.mem_len, old.disk_len) == (new.mem_len, new.disk_len)
+    check("each keeps its ScriptSize and disk length, and parses with every "
+          "jump on a statement", same)
+    ops = [23 + ((op & 1) << 1) + (op >> 1) for op in range(4)]
+    check("a downed player is announced by operative: Chavez 23, Price 25, "
+          "Loiselle 24, Weber 26", ops == [23, 25, 24, 26])
+    names, imports, _exports = upackage.tables(on, 0x086A7F)
+    dmg = on[at["damage"]:at["damage"] + len(rsecallouts.DAMAGE.new)]
+    inf = on[at["inflicted"]:at["inflicted"] + len(rsecallouts.INFLICTED.new)]
+    pos = on[at["possess"]:at["possess"] + len(rsecallouts.POSSESS.new)]
+    check("player 2's lines are Price's own Sound imports",
+          imports[1294 - 1] == "Play_Price_ChavezDown"
+          and imports[1368 - 1] == "Play_Price_Ding_TerroDown1rst"
+          and bytes.fromhex("20ce14") in dmg and bytes.fromhex("20d815") in inf)
+    check("and his bank is requested where the AI teammates request theirs",
+          b"X_Voices_Price\x00" in pos
+          and names[0x17] == "AddSoundBankName")
+    bent = bytearray(stock)
+    bent[at["inflicted"] + 40] ^= 1
+    check("a function that is not the shipped one is refused",
+          _raises(lambda: rsecallouts.apply(bytes(bent)),
+                  rsecallouts.CalloutsError))
+    # Withdrawn the day it shipped: Terrorist Hunt on the Garage hung its load
+    # in a voice package. run_creation_order's content-import check is the
+    # one that sees why.
+    s = PROFILE.setting("split_callouts")
+    check("the option is withdrawn, and says why",
+          s is not None and s.confidence == "broken" and not s.enabled
+          and "Bad name index" in (s.disabled_reason or ""))
+    check("and a profile that still has it on writes nothing",
+          not any(e.op == "split_callouts" for e in PROFILE.build_data(
+              PROFILE.effective(dict(PROFILE.defaults(), split_squad=True,
+                                     split_callouts=True)))))
+
+
+def run_thunt_team(args):
+    """Split-screen Terrorist Hunt shares COMMON_SS and the _SS recordings with
+    practice. Giving it its own team by making player 2 Price (2026-09-24) was
+    withdrawn the same day, with the call-outs, when the Garage stopped
+    loading; the call-outs explain the hang, and rsethuntai took the other
+    route (run_thunt_ai)."""
+    print("\n[Terrorist Hunt keeps practice's team in split screen]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rsecanon, rsesquad
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith("/COMMON_SS.LIN")]
+    if not keys:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    stock = lin.decompress(store.original(store.index[keys[0]]["archive"],
+                                          "/COMMON_SS.LIN")[0])
+    canon, _n = rsecanon.apply(stock, True)
+    check("canon leaves Terrorist Hunt's test out",
+          rsecanon.reads(canon) and not rsecanon._thunt_present(canon))
+    check("and asking twice is a no-op", rsecanon.apply(canon, True) == (canon, 0))
+    both, _n = rsesquad.apply(stock, True, canon=True)
+    alone, _n = rsesquad.apply(stock, True)
+    at = rsesquad.KNOWN_BTERRO_OFFSET
+    check("the AI teammates leave Terrorist Hunt's roster test as shipped, "
+          "with or without canon",
+          stock.find(rsesquad.BTERRO) == at
+          and both[at:at + len(rsesquad.BTERRO)] == rsesquad.BTERRO
+          and alone[at:at + len(rsesquad.BTERRO)] == rsesquad.BTERRO)
+    check("and both together still read as canon and squad",
+          rsecanon.reads(both) and not rsecanon._thunt_present(both)
+          and rsesquad.reads(both) == rsesquad.ARM_TARGET)
+
+
+def run_downcall(args):
+    """A downed player is called out by an AI teammate, with the man-down
+    music (2026-09-24). Read-only, on the shipped COMMON_SS; the load-order
+    half is run_creation_order, which carries this option."""
+    print("\n[split screen: a downed player is called out]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rsedowncall, rsesquad
+    from tcps2.uscode import Script, END
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith("/COMMON_SS.LIN")]
+    if not keys:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    stock = lin.decompress(store.original(store.index[keys[0]]["archive"],
+                                          "/COMMON_SS.LIN")[0])
+    check("without the AI teammates' hand-off there is nothing to hook, and "
+          "it says so", _raises(lambda: rsedowncall.apply(stock, True),
+                                rsedowncall.DownCallError))
+    squad, _n = rsesquad.apply(stock, True, canon=True)
+    got, n = rsedowncall.apply(squad, True)
+    check("on top of the AI teammates it makes all three edits",
+          n == 3 and rsedowncall.reads(got) and not rsedowncall.reads(squad)
+          and [a for a, *_ in rsedowncall._sites(squad)]
+          == list(rsedowncall.KNOWN_OFFSETS))
+    check("and asking twice is a no-op",
+          rsedowncall.apply(got, True) == (got, 0))
+    at = 0x1409B8
+    old, new = Script.at(squad, at), Script.at(got, at)
+    check("TeamMemberDead keeps its ScriptSize and disk length",
+          (old.mem_len, old.disk_len) == (new.mem_len, new.disk_len)
+          and len(got) == len(squad))
+    moved = [i for i in range(len(squad)) if squad[i] != got[i]]
+    check("nothing outside TeamMemberDead moves",
+          moved and at <= moved[0] and moved[-1] < at + 4 + old.disk_len)
+    starts = {t.mstart for t in new.toks}
+    bad = [(t.mstart, v.mstart) for t in new.toks for x in t.walk()
+           for k, v in x.parts
+           if k == "jump" and v is not END and v.mstart not in starts]
+    check("every jump lands on a statement", not bad, str(bad))
+    check("the lead hand-off is still there, in its new form",
+          rsesquad.hands_off_lead(got) and rsesquad.hands_off_lead(squad))
+    check("and the AI teammates applied again keep it; reverting them refuses",
+          rsesquad.apply(got, True, canon=True) == (got, 0)
+          and _raises(lambda: rsesquad.apply(got, False), rsesquad.SquadError))
+    # rsesquad hands the lead over by calling TeamMemberDead with a LIVING
+    # player's pawn (regrouponme); without this every regroup was a "man down".
+    c = rsedowncall.KNOWN_OFFSETS[2]
+    check("a living pawn -- a regroup's hand-off -- returns before the call-out",
+          got[c + 3:c + 18] == bytes.fromhex("07950319004a0a0600041b0416040b"))
+    ops = [23 + (((op * 5) >> 1) & 3) for op in range(4)]
+    check("a downed player is called out by operative: Chavez 23, Price 25, "
+          "Loiselle 24, Weber 26", ops == [23, 25, 24, 26])
+    s = PROFILE.setting("split_down_callouts")
+    check("the option reaches the profile, needing the AI",
+          s is not None and s.confidence in BADGES and s.enabled
+          and s.requires == {"split_squad": [True]})
+    eds = PROFILE.build_data(PROFILE.effective(dict(
+        PROFILE.defaults(), split_squad=True, split_down_callouts=True)))
+    ops = [e.op for e in eds]
+    check("it writes the split-screen package, after the AI teammates",
+          "split_down_callouts" in ops
+          and ops.index("squad") < ops.index("split_down_callouts")
+          and [e for e in eds if e.op == "split_down_callouts"][0]
+          .matches("/COMMON_SS.LIN")
+          and not [e for e in eds if e.op == "split_down_callouts"][0]
+          .matches("/COMMONOFF.LIN"))
+    check("and without the AI it is not written at all",
+          not any(e.op == "split_down_callouts" for e in PROFILE.build_data(
+              PROFILE.effective(dict(PROFILE.defaults(),
+                                     split_down_callouts=True)))))
+
+
+def _obj_refs(script):
+    """Every object reference in a block, in order. A virtual or global call
+    and a name constant carry a NAME index instead, and a delegate carries one
+    of each, so those are skipped -- reading a name index as an object index is
+    how you convince yourself a function reaches something it does not."""
+    from tcps2.uscode import compact_decode
+    out = []
+    for t in script.statements():
+        i = 0
+        for kind, val in t.parts:
+            if kind == "ref":
+                if not (t.op in (0x1B, 0x38, 0x21, 0x0E)
+                        or (t.op == 0x40 and i == 1)):
+                    out.append(compact_decode(val, 0)[0])
+                i += 1
+    return out
+
+
+def _first_touch(plain, obj, _cache={}):
+    """The offset of the first block in the package that reaches `obj`."""
+    from tcps2 import uscode
+    from tcps2.uscode import Script, ScriptError
+    key = id(plain)
+    if key not in _cache:
+        seen = {}
+        for at in uscode.find_blocks(plain):
+            try:
+                sc = Script.at(plain, at)
+            except ScriptError:
+                continue
+            for o in _obj_refs(sc):
+                seen.setdefault(o, at)
+        _cache[key] = seen
+    return _cache[key].get(obj, 1 << 62)
+
+
+def run_hostage_rainbow_voice(args):
+    """The hostage line for "Rainbow is here and so is a terrorist" -- cue
+    `Host<N>_M<nn>_WithRnb_Terro`, `EHostageVoices` 0, `m_sndRun` -- which no
+    shipped call site ever passes (2026-09-28). Read-only, on all three stored
+    COMMON packages; the load-order half is run_creation_order, which carries
+    this option in its "every script option" set."""
+    print("\n[hostages react out loud when Rainbow arrives]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    import re
+    import struct
+    from tcps2 import dataedit, lin, rsehostagerun, uscode
+    from tcps2.uscode import Script, END
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+
+    stocks = {}
+    for name in ("/COMMON.LIN", "/COMMONOFF.LIN", "/COMMON_SS.LIN"):
+        keys = [k for k in store.index if k.endswith(name)]
+        if keys:
+            stocks[name] = lin.decompress(
+                store.original(store.index[keys[0]]["archive"], name)[0])
+    if not stocks:
+        print("  SKIP  no stored COMMON package")
+        return
+
+    # `ProcessPlaySndInfo` is name index 174 and its shipped call sites are all
+    # `EX_VirtualFunction ref EX_ByteConst <n> EX_EndFunctionParms`. Scanning
+    # the bytes finds them all, including the ones uscode.find_blocks shadows.
+    call = re.compile(rb"\x1b\x6e\x02\x24(.)\x16", re.S)
+
+    for name, stock in sorted(stocks.items()):
+        got, n = rsehostagerun.apply(stock, True)
+        check("%s: both blocks are found exactly once and rewritten" % name,
+              n == 2 and len(got) == len(stock)
+              and not rsehostagerun.reads(stock)
+              and rsehostagerun.reads(got))
+        check("%s: asking twice is a no-op, and off writes nothing" % name,
+              rsehostagerun.apply(got, True) == (got, 0)
+              and rsehostagerun.apply(stock, False) == (stock, 0))
+        check("%s: reverting gives the shipped bytes back" % name,
+              rsehostagerun.revert(got) == (stock, 2))
+
+        # the thing the whole option is for
+        was = sorted(m.group(1)[0] for m in call.finditer(stock))
+        now = sorted(m.group(1)[0] for m in call.finditer(got))
+        check("%s: the disc passes ProcessPlaySndInfo 1,1,1,2,2,3,3,4,5,6 and "
+              "never 0" % name,
+              was == [1, 1, 1, 2, 2, 3, 3, 4, 5, 6]
+              and rsehostagerun.HV_RUN not in was, str(was))
+        check("%s: afterwards HV_Run is passed, once, and one HV_Hears_Shooting "
+              "moves to make room" % name,
+              now == [0, 1, 1, 1, 2, 2, 3, 4, 5, 6]
+              and now.count(rsehostagerun.HV_RUN) == 1, str(now))
+        # m_aPlaySndInfo is ArrayDim 10, ElementSize 8, and ProcessPlaySndInfo
+        # indexes it unchecked -- while PlayHostageVoices on this disc has
+        # twelve arms, 10 and 11 being m_sndGrabHostage1 and m_sndGrabHostage3.
+        # Those two are real voices nothing calls, so they are exactly what
+        # somebody wires next, and either would write eight or sixteen bytes
+        # past an eighty-byte array. HV_Run is 0. This is the guard rail.
+        check("%s: every argument stays inside m_aPlaySndInfo" % name,
+              max(now) < rsehostagerun.PLAY_SND_INFO_DIM
+              and rsehostagerun.PLAY_SND_INFO_DIM == 10, str(max(now)))
+        check("%s: nothing routes m_sndGrabHostage1/3 (10, 11) through the "
+              "throttle" % name,
+              10 not in now and 11 not in now, str(now))
+
+        # nothing but the two blocks moves
+        spans = [(at, len(s)) for at, s, _w, _st in rsehostagerun._sites(stock)]
+        moved = [i for i in range(len(stock)) if stock[i] != got[i]]
+        check("%s: nothing outside the two blocks moves" % name,
+              moved and all(any(a <= i < a + ln for a, ln in spans)
+                            for i in moved),
+              "%d bytes differ in %d blocks" % (len(moved), len(spans)))
+
+        for at, s, _w, _st in rsehostagerun._sites(stock):
+            old, new = Script.at(stock, at), Script.at(got, at)
+            check("%s: 0x%x keeps its disk length, its memory length and its "
+                  "ScriptSize" % (name, at),
+                  (old.disk_len, old.mem_len) == (new.disk_len, new.mem_len)
+                  and struct.unpack_from("<I", stock, at)
+                  == struct.unpack_from("<I", got, at),
+                  "%d disk / %d memory" % (new.disk_len, new.mem_len))
+            check("%s: 0x%x re-assembles to the same bytes" % (name, at),
+                  new.assemble(new.disk_len, new.mem_len)
+                  == (got[at + 4:at + 4 + new.disk_len], new.mem_len))
+            starts = {t.mstart for t in new.statements()}
+            bad = [(t.mstart, v.mstart) for t in new.statements()
+                   for k, v in t.parts
+                   if k in ("jump", "jump32") and v is not END
+                   and v.mstart not in starts]
+            check("%s: 0x%x -- every jump lands on a statement" % (name, at),
+                  not bad, str(bad))
+            # An edit that becomes the FIRST to reach one of the package's own
+            # objects reads the recording out of step (run_creation_order).
+            # The only two this block newly reaches are pinned, and both are
+            # first touched thousands of bytes earlier.
+            added = sorted(set(_obj_refs(new)) - set(_obj_refs(old)))
+            want = (list(rsehostagerun.NEW_REFS)
+                    if at == min(rsehostagerun.KNOWN_OFFSETS) else [])
+            check("%s: 0x%x reaches only the objects it is allowed to add"
+                  % (name, at), added == want,
+                  "added %s, expected %s" % (added, want))
+            check("%s: 0x%x -- every added object is already reached earlier "
+                  "in the package" % (name, at),
+                  all(_first_touch(stock, o) < at for o in added),
+                  " ".join("#%d first at 0x%x" % (o, _first_touch(stock, o))
+                           for o in added) or "none")
+
+    check("the two blocks are byte-identical in all three packages",
+          len({tuple(s for _n, s, _w in rsehostagerun.BLOCKS)}) == 1
+          and all(st.count(s) == 1 and st.count(w) == 0
+                  for st in stocks.values()
+                  for _n, s, w in rsehostagerun.BLOCKS))
+
+    s = PROFILE.setting("hostage_rainbow_voice")
+    check("the option reaches the profile, off by default",
+          s is not None and s.default is False and s.enabled
+          and s.confidence in BADGES and s.touches == "data"
+          and not s.requires)
+    check("an untouched profile writes nothing",
+          not any(e.op == "hostage_rainbow_voice"
+                  for e in PROFILE.build_data(
+                      PROFILE.effective(dict(PROFILE.defaults())))))
+    eds = PROFILE.build_data(PROFILE.effective(
+        dict(PROFILE.defaults(), hostage_rainbow_voice=True)))
+    mine = [e for e in eds if e.op == "hostage_rainbow_voice"]
+    check("switched on it writes all three COMMON packages",
+          len(mine) == 1 and mine[0].matches("/COMMON.LIN")
+          and mine[0].matches("/COMMONOFF.LIN")
+          and mine[0].matches("/COMMON_SS.LIN"))
+    check("the dispatcher knows the op",
+          dataedit.OPS.get("hostage_rainbow_voice") is not None)
+
+
+def run_thunt_ai(args):
+    """Terrorist Hunt on the canon maps adds the two operatives nobody plays
+    (2026-09-24). Read-only; the load-order half is run_creation_order."""
+    print("\n[split-screen Terrorist Hunt: the other two operatives join]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rsesquad, rsethuntai
+    from tcps2.uscode import Script, END
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith("/COMMON_SS.LIN")]
+    if not keys:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    stock = lin.decompress(store.original(store.index[keys[0]]["archive"],
+                                          "/COMMON_SS.LIN")[0])
+    alone, _n = rsesquad.apply(stock, True)
+    check("without canon's roster there is nothing it recognises, and it says so",
+          _raises(lambda: rsethuntai.apply(stock, True), rsethuntai.ThuntAIError)
+          and _raises(lambda: rsethuntai.apply(alone, True),
+                      rsethuntai.ThuntAIError))
+    both, _n = rsesquad.apply(stock, True, canon=True)
+    got, n = rsethuntai.apply(both, True)
+    check("on the AI teammates with canon it makes both edits",
+          n == 2 and rsethuntai.reads(got) and not rsethuntai.reads(both)
+          and [a for a, *_ in rsethuntai._sites(both)]
+          == list(rsethuntai.KNOWN_OFFSETS))
+    check("and asking twice is a no-op", rsethuntai.apply(got, True) == (got, 0))
+    at = 0x1470A3
+    old, new = Script.at(both, at), Script.at(got, at)
+    check("CreatePlayerTeam keeps its ScriptSize and disk length",
+          (old.mem_len, old.disk_len) == (new.mem_len, new.disk_len) == (1775, 1346)
+          and len(got) == len(both))
+    moved = [i for i in range(len(both)) if both[i] != got[i]]
+    check("nothing outside CreatePlayerTeam moves",
+          moved and at <= moved[0] and moved[-1] < at + 4 + old.disk_len)
+    starts = {t.mstart for t in new.toks}
+    bad = [(t.mstart, v.mstart) for t in new.toks for x in t.walk()
+           for k, v in x.parts
+           if k == "jump" and v is not END and v.mstart not in starts]
+    check("every jump lands on a statement", not bad, str(bad))
+    check("the AI teammates' own checks still read their edits",
+          rsesquad.keeps_player2_out(got) and rsesquad.roster_reads_price(got)
+          and rsesquad.reads(got) == rsesquad.ARM_TARGET)
+    check("and the AI teammates applied again keep it; reverting them refuses",
+          rsesquad.apply(got, True, canon=True) == (got, 0)
+          and _raises(lambda: rsesquad.apply(got, False), rsesquad.SquadError))
+    check("Garage's player 2 is Loiselle (2) and Island's Weber (3): the second "
+          "AI is the other one", [5 - op for op in (2, 3)] == [3, 2])
+    s = PROFILE.setting("split_thunt_ai")
+    check("the option reaches the profile, needing the AI and canon",
+          s is not None and s.confidence in BADGES and s.enabled
+          and s.requires == {"split_squad": [True], "canon_team": [True]})
+    eds = PROFILE.build_data(PROFILE.effective(dict(
+        PROFILE.defaults(), split_squad=True, canon_team=True,
+        split_thunt_ai=True)))
+    ops = [e.op for e in eds]
+    check("it writes the split-screen package, after the AI teammates",
+          "split_thunt_ai" in ops
+          and ops.index("squad") < ops.index("split_thunt_ai")
+          and [e for e in eds if e.op == "split_thunt_ai"][0]
+          .matches("/COMMON_SS.LIN"))
+    check("and without canon it is not written at all",
+          not any(e.op == "split_thunt_ai" for e in PROFILE.build_data(
+              PROFILE.effective(dict(PROFILE.defaults(), split_squad=True,
+                                     split_thunt_ai=True)))))
+
+
+def run_stun_and_spawn_fix(args):
+    """Two engine faults found 2026-09-25 and the words that fix them.
+
+    The flashbang runs a full-screen pass every frame for five seconds, which
+    is the whole reason the game crawls while stunned (12 fps against 30 the
+    frame before). And a wave zone credits each new enemy to the spawn
+    POINT's owning zone rather than to the zone that asked -- with the
+    map-wide picker most points have no owner, so nobody is credited, the
+    zone stays under its trigger and releases again every frame.
+
+    Read-only against the SHIPPED overlay.
+    """
+    print("\n[Rainbow Six 3 -- the flashbang stall and the spawn runaway]")
+    if not (args.soz or args.iso or args.rs3data):
+        print("  SKIP  needs --soz, --iso or --rs3data")
+        return
+    import struct
+    from tcps2.games.r6_3 import (STOCK, STUN_FLASH_SECONDS, STUN_FLASH_WORDS,
+                                  CAVE_WORDS)
+    img = SozImage.unpack(stock_container(args), PROFILE.overlays[0].base_va)
+
+    # --- the flashbang screen effect ---------------------------------------
+    stock = img.read_word(STUN_FLASH_SECONDS)
+    check("the shipped overlay hands the screen effect 5 seconds",
+          stock == STOCK[STUN_FLASH_SECONDS] == STUN_FLASH_WORDS["stock"]
+          == 0x3C0240A0, "%08X" % stock)
+
+    def secs(word):
+        return struct.unpack(">f", struct.pack(">I", (word & 0xFFFF) << 16))[0]
+
+    check("every choice is the same lui of the same register, differing only "
+          "in the float's high half",
+          all((w >> 16) == (stock >> 16) for w in STUN_FLASH_WORDS.values()),
+          str({k: "%08X" % w for k, w in STUN_FLASH_WORDS.items()}))
+    check("and they decode to the durations they claim",
+          [secs(STUN_FLASH_WORDS[k]) for k in ("stock", "4", "3", "2", "1.5", "off")]
+          == [5.0, 4.0, 3.0, 2.0, 1.5, 0.0],
+          str({k: secs(w) for k, w in STUN_FLASH_WORDS.items()}))
+    s = PROFILE.setting("stun_flash")
+    check("the option reaches the profile, defaulting to the shipped length",
+          s is not None and s.default == "stock" and s.enabled
+          and {c.value for c in s.choices} == set(STUN_FLASH_WORDS))
+    base = {e.va for e in PROFILE.build_edits(PROFILE.effective(
+        PROFILE.defaults()))}
+    check("stock writes nothing", STUN_FLASH_SECONDS not in base)
+    for name in ("4", "3", "2", "1.5", "off"):
+        got = [e for e in PROFILE.build_edits(PROFILE.effective(
+            dict(PROFILE.defaults(), stun_flash=name)))
+            if e.va == STUN_FLASH_SECONDS]
+        check("choosing %s writes one word, from stock" % name,
+              len(got) == 1 and got[0].value == STUN_FLASH_WORDS[name]
+              and got[0].stock == stock)
+
+    # --- the release loop --------------------------------------------------
+    check("the release loop's counter and its delay slot are the shipped ones",
+          img.read_word(0x0040A8D4) == STOCK[0x0040A8D4] == 0x26310001
+          and img.read_word(0x0040A8E0) == STOCK[0x0040A8E0] == 0x00000000)
+    check("and this function already uses MOVZ, so the encoding is the game's "
+          "own", img.read_word(0x0040A8B0) == 0x0061800B)
+    waved = {e.va: e for e in PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), wave_enable=True)))}
+    check("wave mode moves the increment into the delay slot and breaks the "
+          "loop when nothing was built",
+          waved[0x0040A8D4].value == 0x0202880A
+          and waved[0x0040A8E0].value == 0x26310001)
+    check("and without wave mode neither word is written",
+          not ({0x0040A8D4, 0x0040A8E0} & base))
+
+    # --- the cave credits the zone that asked ------------------------------
+    cave = dict(CAVE_WORDS)
+    check("the cave's last word is the shared branch delay slot, and it now "
+          "stores the requesting zone into the chosen point",
+          cave[0x005BA58C] == 0x08102B31          # j 0x0040ACC4
+          and cave[0x005BA590] == 0xAC950480)     # sw $s5, 0x480($a0)
+    # sw rt, imm(base): opcode 0x2B, base $a0 = 4, rt $s5 = 21, imm 0x480
+    w = cave[0x005BA590]
+    check("which decodes as sw $s5, 0x480($a0)",
+          (w >> 26) == 0x2B and ((w >> 21) & 31) == 4
+          and ((w >> 16) & 31) == 21 and (w & 0xFFFF) == 0x480)
+    pn = PROFILE.build_pnach(PROFILE.effective(dict(
+        PROFILE.defaults(), wave_enable=True, wave_mapwide=True)))
+    check("it reaches the cheat file, and the cave did not grow",
+          len([e for e in pn if e.va == 0x005BA590
+               and e.value == 0xAC950480]) == 1
+          and len(pn) == len(CAVE_WORDS) + 1)   # + the hijack
+    check("and the disc never carries the cave",
+          not ({va for va, _w in CAVE_WORDS} & base))
+
+
+def run_breach_stun(args):
+    """The breaching charge's stun reach, against the real disc.
+
+    The value is a float constant inside R6BreachingChargeUnit.HurtPawns, in
+    the 60 single-player and co-op LEVEL containers -- not in COMMON, which
+    does not carry the gadget classes at all.
+    """
+    print("\n[Rainbow Six 3 -- the breaching charge's stun reach]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    import re
+    from tcps2 import dataedit, lin, rsegadget, vokes
+    from tcps2.iso import Iso
+
+    with Iso(args.rs3data) as iso:
+        seen = {}
+        for a in vokes.open_archives(iso):
+            for k in a.files:
+                if k.endswith(".LIN"):
+                    seen.setdefault(k, a)
+        has, hasnt, sample = [], [], None
+        for k, a in sorted(seen.items()):
+            raw = _stock_bytes(args.rs3data, a, k)
+            try:
+                plain = lin.decompress(raw)
+            except Exception:                            # noqa: BLE001
+                hasnt.append(k)
+                continue
+            try:
+                rsegadget.read(plain, "stun")
+            except rsegadget.GadgetError:
+                hasnt.append(k)
+                continue
+            has.append(k)
+            if sample is None:
+                sample = (k, plain)
+
+    check("60 level containers carry the constant and 25 do not",
+          len(has) == 60 and len(hasnt) == 25, "%d / %d" % (len(has), len(hasnt)))
+    check("and COMMON is not one of them -- the gadget classes are not in it",
+          not [k for k in has if "COMMON" in k]
+          and len([k for k in hasnt if "COMMON" in k]) == 3)
+    check("the option's selector matches exactly those 60",
+          sorted(k for k in has + hasnt
+                 if re.search(rsegadget.SELECT, k, re.I)) == sorted(has))
+
+    key, plain = sample
+    check("the disc ships a 10 metre stun (200 blast + 800)",
+          rsegadget.read(plain, "stun") == rsegadget.STOCK["stun"] == 800.0
+          and rsegadget.reads_metres(plain) == rsegadget.STOCK_METRES == 10.0)
+    check("and the claymore's cone is the shipped 0.766, a 40 degree arc",
+          rsegadget.read(plain, "cone") == rsegadget.STOCK["cone"],
+          "%.8f" % rsegadget.read(plain, "cone"))
+
+    out, n = rsegadget.apply(plain, 16)
+    moved = [i for i in range(len(plain)) if plain[i] != out[i]]
+    at = rsegadget.find(plain, "stun")
+    check("setting 16 m keeps the length and touches only the constant",
+          n == 1 and len(out) == len(plain)
+          and rsegadget.reads_metres(out) == 16.0
+          and moved and at <= moved[0] and moved[-1] < at + 4,
+          str(moved))
+    check("and asking twice is a no-op", rsegadget.apply(out, 16) == (out, 0))
+    check("and setting it back restores the file byte for byte",
+          rsegadget.apply(out, 10)[0] == plain)
+    check("a reach inside the blast itself is refused, not clamped",
+          _raises(lambda: rsegadget.apply(plain, 1), rsegadget.GadgetError))
+
+    s = PROFILE.setting("breach_stun")
+    check("the option reaches the profile, defaulting to the shipped reach",
+          s is not None and s.default == 10 and s.unit == "m"
+          and (s.minimum, s.maximum) == (6, 30) and s.enabled)
+    check("stock writes nothing to the disc",
+          not [e for e in PROFILE.build_data(PROFILE.effective(
+              PROFILE.defaults())) if e.op == "breach_stun"])
+    eds = [e for e in PROFILE.build_data(PROFILE.effective(
+        dict(PROFILE.defaults(), breach_stun=16))) if e.op == "breach_stun"]
+    check("choosing another reach emits one edit, carrying the metres",
+          len(eds) == 1 and eds[0].params == {"metres": 16}
+          and eds[0].matches("/AIRPORT_AOFF.LIN")
+          and not eds[0].matches("/COMMON_SS.LIN")
+          and not eds[0].matches("/GARAGE_MP_C.LIN"))
+    got = dataedit.OPS["breach_stun"](plain, {"metres": 16})
+    check("and through the real dispatch table it returns (bytes, count)",
+          isinstance(got, tuple) and len(got) == 2
+          and isinstance(got[0], bytes) and isinstance(got[1], int)
+          and len(got[0]) == len(plain))
+
+
+def run_hostage_follow(args):
+    """Hostages always answer "follow me" (2026-09-28).
+
+    Ten of the fifteen hostage voice sets resolve event 3 to a weighted random
+    container one of whose legs is a kind-15 NULL row, so the acknowledgement is
+    silence one roll in three -- one in two on the Penthouse.  Four bytes per
+    set re-point that leg at the sibling take.
+
+    The assertions that matter are about WHAT IDENTIFIES THE REGION, because the
+    obvious implementation is unsafe: the 36-byte child block of Mountain
+    Highway's container is byte-identical to Office Complex A's AND to Office
+    Complex B's, and Office Complex B's leg 0 is a healthy stream.  So the
+    module walks the bank and keys on the logical bank id, and the byte run is a
+    SEAL rather than a locator.  The checks below prove both halves of that:
+    that the run really is ambiguous, and that the walk is not.
+
+    They also pin the tuple order.  A module in this project returned
+    (va, stock, new) and a caller unpacked (va, new, stock); the stock value
+    went straight back on the disc, every self-check passed, and the feature did
+    nothing.  `Site._fields` is asserted here so that cannot recur silently.
+    """
+    print()
+    print("[Rainbow Six 3 -- hostages always answer \"follow me\"]")
+    from tcps2 import dataedit, rsefollowleg as F
+
+    # --- offline: the table, and the contract its callers rely on -----------
+    check("ten sets, ten distinct logical bank ids",
+          len(F.SETS) == 10 and len({s.bank for s in F.SETS}) == 10,
+          "%d sets, %d banks" % (len(F.SETS), len({s.bank for s in F.SETS})))
+    check("Leg field order is the documented one",
+          F.Leg._fields == ("carrier", "bank", "res", "nchild", "leg",
+                            "stock_row", "new_row", "seal"),
+          str(F.Leg._fields))
+    check("Site field order is (at, stock, new, bank, state) -- stock BEFORE "
+          "new, which is the transposition that once wrote the stock value "
+          "back and passed every check",
+          F.Site._fields == ("at", "stock", "new", "bank", "state"),
+          str(F.Site._fields))
+    check("every seal is exactly nchild 12-byte child records",
+          all(len(s.seal) == s.nchild * 12 for s in F.SETS))
+    check("every seal carries stock_row at leg*12, so the seal and the table "
+          "cannot disagree",
+          all(int.from_bytes(s.seal[s.leg * 12:s.leg * 12 + 4], "little")
+              == s.stock_row for s in F.SETS))
+    check("no set re-points a leg at the row it already has",
+          all(s.stock_row != s.new_row for s in F.SETS))
+    check("the five hostage sets with no NULL leg are absent from the table",
+          not ({566, 567, 569, 575, 576} & set(F.BY_BANK)))
+    check("Office Complex B (bank 576) is excluded from SELECT as well as "
+          "from the table -- it is the file a byte-run locator would corrupt",
+          "OFFICE_COMPLEX_B" not in F.SELECT
+          and "OFFICE_COMPLEX_A" in F.SELECT)
+    check(".SB1 is a raw suffix, so dataedit refuses a length change on a "
+          "sound bank instead of running _fit_plain over it",
+          ".SB1" in dataedit._RAW_SUFFIXES)
+    check("the operation is in the dispatch table",
+          "hostage_follow_voice" in dataedit.OPS)
+    check("the card is off by default, so an untouched profile emits nothing",
+          F.card("", "x").default is False)
+
+    if not args.rs3data:
+        print("  SKIP  the rest needs --rs3data")
+        return
+
+    import re
+    from tcps2 import vokes
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+
+    profile = BY_ID["r6_3_slus20883"]
+    check("a default profile emits no hostage-voice edit",
+          not [e for e in profile.build_data(profile.effective({}))
+               if e.op == "hostage_follow_voice"])
+    on = [e for e in profile.build_data(
+        profile.effective({"hostage_follow_voice": True}))
+        if e.op == "hostage_follow_voice"]
+    check("switching it on emits exactly one edit", len(on) == 1, str(len(on)))
+
+    with Iso(args.rs3data) as iso:
+        banks, where = {}, {}
+        for arc in vokes.open_archives(iso):
+            for key, ent in sorted(arc.files.items()):
+                if key.endswith(".SB1"):
+                    where.setdefault(key, (arc, ent.path))
+        for key, (arc, path) in sorted(where.items()):
+            banks[path] = _stock_bytes(args.rs3data, arc, path)
+
+        carriers = sorted(p for p in banks if re.search(F.SELECT, p, re.I))
+        check("SELECT matches exactly the seven carriers",
+              len(carriers) == 7, str(len(carriers)))
+        check("and they are exactly the files the table names",
+              {os.path.basename(p) for p in carriers}
+              == {s.carrier for s in F.SETS})
+
+        # --- the seal IS ambiguous.  This is the reason for the design. -----
+        amb = {}
+        for s in F.SETS:
+            hits = sorted(os.path.basename(p) for p, d in banks.items()
+                          if s.seal in d)
+            if len(hits) > 1:
+                amb[s.bank] = hits
+        check("the child-block byte run is genuinely ambiguous disc-wide, so "
+              "a find-the-run module would have been wrong",
+              len(amb) >= 4, "ambiguous for banks %s" % sorted(amb))
+        check("and Office Complex B is one of the files it collides with",
+              any("OFFICE_COMPLEX_B_L.SB1" in v for v in amb.values()),
+              str(amb.get(565)))
+        ocb = [p for p in banks if p.endswith("/OFFICE_COMPLEX_B_L.SB1")]
+        if ocb:
+            d = banks[ocb[0]]
+            check("but the walk finds nothing to do in it, and apply() leaves "
+                  "it byte for byte alone",
+                  F._sites(d) == [] and F.apply(d, True) == (d, 0))
+
+        # --- per carrier: unique, absent, length, idempotent, undoable ------
+        seen = 0
+        for p in carriers:
+            d = banks[p]
+            base = os.path.basename(p)
+            want = [s for s in F.SETS if s.carrier == base]
+            sites = F._sites(d)
+            seen += len(sites)
+            check("%s: the walk finds its %d set(s), all in the stock state"
+                  % (base, len(want)),
+                  len(sites) == len(want)
+                  and all(s.state == "stock" for s in sites)
+                  and sorted(s.bank for s in sites)
+                  == sorted(s.bank for s in want),
+                  str([(s.bank, s.state) for s in sites]))
+            for s in sites:
+                seal = F.BY_BANK[s.bank].seal
+                rel = F.BY_BANK[s.bank].leg * 12
+                done = seal[:rel] + s.new + seal[rel + 4:]
+                check("%s bank %d: the seal occurs exactly once here, and the "
+                      "replacement not at all"
+                      % (base, s.bank),
+                      d.count(seal) == 1 and d.count(done) == 0,
+                      "seal x%d, done x%d" % (d.count(seal), d.count(done)))
+                check("%s bank %d: the bytes at 0x%x are the shipped NULL row"
+                      % (base, s.bank, s.at), d[s.at:s.at + 4] == s.stock,
+                      d[s.at:s.at + 4].hex())
+
+            new, n = F.apply(d, True)
+            check("%s: %d word(s) written" % (base, len(want)), n == len(want),
+                  str(n))
+            check("%s: the file length does not move" % base,
+                  len(new) == len(d), "%+d" % (len(new) - len(d)))
+            diff = _changed(d, new)
+            check("%s: exactly %d byte(s) differ, each inside a written word"
+                  % (base, len(want)),
+                  len(diff) == len(want)
+                  and all(any(s.at <= i < s.at + 4 for s in F._sites(d))
+                          for i in diff),
+                  str(sorted(diff)))
+
+            # nothing the loader uses to find anything has moved
+            nev = int.from_bytes(d[4:8], "little")
+            nres = int.from_bytes(d[8:12], "little")
+            tailsz = int.from_bytes(d[16:20], "little")
+            tb = 28 + nev * 72 + nres * 108
+            check("%s: header, event table and resource table are identical"
+                  % base, d[:tb] == new[:tb])
+            check("%s: the appended ADPCM payload is identical (%d bytes)"
+                  % (base, len(d) - tb - tailsz),
+                  d[tb + tailsz:] == new[tb + tailsz:])
+            check("%s: every touched leg keeps its weight word" % base,
+                  all(d[s.at + 4:s.at + 12] == new[s.at + 4:s.at + 12]
+                      for s in F._sites(d)))
+
+            # The authored silence weight.  The runtime picker rolls against a
+            # LITERAL 0x10000 and never sums the weights (read out of SP.SOZ at
+            # 0x004d24f0), so a container that fell short really would play
+            # nothing -- except that every container stores the complement at
+            # row+0x1c.  Measured: that identity holds for 2327 of 2327
+            # containers on the disc.  What makes these ten a slip rather than
+            # a decision is that their silence weight is exactly ZERO: the
+            # format has a field for "sometimes say nothing", it is off here,
+            # and a kind-15 row in the roll delivers silence anyway.
+            resbase = 28 + nev * 72
+            for s in F._sites(d):
+                leg = F.BY_BANK[s.bank]
+                at = resbase + leg.res * 108 + 0x1c
+                ws = sum(int.from_bytes(leg.seal[k * 12 + 4:k * 12 + 8],
+                                        "little")
+                         for k in range(leg.nchild))
+                sil = int.from_bytes(d[at:at + 4], "little")
+                check("%s bank %d: weights 0x%x + silence weight 0x%x "
+                      "== 0x10000" % (base, s.bank, ws, sil),
+                      ws + sil == 0x10000)
+                check("%s bank %d: the silence weight is exactly zero, so the "
+                      "NULL leg is the ONLY silence in this container"
+                      % (base, s.bank), sil == 0, "0x%x" % sil)
+                check("%s bank %d: and the edit does not touch it"
+                      % (base, s.bank), d[at:at + 4] == new[at:at + 4])
+
+            check("%s: idempotent -- applying twice writes nothing more" % base,
+                  F.apply(new, True) == (new, 0))
+            check("%s: reads() is False on stock and True once applied" % base,
+                  not F.reads(d) and F.reads(new))
+            check("%s: enable=False hands back the shipped bytes exactly"
+                  % base, F.apply(d, False) == (d, 0))
+
+            # a file that is not what was measured is refused, not patched
+            t = bytearray(d)
+            t[sites[0].at] = (t[sites[0].at] + 9) & 0xFF
+            try:
+                F._sites(bytes(t))
+                check("%s: a tampered leg is refused" % base, False, "no raise")
+            except F.FollowLegError:
+                check("%s: a tampered leg is refused, not patched" % base, True)
+
+        check("ten sites across the seven carriers", seen == 10, str(seen))
+
+        # --- through the real dispatch table --------------------------------
+        fn = dataedit.OPS.get("hostage_follow_voice")
+        if fn:
+            got = fn(banks[carriers[0]], {"enable": True})
+            check("the dispatcher entry returns (bytes, count)",
+                  isinstance(got, tuple) and len(got) == 2
+                  and isinstance(got[0], bytes) and isinstance(got[1], int),
+                  repr(type(got)))
+            check("and with enable False it returns the input unchanged",
+                  fn(banks[carriers[0]], {"enable": False})
+                  == (banks[carriers[0]], 0))
+
+        # --- all three archive copies agree, before and after --------------
+        for name in sorted({s.carrier for s in F.SETS}):
+            copies = []
+            for arc in vokes.open_archives(iso):
+                for key, ent in sorted(arc.files.items()):
+                    if key.endswith("/" + name):
+                        copies.append(_stock_bytes(args.rs3data, arc, ent.path))
+            check("%s: the three archive copies are identical, and stay "
+                  "identical after the edit" % name,
+                  len(copies) == 3 and len(set(copies)) == 1
+                  and len({F.apply(c, True)[0] for c in copies}) == 1,
+                  "%d copies, %d distinct" % (len(copies), len(set(copies))))
+
+
+def run_ai_hunt(args):
+    """Terrorists that hunt you, and the grenades they throw (2026-09-26).
+
+    This module had NO coverage at all until the day its grenade dial was
+    found to be inverted: the comparison it is built on is `<`, not `>`, so
+    every choice did the opposite of its label and the bottom notch --
+    captioned "any range at all" -- silently switched AI grenades off. The
+    first check below is the regression guard for exactly that, and it is
+    written so that it fails if anyone re-reads the test as a minimum.
+    """
+    print("\n[Rainbow Six 3 -- enemies that hunt you, and their grenades]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rseaihunt as A
+    from tcps2.uscode import Script
+
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    plains = {}
+    for path in ("/COMMON_SS.LIN", "/COMMONOFF.LIN", "/COMMON.LIN"):
+        keys = [k for k in store.index if k.endswith(path)]
+        if keys:
+            plains[path] = lin.decompress(store.original(
+                store.index[keys[0]]["archive"], path)[0])
+    if "/COMMON_SS.LIN" not in plains:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    base = plains["/COMMON_SS.LIN"]
+
+    # ---- the direction of the test ---------------------------------------
+    # 0xB0 is native 176, which the game's own engine source declares as
+    #     native(176) static final operator(24) bool < ( float A, float B );
+    # so the shipped statement is `dist(Enemy) < 1500` -- a MAXIMUM.
+    stock_run = A.gate_run(A.GATE_STOCK_UNITS)
+    at = base.find(stock_run)
+    check("the grenade window is where it was measured, and unique in every "
+          "package",
+          at == 0x165232
+          and all(p.count(stock_run) == 1 for p in plains.values()),
+          str([p.count(stock_run) for p in plains.values()]))
+    check("the comparison ahead of it is native 176, which is `<` -- so the "
+          "constant is a CEILING and a lower number means fewer grenades",
+          base[at - 18] == 0xB0, "0x%02X" % base[at - 18])
+    check("and the module says so, rather than the minimum it used to claim",
+          "MAXIMUM" in A.__doc__ and "native(176)" in A.__doc__
+          and "> 1500" not in A.__doc__.replace("`dist(Enemy) > 1500`", ""))
+    ATTACK = 0x1648CF                       # R6TerroristAI.Attack
+    check("the function holding it is the one this was measured on",
+          (Script.at(base, ATTACK).disk_len,
+           Script.at(base, ATTACK).mem_len) == (2654, 3404))
+
+    # ---- the window is a splice, so every threshold is the same shape ----
+    check("the stock window is head + 1500 + tail, exactly as generated",
+          stock_run == A.GATE_HEAD + b"\xdc\x05\x00\x00" + A.GATE_TAIL)
+    check("every offered ceiling keeps the window's length and is absent "
+          "from the stock packages, so it cannot match a second site",
+          all(len(A.gate_run(u)) == len(stock_run)
+              and all(p.count(A.gate_run(u)) == 0 for p in plains.values())
+              for u in A.GATE_UNITS if u != A.GATE_STOCK_UNITS))
+    check("asking for the shipped value is refused rather than emitted as a "
+          "no-op", _raises(lambda: A.gate_region(A.GATE_STOCK_UNITS),
+                           A.AiHuntError))
+    check("a threshold an int cannot carry is refused",
+          _raises(lambda: A.gate_run(-1), A.AiHuntError)
+          and _raises(lambda: A.gate_run(1 << 40), A.AiHuntError))
+    for _u in (0, 3000, 10000):
+        _got, _n = A.apply(base, "range:%d" % _u, True)
+        check("range %d applies once, keeps the length and the block size, "
+              "and reverts exactly" % _u,
+              _n == 1 and len(_got) == len(base)
+              and (Script.at(_got, ATTACK).disk_len,
+                   Script.at(_got, ATTACK).mem_len) == (2654, 3404)
+              and A.reads(_got, "range:%d" % _u)
+              and A.apply(_got, "range:%d" % _u, False)[0] == base)
+
+    # ---- the hunt regions themselves -------------------------------------
+    check("every hunt region is an equal-length before and after, unique in "
+          "every package",
+          all(len(st) == len(nw) and st != nw
+              and all(p.count(st) == 1 and p.count(nw) == 0
+                      for p in plains.values())
+              for _n, st, nw in A.REGIONS.values()))
+    check("an unknown option is refused rather than guessed",
+          _raises(lambda: A.apply(base, "nope"), A.AiHuntError))
+
+    # ---- the wave arm, which is not part of the switch --------------------
+    # R6TerroristAI.NoThreat ends in
+    #     if (m_bSpawnedByWave) { m_bAllowLeave = True;
+    #                             GotoStateAttackActionSpot(None, None); }
+    #     else switch (m_pawn.m_eStrategy) { ... }
+    # so a controller carrying that write-once latch never reaches the switch
+    # and the three case_ regions cannot touch it. It is set natively by
+    # AR6DZoneWave::SpawnATerrorist at 0x0040AD5C for anything a wave
+    # releases, and in script for a placed enemy whose zone is a wave spawn
+    # point; 48% of live terrorists on a stock disc carry it. These checks
+    # fail if anyone deletes case_wave or re-describes NoThreat as ending in
+    # the switch.
+    NOTHREAT = 0x169CDB                     # R6TerroristAI.NoThreat
+    _nt = Script.at(base, NOTHREAT)
+    check("the state holding the wave arm is the one this was measured on",
+          (_nt.disk_len, _nt.mem_len) == (785, 1040),
+          str((_nt.disk_len, _nt.mem_len)))
+    _st, _nw = A.REGIONS["case_wave"][1], A.REGIONS["case_wave"][2]
+    check("the wave arm sits where it was measured, inside that state",
+          base.find(_st) == 0x169F8C, "0x%X" % base.find(_st))
+    check("it is a GotoStateAttackActionSpot call becoming a GotoState, "
+          "equal length on disk",
+          _st == bytes.fromhex("1b7f052a2a16")
+          and _nw == bytes.fromhex("71216a0c160b")
+          and len(_st) == len(_nw))
+    check("its replacement names HuntRainbow -- the same name index the "
+          "guard-point arm already uses, so no name is added",
+          _nw[1:4] == A.REGIONS["case_guardpoint"][2][2:5] == b"\x21\x6a\x0c")
+    _spliced, _n = A.apply(base, "case_wave", True)
+    _sc2 = Script.at(_spliced, NOTHREAT)
+    check("applying it keeps the container length and BOTH block lengths, "
+          "and every jump still lands on a token boundary",
+          _n == 1 and len(_spliced) == len(base)
+          and (_sc2.disk_len, _sc2.mem_len) == (785, 1040))
+    check("the spliced block re-assembles byte-identical, which is what "
+          "proves the memory length rather than assuming it",
+          _sc2.assemble()[0]
+          == _spliced[NOTHREAT + 4:NOTHREAT + 4 + _sc2.disk_len])
+    check("it reads back as applied and reverts exactly",
+          A.reads(_spliced, "case_wave")
+          and A.apply(_spliced, "case_wave", False)[0] == base)
+    def _hunt_regions(**kw):
+        eff = PROFILE.effective(dict(PROFILE.defaults(), **kw))
+        return sorted(str(e.params.get("which"))
+                      for e in PROFILE.build_data(eff) if e.op == "ai_hunt")
+    check("both hunt settings emit it, because a wave enemy has no authored "
+          "patrol to preserve",
+          _hunt_regions(ai_hunt="guard") == ["case_guardpoint", "case_wave"]
+          and _hunt_regions(ai_hunt="all")
+          == ["case_guardpoint", "case_patrolarea", "case_patrolpath",
+              "case_wave"]
+          and _hunt_regions() == [])
+    check("and the module says NoThreat gates on the wave flag before the "
+          "switch, rather than ending in the switch",
+          "m_bSpawnedByWave" in A.__doc__ and "case_wave" in A.__doc__)
+    check("written offline and split screen, never online",
+          __import__("re").search(A.SELECT, "/COMMONOFF.LIN")
+          and __import__("re").search(A.SELECT, "/COMMON_SS.LIN")
+          and not __import__("re").search(A.SELECT, "/COMMON.LIN"))
+
+    # ---- the two cards ---------------------------------------------------
+    d0 = PROFILE.defaults()
+
+    def emits(**kw):
+        eff = PROFILE.effective(dict(d0, **kw))
+        return sorted(
+            (e.op, str(e.params)) for e in PROFILE.build_data(eff)
+            if (e.op == "ai_hunt" and "range:" in str(e.params))
+            or (e.op == "ini_values"
+                and "m_fMinDistToThrowGrenade" in str(e.params)))
+
+    r = PROFILE.setting("ai_grenade_range")
+    check("the ceiling card reaches the profile, shipped by default",
+          r is not None and r.default == "off" and r.enabled
+          and r.confidence in BADGES)
+    check("its choices are the generated ones plus never, and none of them "
+          "re-offers the shipped value",
+          [c.value for c in r.choices]
+          == ["off"] + [str(u) for u in A.GATE_UNITS
+                        if u != A.GATE_STOCK_UNITS] + ["0"])
+    check("its label and help describe a ceiling, not a floor",
+          "How far out" in r.label and "MORE grenades" in r.help)
+    check("stock emits nothing, and a choice emits one region",
+          emits() == [] and emits(ai_grenade_range="3000")
+          == [("ai_hunt", str({"which": "range:3000"}))])
+
+    # The genuine floor is not bytecode at all: the refusal in
+    # R6TerroristAI.ThrowingGrenade.CheckDistance reads it straight out of
+    # the settings file and adds 50 units, so the shipped 500 is 5.5 m.
+    m = PROFILE.setting("ai_grenade_min")
+    check("the floor card reaches the profile, shipped by default",
+          m is not None and m.default == "off" and m.enabled
+          and m.confidence in BADGES)
+    check("it offers the floors below the shipped one, ending at your feet",
+          [c.value for c in m.choices] == ["off", "250", "100", "0"])
+    check("it emits a settings-file edit rather than a region",
+          emits(ai_grenade_min="0")
+          == [("ini_values", str({"values":
+                                  {"m_fMinDistToThrowGrenade": "0"}}))])
+    check("and the two are independent, because they are different gates",
+          emits(ai_grenade_range="4000", ai_grenade_min="100")
+          == sorted(emits(ai_grenade_range="4000")
+                    + emits(ai_grenade_min="100")))
+
+    keys = [k for k in store.index if k.endswith("VOKES0.IMG/R6GAMESETTINGS.INI")]
+    if keys:
+        ini = store.original(store.index[keys[0]]["archive"],
+                             "/R6GAMESETTINGS.INI")[0]
+        check("the settings file really carries that key, at the shipped 500",
+              ini.count(b"m_fMinDistToThrowGrenade") == 1
+              and b"m_fMinDistToThrowGrenade=500" in ini)
+        from tcps2 import transforms
+        got, n = transforms.set_ini_values(
+            ini, {"m_fMinDistToThrowGrenade": "0"})
+        check("and the edit rewrites exactly that one line",
+              n == 1 and b"m_fMinDistToThrowGrenade=0\r\n" in got
+              and b"m_fMinDistToThrowGrenade=500" not in got)
+
+
+def run_property_bools(args):
+    """A bool default-property tag is FOUR bytes, and the walker knows it.
+
+    This game encodes one as `compact(name), info, 0x00` -- info 0x53 for
+    False, 0xD3 for True. 0xD3 is type 3 in the low nibble, SIZE CODE 5 in
+    bits 4-6, and the value in bit 7. Code 5 means "a byte follows giving the
+    size", and that byte is literally zero, so the size byte is PRESENT and
+    must be consumed even though there is no payload.
+
+    `walk_properties` gets this right, and it is worth a test saying so,
+    because the code reads as though it might not: the bool branch does
+    `continue` before `pos += size`, which looks like it skips the size byte.
+    It does not -- the generic size dispatch above has already consumed it.
+    What the branch actually skips is the array-index read, and that IS
+    necessary: on every other type bit 7 of `info` means "an array element
+    index follows", but on a bool bit 7 is the value, so reading an index
+    would consume a byte that is not there.
+
+    Ground truth is Engine.GameInfo's own defaults, whose length the package
+    states independently of anything this parser does.
+    """
+    print()
+    print("[Rainbow Six 3 -- bool property tags are four bytes]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, upackage
+
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith("/COMMON_SS.LIN")]
+    if not keys:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    buf = lin.decompress(store.original(
+        store.index[keys[0]]["archive"], "/COMMON_SS.LIN")[0])
+
+    AT, END, TAGS = 0x05A627, 0x05A701, 23
+    check("the nine bools are on the disc as 0xD3 followed by a zero size "
+          "byte", buf[0x05A639:0x05A649].hex()
+          == "5328d3005428d3005528d3005928d300")
+
+    pkgs = dict(upackage.packages(buf))
+    check("the package that owns them is the one we measured against",
+          0x009E17 in pkgs)
+    names = pkgs[0x009E17].names()
+    idx, _ = upackage.compact_index(buf, 0x05A639)
+    check("and the first bool's name index resolves in it",
+          idx == 2579 and names[idx] == "bRestartLevel")
+
+    got = upackage.walk_properties(buf, AT, names, limit=300)
+    check("the property list walks to its terminator at all", got is not None)
+    if got is None:
+        return
+    check("it finds every tag the block holds, and no more",
+          len(got) == TAGS, "%d tags" % len(got))
+
+    bools = [(nm, info, off) for nm, info, off in got if (info & 0x0F) == 3]
+    check("nine of them are bools, all True",
+          len(bools) == 9 and all(i == 0xD3 for _n, i, _o in bools))
+    check("and they are named what the package says",
+          [nm for nm, _i, _o in bools]
+          == ["bRestartLevel", "bPauseable", "bCanChangeSkin",
+              "bCanViewOthers", "bWaitingToStartMatch", "bChangeLevels",
+              "bLocalLog", "bWorldLog", "m_bCompilingStats"])
+    # The off-by-one this guards: under-consuming the size byte would step
+    # each bool by 3 instead of 4, and the nine of them would drift nine
+    # bytes before the terminator ever came up.
+    steps = [b[2] - a[2] for a, b in zip(bools, bools[1:])]
+    check("each consecutive bool is exactly four bytes after the last",
+          steps == [4] * 8, str(steps))
+    check("the value is bit 7 of the info byte",
+          all(((i >> 7) & 1) == 1 for _n, i, _o in bools))
+
+    # The strongest assertion available: the block's own end, which the
+    # package states and the parser has to arrive at independently. Walked
+    # rather than searched -- scanning for the terminator's name index byte
+    # by byte finds a spurious earlier match, because a compact index can
+    # start mid-value.
+    def _end_of(pos):
+        import struct as _st
+        from tcps2.upackage import T_BOOL, T_STRUCT, _SIZES
+        for _ in range(300):
+            tag = pos
+            ni, pos = upackage.compact_index(buf, pos)
+            if names[ni] == "None":
+                return tag, pos
+            nfo = buf[pos]
+            pos += 1
+            pt = nfo & 0x0F
+            if pt == T_STRUCT:
+                _x, pos = upackage.compact_index(buf, pos)
+            cd = (nfo >> 4) & 7
+            if cd in _SIZES:
+                sz = _SIZES[cd]
+            elif cd == 5:
+                sz = buf[pos]
+                pos += 1
+            elif cd == 6:
+                sz = _st.unpack_from("<H", buf, pos)[0]
+                pos += 2
+            else:
+                sz = _st.unpack_from("<I", buf, pos)[0]
+                pos += 4
+            if pt == T_BOOL:
+                continue
+            if nfo & 0x80:
+                _x, pos = upackage.compact_index(buf, pos)
+            pos += sz
+        return None, None
+
+    term, end = _end_of(AT)
+    check("and the list terminates exactly where the package says",
+          end == END, "terminator 0x%06X, end 0x%06X"
+          % (term or 0, end or 0))
+    check("so the whole block is the length it declares",
+          end is not None and end - AT == 218,
+          str(None if end is None else end - AT))
+
+def run_impact_puffs(args):
+    """A private ring of emitter actors, so impacts stop sharing one.
+
+    Two walls stood between the game and several puffs at once. The first was
+    an engine-wide rate limit -- see `rsedecal.BURST_GATE` -- and removing it
+    revealed the second: there is exactly ONE pooled emitter per material, and
+    re-firing a busy one runs it through Init -> Reset, which zeroes the live
+    particles. So rapid fire cancelled its own dust, which is what it looked
+    like in play: the puff stops and jumps to the newest hit.
+    """
+    print()
+    print("[Rainbow Six 3 -- a ring of impact puffs]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import rsedecal as D, rsepuffs as P
+    from tcps2.iso import Iso
+    from tcps2.overlay import open_overlay
+
+    with Iso(args.rs3data) as iso:
+        ov = open_overlay(iso, PROFILE.overlays[0])
+        live = {va: ov.read_word(va)
+                for va in (P.HOOK_AT, P.HOOK_AT + 4, P.RESUME)}
+
+    # ---- the hook ---------------------------------------------------------
+    # The displaced instruction is NOT re-done, so it has to be dead. It is:
+    # the quad at $sp+0x40 that the four swc1 before it build is never read
+    # back, and the only lq/sq in the function are the callee-saved spills at
+    # $sp+0x00/0x10/0x20. Capstone mis-decodes EE quadword ops as `.word`, so
+    # that had to be checked by raw opcode -- 0x1E is lq and 0x1F is sq.
+    check("the hook site is the instruction we measured, and still stock",
+          live[P.HOOK_AT] == P.HOOK_STOCK == 0xE7A0004C,
+          "0x%08X" % live[P.HOOK_AT])
+    check("what replaces it is a jump into the cave",
+          (P.HOOK >> 26) == 0x02
+          and ((P.HOOK & 0x03FFFFFF) << 2) == P.TRAMPOLINE)
+    check("the delay slot still runs and the cave resumes just past it",
+          live[P.HOOK_AT + 4] == 0x8E430384
+          and P.RESUME == P.HOOK_AT + 8
+          and live[P.RESUME] == 0x10600059)
+    check("and it sits upstream of the half-second dust gate, so the ring "
+          "does not depend on that gate either way",
+          P.HOOK_AT < D.BURST_GATE)
+
+    # ---- the cave ---------------------------------------------------------
+    ws = P.words()
+    vas = [va for va, _w in ws]
+    check("the cave is emitted as cheat rows, never as disc words",
+          all(va < 0x00100000 or va == P.HOOK_AT for va in vas))
+    check("the pool's RAM is NEVER emitted -- a row there would clear the "
+          "level stamp every frame and respawn the ring forever",
+          not [va for va in vas if P.POOL_RAM <= va < P.POOL_RAM_END])
+    check("no row lands on another feature's cave",
+          not [va for va in vas if 0x000F0000 <= va < 0x000F2C00])
+    check("every row is inside the block it claims, or is the hook",
+          all(P.FIRE <= va < P.BLOCK_END or va == P.HOOK_AT for va in vas))
+    check("and the rows are unique", len(set(vas)) == len(vas))
+
+    # ---- the ring size ----------------------------------------------------
+    # A ring costs what is ALIVE, not what it is wide, so a bigger ring costs
+    # nothing for one shooter -- it only stops the wrapping. A puff lives
+    # ~1.10 s and a FAMAS G2 fires 18.3 rounds a second, so 24 is the
+    # smallest that never wraps for the gun the operatives actually carry,
+    # and it still absorbs a nine-pellet shotgun pull in one frame.
+    sizes = {n: dict(P.words(n)) for n in (12, 16, 24, 32)}
+    check("the size is one 16-bit immediate and nothing else moves",
+          len({sizes[n][P.COUNT_AT] for n in sizes}) == 4
+          and all(sizes[12][va] == sizes[32][va]
+                  for va, _w in ws if va != P.COUNT_AT))
+    check("the immediate really carries the number asked for",
+          all((sizes[n][P.COUNT_AT] & 0xFFFF) == n for n in sizes))
+    check("a size outside the ring's bounds is refused, not truncated",
+          _raises(lambda: P.words(0), P.PuffError)
+          and _raises(lambda: P.words(P.COUNT_MAX + 1), P.PuffError))
+    check("the default ring is 16 and the ceiling is 32, and the card "
+          "agrees with the module rather than drifting from it",
+          P.COUNT_DEFAULT == 16 and P.COUNT_MAX == 32
+          and PROFILE.setting("impact_puff_count").default
+          == str(P.COUNT_DEFAULT))
+
+    # ---- what a puff's life actually is ----------------------------------
+    # NOT its LifetimeRange. The engine sets AllParticlesDead as soon as the
+    # spawn window closes, because RespawnDeadParticles is false -- measured
+    # in a savestate with the flag set and three particles still counted --
+    # and AEmitter::Tick then re-parks the actor, which stops it drawing.
+    # So visible life is MaxParticles / InitialParticlesPerSecond. At the
+    # shipped 3 that is 0.05 s, two frames, which is why the first build
+    # looked like it had done nothing: at 18 rounds a second, 0.05 s of life
+    # averages 0.9 puffs alive and two can never coexist at ANY ring size.
+    check("a puff's life is its spawn window, and the shipped one is two "
+          "frames", abs(P.visible_seconds(3) - 0.05) < 1e-9
+          and abs(P.visible_seconds(P.MAXPART_DEFAULT) - 0.20) < 1e-9)
+    _lens = {n: dict(P.words(particles=n)) for n in (3, 6, 12, 24)}
+    check("the length is one immediate and nothing else moves",
+          len({_lens[n][P.MAXPART_AT] for n in _lens}) == 4
+          and all(_lens[3][va] == _lens[24][va]
+                  for va, _w in ws if va != P.MAXPART_AT))
+    check("the immediate carries the number asked for",
+          all((_lens[n][P.MAXPART_AT] & 0xFFFF) == n for n in _lens))
+    check("a length outside its bounds is refused",
+          _raises(lambda: P.words(particles=0), P.PuffError)
+          and _raises(lambda: P.words(particles=P.MAXPART_MAX + 1),
+                      P.PuffError))
+    _pl = PROFILE.setting("impact_puff_length")
+    check("the length card reaches the profile and needs the ring on",
+          _pl is not None and _pl.default == str(P.MAXPART_DEFAULT)
+          and _pl.requires == {"impact_puffs": (True,)})
+    check("and it offers the shipped value, so the flicker can be compared",
+          "3" in [c.value for c in _pl.choices])
+
+    # ---- the profile ------------------------------------------------------
+    d0 = PROFILE.defaults()
+
+    def plan(**kw):
+        eff = PROFILE.effective(dict(d0, **kw))
+        r = PROFILE.build_pnach(eff)
+        return ([e.va for e in r if e.va == P.HOOK_AT],
+                [e.va for e in r if e.va == D.BURST_GATE],
+                len([e for e in r if P.FIRE <= e.va < P.BLOCK_END]))
+
+    check("stock writes neither the hook nor the cave", plan() == ([], [], 0))
+    _h, _g, _n = plan(impact_puffs=True)
+    check("turning it on writes the hook and the whole cave",
+          _h == [P.HOOK_AT] and _n == len(ws) - 1)
+    # Not redundancy: with the limit gone, every shot re-fires the game's one
+    # shared actor and Reset kills the burst already playing. That IS the
+    # artifact the ring cures, so the two must never both be on.
+    check("the dust gate and the ring are mutually exclusive, and the ring "
+          "wins",
+          plan(blast_puffs=True, impact_puffs=True)[1] == []
+          and plan(blast_puffs=True)[1] == [D.BURST_GATE])
+    check("and the card says so too, so the GUI greys it out rather than "
+          "letting them collide silently",
+          PROFILE.setting("blast_puffs").requires == {"impact_puffs": [False]})
+    check("the size card follows the ring and needs it on",
+          PROFILE.setting("impact_puff_count").requires
+          == {"impact_puffs": (True,)}
+          and [e.value for e in PROFILE.build_pnach(PROFILE.effective(dict(
+              d0, impact_puffs=True, impact_puff_count="32")))
+              if e.va == P.COUNT_AT] == [sizes[32][P.COUNT_AT]])
+    s = PROFILE.setting("impact_puffs")
+    check("the card reaches the profile, off by default, and is "
+          "RAM rather than disc so it needs no re-apply",
+          s is not None and s.default is False and s.enabled
+          and s.confidence in BADGES and s.touches == "ram")
+
+def run_keep_viewport(args):
+    """A dead player stops stealing the other player's screen (2026-09-26).
+
+    `R6GameInfo.DeployCharacters` captures the local player's viewport, has
+    `CreateRainbowTeam` rebuild the squad, then reassigns its own parameter
+    to whoever leads the team now and hands THAT controller the captured
+    viewport -- without unbinding the previous owner. With player 1 dead the
+    leader is player 2, so both viewports end up on his controller and
+    player 1's buttons fire on his weapon.
+
+    The fix redirects the assignment's destination at an unused local, so
+    the cast still runs and its result is discarded. Two bytes, both inside
+    one compact index, which is why disk and memory length are identical by
+    construction rather than by arithmetic.
+    """
+    print()
+    print("[Rainbow Six 3 -- a dead player keeps his own screen]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rseviewport as V
+    from tcps2.uscode import Script
+
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    plains = {}
+    for path in ("/COMMON_SS.LIN", "/COMMONOFF.LIN", "/COMMON.LIN"):
+        keys = [k for k in store.index if k.endswith(path)]
+        if keys:
+            plains[path] = lin.decompress(store.original(
+                store.index[keys[0]]["archive"], path)[0])
+    if "/COMMON_SS.LIN" not in plains:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    base = plains["/COMMON_SS.LIN"]
+
+    check("it is one region, and an equal-length before and after",
+          len(V.REGIONS) == 1
+          and all(len(st) == len(nw) and st != nw
+                  for _n, st, nw in V.REGIONS))
+    # The whole edit is one compact index. Nothing else may move: this
+    # region sits in a block with NO trailing filler, so there is nowhere to
+    # pad and nothing to delete.
+    _n, _st, _nw = V.REGIONS[0]
+    _diff = [i for i, (a, b) in enumerate(zip(_st, _nw)) if a != b]
+    check("exactly two bytes change, and they are adjacent",
+          _diff == [2, 3], str(_diff))
+    check("and they are the destination of the assignment, not the call",
+          _st[:2] == b"\x0f\x00" and _st[2:4] == b"\x59\x01"
+          and _nw[2:4] == b"\x5c\x10")
+    # SetController is called from BOTH arms of the branch, so the call
+    # alone matches twice -- the anchor has to carry the reassignment.
+    check("the call alone would not be unique, which is why the region "
+          "carries more than the call",
+          base.count(b"\x67\xda") > 1)
+    for path, plain in plains.items():
+        check("%s: the stock run appears exactly once and the replacement "
+              "not at all" % path[1:],
+              plain.count(_st) == 1 and plain.count(_nw) == 0)
+
+    DEPLOY = 0x1C5E06                      # R6GameInfo.DeployCharacters
+    SIZES = (210, 295)
+    check("the function is the one this was measured on",
+          (Script.at(base, DEPLOY).disk_len,
+           Script.at(base, DEPLOY).mem_len) == SIZES,
+          str((Script.at(base, DEPLOY).disk_len,
+               Script.at(base, DEPLOY).mem_len)))
+    got, n = V.apply(base, True)
+    check("it applies, keeps the package length, and changes only those "
+          "two bytes in five megabytes",
+          n == 1 and len(got) == len(base)
+          and sum(1 for a, b in zip(base, got) if a != b) == 2)
+    check("the block still parses at its shipped disk AND memory length",
+          (Script.at(got, DEPLOY).disk_len,
+           Script.at(got, DEPLOY).mem_len) == SIZES)
+    check("it reads back, asking twice is a no-op, and it reverts exactly",
+          V.reads(got) and not V.reads(base)
+          and V.apply(got, True) == (got, 0)
+          and V.apply(got, False)[0] == base)
+
+    # It must not want any byte the friendly-fire work wants.
+    from tcps2 import rseff
+    _mine = _changed(base, got)
+    for _o in ("noside", "trigger:5:noside", "playerkill:5:noside",
+               "fail_on_kill"):
+        _other = _changed(base, rseff.apply(base, _o)[0])
+        check("it touches none of the bytes %s does" % _o,
+              _mine and not (_mine & _other))
+        _a = V.apply(rseff.apply(base, _o)[0], True)[0]
+        _b = rseff.apply(V.apply(base, True)[0], _o)[0]
+        check("and composes with %s in either order, byte for byte" % _o,
+              _a == _b and len(_a) == len(base))
+
+    d0 = PROFILE.defaults()
+    s = PROFILE.setting("keep_viewport")
+    check("the card reaches the profile, off by default",
+          s is not None and s.default is False and s.enabled
+          and s.confidence in BADGES and s.group == "Split Screen")
+    _e = [e for e in PROFILE.build_data(PROFILE.effective(
+        dict(d0, keep_viewport=True))) if e.op == "keep_viewport"]
+    check("stock writes nothing; on, it writes one edit",
+          not [e for e in PROFILE.build_data(PROFILE.effective(d0))
+               if e.op == "keep_viewport"] and len(_e) == 1)
+    # DeployCharacters asserts NM_Standalone, so the online package could
+    # not reach it -- but the selector says so too rather than relying on it.
+    check("offline and split screen only, never online",
+          _e[0].matches("/COMMONOFF.LIN") and _e[0].matches("/COMMON_SS.LIN")
+          and not _e[0].matches("/COMMON.LIN"))
+
+def run_friendly_fire(args):
+    """Teammates who turn on you, and a mission you can fail (2026-09-25).
+
+    Read-only, against the SHIPPED packages. Both options are region
+    rewrites that must keep every script block's disk AND memory length, and
+    must not move the package's creation order -- so they are checked the
+    same way every other script edit here is.
+    """
+    print("\n[Rainbow Six 3 -- friendly fire]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    import re
+    from tcps2 import dataedit, lin, rseff
+    from tcps2.uscode import Script
+
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    plains = {}
+    for path in ("/COMMON_SS.LIN", "/COMMONOFF.LIN", "/COMMON.LIN"):
+        keys = [k for k in store.index if k.endswith(path)]
+        if keys:
+            plains[path] = lin.decompress(store.original(
+                store.index[keys[0]]["archive"], path)[0])
+    if "/COMMON_SS.LIN" not in plains:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    base = plains["/COMMON_SS.LIN"]
+
+    # "retaliate" used to carry five regions that marked the killer with
+    # m_bSuicided and taught SeePlayer / IsBeingAttacked to read it. Measured
+    # on the live game, IsEnemy is a BITMASK test over m_iTeam /
+    # m_iEnemyTeams and never consults that bool, so none of it could work.
+    # Writing the player's m_iTeam = 1 by hand made the squad open fire at
+    # once, so the whole feature is now one region in the trigger table.
+    check("retaliation has no regions of its own any more",
+          "retaliate" not in rseff.REGIONS
+          and sorted(rseff.REGIONS) == ["fail_on_hit", "fail_on_kill",
+                                        "noside"])
+    check("and the failure options still touch two and one region",
+          [len(rseff.REGIONS[k]) for k in
+           ("fail_on_hit", "fail_on_kill")] == [2, 1])
+    check("every region is pinned as an equal-length before and after",
+          all(len(st) == len(nw) and st != nw
+              for v in rseff.REGIONS.values() for _n, st, nw in v))
+    # Content-matched, not offset-matched: COMMON.LIN carries the same
+    # bytecode a byte further along, so an offset table would not survive it.
+    for path, plain in plains.items():
+        check("%s: every stock region appears exactly once" % path[1:],
+              all(plain.count(st) == 1
+                  for v in rseff.REGIONS.values() for _n, st, _nw in v))
+
+    for which in ("fail_on_hit", "fail_on_kill", "noside"):
+        got, n = rseff.apply(base, which, True)
+        check("%s: applies, keeps the file length, reads back" % which,
+              n == len(rseff.REGIONS[which]) and len(got) == len(base)
+              and rseff.reads(got, which) and not rseff.reads(base, which))
+        check("%s: asking twice is a no-op" % which,
+              rseff.apply(got, which, True) == (got, 0))
+        check("%s: switching it off restores the file byte for byte" % which,
+              rseff.apply(got, which, False)[0] == base)
+
+    # The four rewritten functions must still parse at their shipped sizes.
+    SIZES = {0x138541: (419, 549),    # R6RainbowAI.SeePlayer
+             0x1382C6: (223, 281),    # R6RainbowAI.IsBeingAttacked
+             0x139435: (405, 536),    # R6RainbowAI.PlaySoundDamage
+             0x1C39B3: (309, 424)}    # R6GameInfo.SetTeamKillerPenalty
+    stock_sizes = {at: (Script.at(base, at).disk_len, Script.at(base, at).mem_len)
+                   for at in SIZES}
+    check("the four functions are the ones these edits were measured on",
+          stock_sizes == SIZES, str(stock_sizes))
+    # They cannot both be applied: both rewrite the downed arm, so whichever
+    # goes second cannot find its own stock bytes. That is not a limitation
+    # to work around, it is the reason `requires` keeps them exclusive -- and
+    # asserting it here is what would catch an emit that tried both.
+    check("applying one and then the other is refused, not silently merged",
+          _raises(lambda: rseff.apply(rseff.apply(base, "trigger:5")[0],
+                                      "fail_on_hit"), rseff.FriendlyFireError))
+    for one in ("trigger:5", "fail_on_hit"):
+        got, _n = rseff.apply(base, one)
+        after = {at: (Script.at(got, at).disk_len, Script.at(got, at).mem_len)
+                 for at in SIZES}
+        check("%s alone parses at exactly the shipped sizes" % one,
+              after == SIZES and len(got) == len(base), str(after))
+    r_only = _changed(base, rseff.apply(base, "trigger:5")[0])
+    f_only = _changed(base, rseff.apply(base, "fail_on_hit")[0])
+    # They DO want the same bytes -- both rewrite the downed arm -- which is
+    # exactly why `requires` makes them mutually exclusive.
+    check("the squad edit and the failure option want the same region, which "
+          "is why only one may be on", r_only and f_only and (r_only & f_only))
+
+    check("an unknown option is refused rather than guessed",
+          _raises(lambda: rseff.apply(base, "nope"), rseff.FriendlyFireError))
+
+    for key, label in (("ff_retaliate", "trigger:5"),
+                       ("ff_fail_mission", "fail_on_hit")):
+        s = PROFILE.setting(key)
+        check("%s reaches the profile, off by default" % key,
+              s is not None and s.default is False and s.enabled
+              and s.confidence in BADGES and s.group == "Teammates")
+    check("stock writes nothing",
+          not [e for e in PROFILE.build_data(PROFILE.effective(
+              PROFILE.defaults())) if e.op == "friendly_fire"])
+    eds = [e for e in PROFILE.build_data(PROFILE.effective(dict(
+        PROFILE.defaults(), ff_retaliate=True, ff_fail_mission=True)))
+        if e.op == "friendly_fire"]
+    check("with the failure option on, it wins the region outright",
+          len(eds) == 1 and eds[0].params["which"] == "fail_on_kill")
+    wounded = sorted(e.params["which"] for e in PROFILE.build_data(
+        PROFILE.effective(dict(PROFILE.defaults(), ff_retaliate=True,
+                               ff_fail_mission=True, ff_fail_when="wound")))
+        if e.op == "friendly_fire")
+    check("and asking for a wounding swaps which region set is written",
+          wounded == ["fail_on_hit"])
+    check("written offline and split screen, never online or multiplayer",
+          all(e.matches("/COMMONOFF.LIN") and e.matches("/COMMON_SS.LIN")
+              and not e.matches("/COMMON.LIN")
+              and not e.matches("/GARAGE_MP_C.LIN") for e in eds))
+    got = dataedit.OPS["friendly_fire"](base, {"which": "trigger:5"})
+    check("and through the real dispatch table it returns (bytes, count)",
+          isinstance(got, tuple) and len(got) == 2
+          and isinstance(got[0], bytes) and isinstance(got[1], int)
+          and len(got[0]) == len(base))
+
+    # ---- the trigger dial ------------------------------------------------
+    # How far a teammate has to be hurt, read off m_eHealth. There is no
+    # counter anywhere: a real tally needs a per-player int that script
+    # already references and nothing consumes, and no property in the
+    # package is both.
+    # A kill used to write nothing here and lean on SetTeamKillerPenalty.
+    # Measured after a team kill in Terrorist Hunt: the killed AI lights up
+    # with its death bools and NEITHER player gains a bit anywhere near
+    # R6Pawn's own properties (m_ePawnType 0x378, m_eHealth 0x37D), so no
+    # mark was written and the squad never turned. That function is declared
+    # on R6GameInfo and reached by NAME, so it only runs if the live game
+    # class inherits it -- which a Terrorist Hunt game need not.
+    check("every setting writes a region, a kill included",
+          sorted(rseff.TRIGGER) == ["1", "2", "3", "4", "5"]
+          and all(rseff.TRIGGER[k] for k in ("1", "2", "3", "4", "5")))
+    check("and a kill writes ONE region -- health 4-5 reach that arm by "
+          "fall-through, so it needs no wounded-arm entry like 1-3 do",
+          len(rseff.TRIGGER["5"]) == 1
+          and len(rseff.TRIGGER["4"]) == 1
+          and all(len(rseff.TRIGGER[k]) == 2 for k in ("1", "2", "3")))
+    check("each setting is equal-length regions, unique in every package",
+          all(len(st) == len(nw) and st != nw and plain.count(st) == 1
+              for k in ("1", "2", "3", "4", "5")
+              for _n, st, nw in rseff.TRIGGER[k]
+              for plain in plains.values()))
+    check("an unknown dial setting is refused",
+          _raises(lambda: rseff.apply(base, "trigger:9"),
+                  rseff.FriendlyFireError))
+    for k in ("1", "2", "3", "4", "5"):
+        one, n = rseff.apply(base, "trigger:" + k, True)
+        check("trigger %s applies, keeps the length, and reverts exactly" % k,
+              n == len(rseff.TRIGGER[k]) and len(one) == len(base)
+              and rseff.reads(one, "trigger:" + k)
+              and rseff.apply(one, "trigger:" + k, False)[0] == base)
+        after = {at: (Script.at(one, at).disk_len,
+                      Script.at(one, at).mem_len) for at in SIZES}
+        check("trigger %s leaves all four blocks at their shipped sizes" % k,
+              after == SIZES and len(one) == len(base), str(after))
+        # Levels 1-3 also rewrite the wounded-arm entry, because those health
+        # states reach the switch's wounded arm instead of falling through.
+        check("trigger %s writes %d region(s), which is what that health "
+              "state needs" % (k, len(rseff.TRIGGER[k])),
+              len(rseff.TRIGGER[k]) == (2 if k in ("1", "2", "3") else 1))
+
+    dial_b = _changed(base, rseff.apply(base, "trigger:1")[0])
+    check("every dial level writes the same region, so they are one feature",
+          bool(dial_b & r_only))
+    check("and the failure option wants it too, which is why the two are "
+          "mutually exclusive", bool(dial_b & f_only))
+
+    t = PROFILE.setting("ff_trigger")
+    check("the dial reaches the profile, defaulting to a kill, and is barred "
+          "when the mission-failure option is on",
+          t is not None and t.default == "5" and t.enabled
+          and t.requires == {"ff_retaliate": [True], "ff_fail_mission": [False]})
+    d0 = PROFILE.defaults()
+
+    def which(**kw):
+        return sorted(e.params["which"] for e in PROFILE.build_data(
+            PROFILE.effective(dict(d0, **kw))) if e.op == "friendly_fire")
+
+    check("the dial needs the squad option, and every level emits its own "
+          "region -- the team change IS the feature",
+          which(ff_trigger="1") == []
+          and which(ff_retaliate=True, ff_trigger="5")
+          == ["trigger:5:terrorists"])
+    check("and with it, the chosen setting is what gets written",
+          which(ff_retaliate=True, ff_trigger="2") == ["trigger:2:terrorists"])
+    check("turning on mission failure drops the dial rather than colliding",
+          which(ff_retaliate=True, ff_trigger="1", ff_fail_mission=True)
+          == ["fail_on_kill"])
+
+    # ---- whose side the traitor ends up on -------------------------------
+    # This module used to record that putting him on an unused team was out
+    # of reach, because the masks read 0 in the class defaults. They do --
+    # and they are filled per pawn at PostBeginPlay by
+    # R6GameInfo.SetDefaultTeamFriendlies, which switches on m_iTeam and
+    # takes its values from GetTeamNumBit(n) = 1 << n. The constants are on
+    # the disc, so widening what a side counts as an enemy is one byte per
+    # arm rather than a cave that walks every pawn.
+    MASKS_AT = 0x1C4BD5                    # R6GameInfo.SetDefaultTeamFriendlies
+    MASKS = (583, 703)
+    check("the mask function is the one this edit was measured on",
+          (Script.at(base, MASKS_AT).disk_len,
+           Script.at(base, MASKS_AT).mem_len) == MASKS,
+          str((Script.at(base, MASKS_AT).disk_len,
+               Script.at(base, MASKS_AT).mem_len)))
+    # Team 4 is not a number picked at random: it is the engine's own "could
+    # not put this player on a team" value, written only by
+    # R6TeamDeathMatchGame.ResetPlayerTeam, which is adversarial-only and
+    # overrides these masks anyway. So this cannot reach online play.
+    check("nobody's side is team 4, and the terrorists are still team 1",
+          rseff.ROGUE_TEAM == {"terrorists": 1, "noside": 4})
+    _bit = 1 << rseff.ROGUE_TEAM["noside"]
+    _masks = {name: nw[nw.find(b"\x2c") + 1]
+              for name, _st, nw in rseff.REGIONS["noside"]}
+    check("each arm keeps the side it already hated and adds nobody's side",
+          _masks == {"noside terrorists": 12 | _bit,
+                     "noside rainbow": 2 | _bit}, str(_masks))
+    check("and stock, both arms compute the mask with a call instead of a "
+          "constant, which is the room the edit spends",
+          all(b"\x1b" in st and b"\x2c" + bytes([m]) not in st
+              for (name, st, _nw), m in zip(rseff.REGIONS["noside"],
+                                            (12 | _bit, 2 | _bit))))
+    # The only filler in this module that RUNS. Every other padded region
+    # here hides its filler behind the payload's own jump; these two arms
+    # have 2 disk and 5 memory bytes to fill and a jump costs 3, so there is
+    # nowhere to put one. It reads Engine.Actor.Level, which R6GameInfo has
+    # by being an Actor -- and which the shipped bytecode reads through this
+    # same opcode 939 times, counted over every block in the package.
+    _pad = bytes.fromhex("018f")
+    check("both arms pad with the same one-byte object reference",
+          all(_pad in nw for _n, _st, nw in rseff.REGIONS["noside"]))
+    check("and the shipped package is full of that same read, so it cannot "
+          "fault", base.count(_pad) > 900, str(base.count(_pad)))
+
+    _ns, _ = rseff.apply(base, "noside")
+    _both, _ = rseff.apply(_ns, "trigger:5:noside")
+    _rev, _ = rseff.apply(rseff.apply(base, "trigger:5:noside")[0], "noside")
+    check("the masks and the team change compose, in either order, to the "
+          "same bytes", _both == _rev and len(_both) == len(base))
+    _sz = {at: (Script.at(_both, at).disk_len, Script.at(_both, at).mem_len)
+           for at in list(SIZES) + [MASKS_AT]}
+    check("and every block either of them touches still parses at its "
+          "shipped size", _sz == {**SIZES, MASKS_AT: MASKS}, str(_sz))
+    check("the masks alone leave the trigger's own blocks alone",
+          {at: (Script.at(_ns, at).disk_len, Script.at(_ns, at).mem_len)
+           for at in SIZES} == SIZES
+          and _changed(base, _ns) and not (_changed(base, _ns) & r_only))
+
+    _a5 = rseff._table("trigger:5")
+    _b5 = rseff._table("trigger:5:noside")
+    _diff = [(i, x, y) for (_n1, _s1, p), (_n2, _s2, q) in zip(_a5, _b5)
+             for i, (x, y) in enumerate(zip(p, q)) if x != y]
+    check("choosing a side changes exactly one byte of the trigger payload, "
+          "and that byte is the team", _diff == [(42, 1, 4)], str(_diff))
+    check("and the stock halves are identical, so both sides pin the same "
+          "site", [st for _n, st, _nw in _a5] == [st for _n, st, _nw in _b5])
+    check("an unknown side is refused rather than guessed",
+          _raises(lambda: rseff.apply(base, "trigger:5:sideways"),
+                  rseff.FriendlyFireError))
+
+    _s = PROFILE.setting("ff_rogue_side")
+    check("the side card reaches the profile, defaults to the terrorists, "
+          "and is barred when the mission-failure option is on",
+          _s is not None and _s.default == "terrorists" and _s.enabled
+          and _s.confidence in BADGES and _s.group == "Teammates"
+          and _s.requires == {"ff_retaliate": [True],
+                              "ff_fail_mission": [False]}
+          and sorted(c.value for c in _s.choices) == ["noside", "terrorists"])
+    check("the side card on its own writes nothing",
+          which(ff_rogue_side="noside") == [])
+    check("with the squad option on it picks the team, and nobody's side "
+          "brings the masks with it -- without them he is neutral, and the "
+          "bullet path zeroes damage against a neutral",
+          which(ff_retaliate=True) == ["trigger:5:terrorists"]
+          and which(ff_retaliate=True, ff_rogue_side="noside")
+          == ["noside", "trigger:5:noside"])
+    check("and the hurt dial still chooses the level underneath it",
+          which(ff_retaliate=True, ff_rogue_side="noside", ff_trigger="2")
+          == ["noside", "trigger:2:noside"])
+    check("mission failure drops the side and the masks with the dial",
+          which(ff_retaliate=True, ff_rogue_side="noside",
+                ff_fail_mission=True) == ["fail_on_kill"])
+    check("the masks go to offline and split screen only, never online",
+          all(e.matches("/COMMONOFF.LIN") and e.matches("/COMMON_SS.LIN")
+              and not e.matches("/COMMON.LIN")
+              for e in PROFILE.build_data(PROFILE.effective(dict(
+                  d0, ff_retaliate=True, ff_rogue_side="noside")))
+              if e.op == "friendly_fire"))
+
+    # ---- when the victim is the other PLAYER ------------------------------
+    # Reported from play: shooting player 2 did nothing. The shipped dial
+    # lives in R6RainbowAI.PlaySoundDamage, the AI's OWN damage handler, and
+    # a player pawn is not an R6RainbowAI, so none of it ran.
+    #
+    # R6Pawn.R6TakeDamage would have been the obvious single fix and is not
+    # script on PS2 at all -- 28 bytes that tail-call a native, with the
+    # whole damage body in C++. That is the same reason the dispatch never
+    # reached a player: PlaySoundDamage is chosen by a native virtual call
+    # on the victim's own controller.
+    PK_BLOCKS = {0x0F587F: (1069, 1444),   # R6Pawn.R6Died
+                 0x10B465: (283, 375)}     # R6PlayerController.PlaySoundDamage
+    check("the two player-side functions are the ones this was measured on",
+          {at: (Script.at(base, at).disk_len, Script.at(base, at).mem_len)
+           for at in PK_BLOCKS} == PK_BLOCKS,
+          str({at: (Script.at(base, at).disk_len, Script.at(base, at).mem_len)
+               for at in PK_BLOCKS}))
+    check("it is keyed by exactly the settings the dial offers, both sides",
+          sorted(rseff.PLAYERKILL) == sorted(
+              "trigger:%s%s" % (k, s) for k in "12345"
+              for s in ("", ":noside")))
+    # R6Died can only serve a KILL -- by the time it runs the victim is dead
+    # -- so the wounded notches need the controller's handler as well.
+    check("a kill takes two regions and every wounded notch takes three",
+          [len(rseff.PLAYERKILL["trigger:%s" % k]) for k in "12345"]
+          == [3, 3, 3, 2, 2])
+    check("every region is an equal-length before and after",
+          all(len(st) == len(nw) and st != nw
+              for v in rseff.PLAYERKILL.values() for _n, st, nw in v))
+    for path, plain in plains.items():
+        check("%s: every player-side stock run appears exactly once, and no "
+              "replacement is already there" % path[1:],
+              all(plain.count(st) == 1 and plain.count(nw) == 0
+                  for v in rseff.PLAYERKILL.values() for _n, st, nw in v))
+    for _k in ("playerkill:5", "playerkill:2", "playerkill:5:noside"):
+        _got, _n = rseff.apply(base, _k, True)
+        _sz = {at: (Script.at(_got, at).disk_len, Script.at(_got, at).mem_len)
+               for at in PK_BLOCKS}
+        check("%s applies, keeps the length and both block sizes, and "
+              "reverts exactly" % _k,
+              _n == len(rseff._table(_k)) and len(_got) == len(base)
+              and _sz == PK_BLOCKS and rseff.reads(_got, _k)
+              and rseff.apply(_got, _k, False)[0] == base, str(_sz))
+    # It must not want any of the bytes the shipped regions want -- those
+    # three already collide with each other by design, and a fourth
+    # collision would be silent.
+    _pk = _changed(base, rseff.apply(base, "playerkill:5")[0])
+    check("it touches none of the bytes the AI-side regions do",
+          _pk and not (_pk & r_only) and not (_pk & f_only))
+    for _o in ("noside", "trigger:5", "trigger:5:noside", "fail_on_kill"):
+        _a = rseff.apply(rseff.apply(base, _o)[0], "playerkill:5")[0]
+        _b = rseff.apply(rseff.apply(base, "playerkill:5")[0], _o)[0]
+        check("it composes with %s in either order, byte for byte" % _o,
+              _a == _b and len(_a) == len(base))
+    check("an unknown level or side is refused rather than guessed",
+          _raises(lambda: rseff.apply(base, "playerkill:9"),
+                  rseff.FriendlyFireError)
+          and _raises(lambda: rseff.apply(base, "playerkill:5:sideways"),
+                      rseff.FriendlyFireError))
+
+    _pv = PROFILE.setting("ff_player_victim")
+    check("the card reaches the profile, off by default, and "
+          "needs the squad option",
+          _pv is not None and _pv.default is False and _pv.enabled
+          and _pv.confidence in BADGES and _pv.group == "Teammates"
+          and _pv.requires == {"ff_retaliate": [True],
+                               "ff_fail_mission": [False]})
+    check("on its own it writes nothing", which(ff_player_victim=True) == [])
+    check("with the squad option it adds the player-side regions and leaves "
+          "the AI-side ones alone",
+          which(ff_retaliate=True, ff_player_victim=True)
+          == ["playerkill:5:terrorists", "trigger:5:terrorists"])
+    check("it follows the dial and the side rather than carrying its own",
+          which(ff_retaliate=True, ff_player_victim=True, ff_trigger="2",
+                ff_rogue_side="noside")
+          == ["noside", "playerkill:2:noside", "trigger:2:noside"])
+    check("and mission failure drops it with everything else",
+          which(ff_retaliate=True, ff_player_victim=True,
+                ff_fail_mission=True) == ["fail_on_kill"])
+
+    # Worth asserting because it is easy to read the loop above as a
+    # three-package test and it is really a two-file one: offline single
+    # player and split screen decompress to the SAME bytes.
+    check("COMMONOFF and COMMON_SS are byte-identical, so a region that is "
+          "unique in one is unique in the other by construction",
+          plains["/COMMONOFF.LIN"] == plains["/COMMON_SS.LIN"]
+          and plains["/COMMON.LIN"] != plains["/COMMON_SS.LIN"])
+
+    # ---- failing on a KILL rather than on a wounding ---------------------
+    # The same abort the wounding version uses, behind the dial's own health
+    # test at its top notch. Health 4-5 reach that arm by fall-through, so
+    # the test is the whole difference between a downing and a kill, and the
+    # wounded arm is left stock -- the "watch your fire" line survives.
+    k_only = _changed(base, rseff.apply(base, "fail_on_kill")[0])
+    check("the kill setting writes one region, the same one the squad edit "
+          "uses", k_only and (k_only & r_only))
+    check("it wants the same bytes as the wounding setting and as the dial, "
+          "which is what keeps all three mutually exclusive",
+          bool(k_only & f_only) and bool(k_only & dial_b))
+    check("it stops short of the wounded arm, which the wounding setting "
+          "rewrites as well", max(k_only) < max(f_only))
+    check("the health test it adds compares against 4, so only a 5 (dead) "
+          "passes", all(b"\x2c\x04" in nw
+                        for _n, _st, nw in rseff.REGIONS["fail_on_kill"]))
+    k_both, _ = rseff.apply(base, "fail_on_kill")
+    k_after = {at: (Script.at(k_both, at).disk_len,
+                    Script.at(k_both, at).mem_len) for at in SIZES}
+    check("with the squad edit on top it still parses at stock sizes",
+          k_after == SIZES and len(k_both) == len(base), str(k_after))
+    check("and it reads back on its own",
+          rseff.reads(k_both, "fail_on_kill")
+          and not rseff.reads(k_both, "fail_on_hit"))
+
+    w = PROFILE.setting("ff_fail_when")
+    check("the when-card reaches the profile, defaulting to a kill, and "
+          "needs the failure option",
+          w is not None and w.default == "kill" and w.enabled
+          and w.requires == {"ff_fail_mission": [True]}
+          and sorted(c.value for c in w.choices) == ["kill", "wound"])
+    check("the when-card alone writes nothing", which(ff_fail_when="wound") == [])
+
+
+
+
+
+# --------------------------------------------------- R6DecalGroup::Init ----
+#: The five branches of R6DecalGroup::Init that set up each pooled ring, and
+#: the merge point they all fall into. Entered only from the type dispatch at
+#: 0x00378B44 -- nothing else in the overlay branches into them.
+_DECAL_BRANCH = {0: 0x00378B78, 1: 0x00378C08, 2: 0x00378CB8,
+                 3: 0x00378D78, 4: 0x00378E00}
+_DECAL_MERGE = 0x00378EBC
+#: R6Decal's class-default projector bools: bProjectBSP, bProjectTerrain,
+#: bProjectStaticMesh, m_bProjectTransparent, bProjectOnParallelBSP.
+_DECAL_CDO = 0x8207
+
+
+def _decal_run(img, entry, patch, cdo):
+    """Straight-line emulation of one Init branch. Returns the field dict."""
+    mem = {0x37C: cdo & 0xFF, 0x37D: (cdo >> 8) & 0xFF, 0x371: None,
+           0x384: None}
+    reg = [0] * 32
+    va = entry
+    while va < _DECAL_MERGE:
+        w = patch.get(va, img.read_word(va))
+        op, rs, rt = w >> 26, (w >> 21) & 31, (w >> 16) & 31
+        rd, sa, fn = (w >> 11) & 31, (w >> 6) & 31, w & 63
+        imm = w & 0xFFFF
+        sim = imm - 0x10000 if imm & 0x8000 else imm
+        if op == 0x0C:                                    # andi
+            reg[rt] = reg[rs] & imm
+        elif op == 0x0D:                                  # ori
+            reg[rt] = reg[rs] | imm
+        elif op in (0x09, 0x19):                          # addiu / daddiu
+            reg[rt] = sim + reg[rs]
+        elif op == 0x0F:                                  # lui
+            reg[rt] = imm << 16
+        elif op == 0x24:                                  # lbu
+            reg[rt] = mem[imm]
+        elif op == 0x28:                                  # sb
+            mem[imm] = reg[rt] & 0xFF
+        elif op == 0x2B:                                  # sw
+            mem[imm] = reg[rt] & 0xFFFFFFFF
+        elif op == 0 and fn == 0x24:                      # and
+            reg[rd] = reg[rs] & reg[rt]
+        elif op == 0 and fn == 0x25:                      # or
+            reg[rd] = reg[rs] | reg[rt]
+        elif op == 0 and fn == 0x00:                      # sll
+            reg[rd] = (reg[rt] << sa) & 0xFFFFFFFF
+        elif op == 0 and fn == 0x2D:                      # daddu (move)
+            reg[rd] = reg[rs] | reg[rt]
+        elif op == 0x04 and rs == 0 and rt == 0:          # b
+            va += 4 + sim * 4
+            continue
+        reg[0] = 0
+        va += 4
+    return mem
+
+
+def _decal_branch_bools(img, patch, entry=_DECAL_BRANCH[4], cdo=_DECAL_CDO):
+    mem = _decal_run(img, entry, patch, cdo)
+    return (mem[0x37D] << 8) | mem[0x37C]
+
+
+def _decal_branch_fields(img, patch, entry=_DECAL_BRANCH[4]):
+    mem = _decal_run(img, entry, patch, _DECAL_CDO)
+    return mem[0x371], mem[0x384]
+
+
+def _decal_branch_pins(img, entry=_DECAL_BRANCH[4]):
+    """-> f(patch) -> the set of bool bits the branch WRITES.
+
+    A bit the branch stores comes out the same whatever the class default was;
+    a bit it merely inherits follows the default. Flipping one default bit at a
+    time separates the two.
+    """
+    def pins(patch):
+        out = set()
+        for bit in range(16):
+            a = _decal_branch_bools(img, patch, entry, _DECAL_CDO)
+            b = _decal_branch_bools(img, patch, entry, _DECAL_CDO ^ (1 << bit))
+            if a == b:
+                out.add(bit)
+        return out
+    return pins
+
+def run_blast_decals(args):
+    """Scattered shrapnel marks: two disc words and a cave (2026-09-25).
+
+    Three things had to be true at once and none of them is obvious:
+    the pooled explosion decals are born FLOOR-ONLY and AddDecal never
+    rewrites that; the game's own grenade decal path is DEAD, so the ring is
+    free but nothing fills it; and the cave that fills it has to reach a live
+    texture without hard-coding a pointer, because UObject addresses move
+    between loads.
+    """
+    print("\n[Rainbow Six 3 -- shrapnel marks from explosions]")
+    if not (args.soz or args.iso or args.rs3data):
+        print("  SKIP  needs --soz, --iso or --rs3data")
+        return
+    import struct
+    from tcps2 import rsedecal as D, rseclaymore as C
+    from tcps2.games.r6_3 import CAVE_WORDS, STOCK
+    img = SozImage.unpack(stock_container(args), PROFILE.overlays[0].base_va)
+
+    # ---- the disc words ---------------------------------------------------
+    # AddDecal never writes the projector bools, so a ring keeps whatever
+    # R6DecalGroup::Init gave it -- and Init builds the explosion ring as an
+    # opaque, hard-edged, floor-only SCORCH: bools 0x8C85 where the wall-hit
+    # branch leaves 0xA3C7, plus blend op 1 against 3.
+    #
+    # An earlier fix repointed the type dispatch so the ring borrowed the
+    # wall-hit branch. That looked right but handed it the wall-hit
+    # DrawScale, which is the same one the game's bullet holes use -- so
+    # making explosion marks bigger would have enlarged those too. The ring's
+    # own branch is patched in place instead, which leaves DrawScale free.
+    check("every branch word is the instruction we measured, and still stock",
+          all(img.read_word(va) == st and STOCK[va] == st
+              for va, st, _nw in D.BRANCH_WORDS))
+    check("and none of them is a no-op rewrite",
+          all(st != nw for _va, st, nw in D.BRANCH_WORDS))
+    check("the dispatch itself is left alone now",
+          img.read_word(0x00378B44) == 0x106200AD
+          and 0x00378B44 not in {va for va, _s, _n in D.BRANCH_WORDS})
+
+    # sin(90) is sine's global MAXIMUM, so a minProjectAngle of 90 can never
+    # win the min() that builds the acceptance threshold -- it stays
+    # sin(0.5 deg) and every surface up to 89.5 degrees off square is
+    # accepted. That is what made marks smear. A NEGATIVE angle caps it, and
+    # the game does exactly that for blood splats.
+    check("the incidence words are stock too, and write a negative angle",
+          all(img.read_word(va) == st and STOCK[va] == st
+              for va, st, _nw in D.INCIDENCE_WORDS)
+          and any((nw >> 26) == 0x0F and (nw & 0x8000)
+                  for _va, _st, nw in D.INCIDENCE_WORDS))
+    check("and one of them stores it to minProjectAngle at decal+0x384",
+          any((nw >> 26) == 0x2B and (nw & 0xFFFF) == 0x384
+              for _va, _st, nw in D.INCIDENCE_WORDS))
+
+    check("the DrawScale word is the lui holding 8.0f, and still stock",
+          img.read_word(D.DRAWSCALE) == D.DRAWSCALE_STOCK == 0x3C024100)
+    check("every offered size rebuilds a lui of the same register",
+          all((D.drawscale_word(x) >> 16) == (D.DRAWSCALE_STOCK >> 16)
+              for x in D.DRAWSCALES))
+    check("a size the top half of a float cannot carry is refused",
+          _raises(lambda: D.drawscale_word(1.1), D.DecalError))
+
+    # ---- no patched word may destroy a write the branch still needs ------
+    # The first version of INCIDENCE_WORDS overwrote the only writer of bit 1
+    # of decal+0x37C (bProjectTerrain) on the claim that patching 0x00378E14
+    # had made it dead. It had not: that word FEEDS it. Nothing caught it,
+    # because the resulting bool word was unchanged -- R6Decal's class default
+    # for that bool is already True, so the deleted store was writing a value
+    # the object already had.
+    #
+    # So compare PINNING rather than value. Emulate the branch once per bool
+    # with that bool's class default inverted: a bit the branch writes comes
+    # out the same either way, a bit it merely inherits follows the default.
+    # Every bit the STOCK branch pins, the PATCHED branch must still pin.
+    _pins = _decal_branch_pins(img)
+    check("stock, the explosion branch pins every bool it means to set",
+          _pins({}) == {1, 6, 7, 9, 10, 11, 13})
+    check("no shipped word silently deletes one of those writes",
+          _pins(dict((va, nw) for va, _s, nw in
+                     D.BRANCH_WORDS + D.INCIDENCE_WORDS)) >= _pins({}),
+          "lost: %s" % sorted(_pins({}) - _pins(dict(
+              (va, nw) for va, _s, nw in
+              D.BRANCH_WORDS + D.INCIDENCE_WORDS))))
+    check("and the branch still writes FrameBufferBlendingOp and the angle",
+          _decal_branch_fields(img, dict(
+              (va, nw) for va, _s, nw in D.BRANCH_WORDS + D.INCIDENCE_WORDS))
+          == (3, 0xC1F00000))
+    check("the patched ring ends up bit-for-bit the wall-hit ring's bools",
+          _decal_branch_bools(img, dict(
+              (va, nw) for va, _s, nw in D.BRANCH_WORDS + D.INCIDENCE_WORDS))
+          == _decal_branch_bools(img, {}, entry=0x00378C08) == 0xA3C7)
+
+    # ---- why only one puff of dust ever showed ---------------------------
+    # Not the pooled impact actor: a rate limit in the visual half, one float
+    # for the whole engine and a half-second window. The impact SOUND is
+    # played upstream of it, which is exactly the asymmetry that was reported
+    # -- three impacts heard, one seen.
+    check("the dust gate is the branch we measured, and still stock",
+          img.read_word(D.BURST_GATE) == D.BURST_GATE_STOCK == 0x45010047
+          and (D.BURST_GATE_STOCK >> 26) == 0x11
+          and ((D.BURST_GATE_STOCK >> 21) & 0x1F) == 0x08
+          and (D.BURST_GATE_STOCK >> 16) & 1)
+    check("0.5 is the constant it compares against, and it jumps past the "
+          "whole burst",
+          img.read_word(0x0056E3E4) == 0x3C033F00
+          and img.read_word(0x0056E3F8) == 0x46000836
+          and D.BURST_GATE + 4 + ((D.BURST_GATE_STOCK & 0xFFFF) << 2)
+          == 0x0056E520)
+    check("turning it off writes a nop, and the delay slot was already one "
+          "so nothing else moves",
+          D.BURST_GATE_OFF == 0 and img.read_word(D.BURST_GATE + 4) == 0)
+    _d0 = PROFILE.defaults()
+    _pf = PROFILE.setting("blast_puffs")
+    check("the card reaches the profile, off by default",
+          _pf is not None and _pf.default is False and _pf.enabled
+          and _pf.confidence in BADGES and _pf.touches == "ram")
+    check("off it writes nothing; on it writes exactly that one row",
+          not [e for e in PROFILE.build_pnach(PROFILE.effective(_d0))
+               if e.va == D.BURST_GATE]
+          and [(e.va, e.value, e.stock) for e in PROFILE.build_pnach(
+              PROFILE.effective(dict(_d0, blast_puffs=True)))
+              if e.va == D.BURST_GATE]
+          == [(D.BURST_GATE, D.BURST_GATE_OFF, D.BURST_GATE_STOCK)])
+    check("and it is a cheat row rather than a disc word, so it needs no "
+          "re-apply",
+          D.BURST_GATE not in PROFILE.stock_words
+          and not [e for e in PROFILE.build_edits(PROFILE.effective(
+              dict(_d0, blast_puffs=True)))
+              if getattr(e, "va", None) == D.BURST_GATE])
+    # It is not part of the shrapnel feature -- it is the engine's own
+    # limit -- but it IS mutually exclusive with the puff ring, because with
+    # the limit gone every shot re-fires the game's one shared actor and
+    # Reset kills the burst already playing.
+    check("it does not need the shrapnel marks, and is barred only by the "
+          "puff ring", _pf.requires == {"impact_puffs": [False]})
+
+    # ---- the hook --------------------------------------------------------
+    check("the hook is the first word of the explosion native's epilogue",
+          img.read_word(D.HIJACK_AT) == D.HIJACK_STOCK == 0xDFBF00A0
+          and STOCK[D.HIJACK_AT] == D.HIJACK_STOCK)
+    check("the displaced word is an `ld`, replaced by a `j` to the cave",
+          (D.HIJACK_STOCK >> 26) == 0x37 and (D.HIJACK >> 26) == 0x02
+          and ((D.HIJACK & 0x03FFFFFF) << 2) == D.CAVE)
+    check("the delay slot left behind is the self-contained lwc1",
+          img.read_word(D.HIJACK_AT + 4) == 0xC7B50004)
+
+    # ---- the cave --------------------------------------------------------
+    ws = D.words()
+    base = PROFILE.overlays[0].base_va
+    check("every cave word is below the ELF load base, where a pnach reaches",
+          base == 0x00100000 and ws and all(va < base for va, _w in ws))
+    check("and clear of the claymore cave, which owns 0x000F0000..0x000F0800",
+          min(va for va, _w in ws) >= 0x000F1000)
+    clay = {va for va, _w in C.words("2")} | {va for va, _w in C.words("1")}
+    check("the two caves share not one word address",
+          not (clay & {va for va, _w in ws}))
+    check("nor does either touch the map-wide spawn cave",
+          not ({va for va, _w in CAVE_WORDS} & {va for va, _w in ws}))
+    check("the cave is contiguous, one word every four bytes",
+          [va for va, _w in ws]
+          == list(range(D.CAVE, D.CAVE + 4 * len(ws), 4)))
+
+    tail = [w for _va, w in ws][-3:]
+    check("it ends by replaying the displaced load, then jumping back",
+          tail[0] == D.HIJACK_STOCK
+          and (tail[1] >> 26) == 0x02
+          and ((tail[1] & 0x03FFFFFF) << 2) == 0x00268BCC
+          and tail[2] == 0)
+    check("it never jumps to the hook itself, which would loop for ever",
+          all(((w & 0x03FFFFFF) << 2) != D.HIJACK_AT
+              for _va, w in ws if (w >> 26) == 0x02))
+    # A mark traces outward and is placed on what it hits, or not at all.
+    # v1 hung each projector in mid-air on its ray, which is what turned the
+    # marks into long smears: a projector that never meets a surface squarely
+    # stretches its texture over whatever it does reach.
+    # The FIRST Trace is the once-per-blast up-probe: it measures the
+    # clearance overhead so the lifted trace start cannot end up inside a
+    # ceiling. It asks for no material ($t3 = 0) and places no mark.
+    check("it calls Trace, then Trace, Rotation, AddDecal, Rotation, Impact",
+          [((w & 0x03FFFFFF) << 2) for _va, w in ws if (w >> 26) == 0x03]
+          == [0x0026EE80, 0x0026EE80, 0x0016DEC0, 0x00379780, 0x0016DEC0,
+              0x003F08C0])
+    # The material comes back from Trace's own out-pointer, which an earlier
+    # version passed as zero and threw away. UMaterial+0x50 is the R6*Effect
+    # class the impact cache is keyed on, so the mark can fire the impact the
+    # game itself would have played for that surface -- sound and sparks.
+    check("it asks the trace for the material rather than discarding it",
+          any((w >> 26) == 0x09 and ((w >> 21) & 31) == 29
+              and ((w >> 16) & 31) == 11 for _va, w in ws))
+    check("and reads the effect class off the material",
+          any((w >> 26) == 0x23 and (w & 0xFFFF) == 0x50 for _va, w in ws))
+    check("only a few marks fire one, not every mark",
+          any((w >> 26) == 0x0D and (w & 0xFFFF) == 3 for _va, w in ws))
+    # Measured on the live cache: 22 entries carry 17 distinct sound sets, so
+    # materials really do sound different -- but one set is shared by five
+    # slots and is the common wall. Firing on the first three marks that hit
+    # played that one three times, because most of a blast's rays land on the
+    # nearest surface. The three impacts must be three DIFFERENT materials.
+    check("an impact is skipped when its material already sounded",
+          sum(1 for _va, w in ws if (w >> 26) == 0x04) >= 6)
+    # The aim comes off the surface the trace found, not the ray that found
+    # it: a fragment arriving at a glancing angle would otherwise stretch its
+    # mark by 1/cos(incidence). FVector::Rotation writes pitch, yaw and a
+    # zero roll straight into the rotator slot AddDecal reads.
+    rot_stores = {(w & 0xFFFF) for _va, w in ws
+                  if (w >> 26) in (0x2B, 0x39) and ((w >> 21) & 31) == 29}
+    check("and does not write the rotator itself -- Rotation fills it",
+          not ({0x10, 0x14, 0x18} & rot_stores))
+    check("the normal is negated first, so the projector looks AT the wall",
+          sum(1 for _va, w in ws if (w >> 26) == 0x11
+              and ((w >> 21) & 31) == 16 and (w & 0x3F) == 0x07) == 3)
+    # A hit within a stone's throw of the epicentre is the floor the charge
+    # is standing on. Half a blast's rays point down, so without this most of
+    # the budget stacks up in one patch underfoot: six of twenty-four live
+    # marks were at a single point.
+    check("a hit right under the blast is skipped rather than marked",
+          any((w >> 26) == 0x11 and ((w >> 21) & 31) == 16
+              and (w & 0x3F) == 0x34 for _va, w in ws))
+    check("the trace asks for world geometry and not pawns",
+          any((w >> 26) == 0x0F and ((w >> 16) & 31) == 9 and (w & 0xFFFF) == 0
+              for _va, w in ws))
+    check("and hands it the ready-made zero extent rather than a stack vector",
+          any((w >> 26) == 0x0F and ((w >> 16) & 31) == 10
+              and (w & 0xFFFF) == ((0x005D5680 + 0x8000) >> 16)
+              for _va, w in ws))
+
+    # $sp is lowered once and raised once, and the early bails must reach the
+    # exit WITHOUT having lowered it -- otherwise a blast with no texture
+    # returns on a frame 0x40 bytes adrift and the caller's epilogue reads
+    # the wrong stack.
+    adj = [(va, struct.unpack("<h", struct.pack("<H", w & 0xFFFF))[0])
+           for va, w in ws
+           if (w >> 26) == 0x09 and ((w >> 21) & 31) == 29 and ((w >> 16) & 31) == 29]
+    check("the scratch frame is opened once, closed once, and nets to zero",
+          len(adj) == 2 and sum(a for _va, a in adj) == 0, str(adj))
+    check("and it is closed before the exit, so a bail never lands mid-frame",
+          adj[0][1] < 0 < adj[1][1]
+          and adj[1][0] < D.CAVE + 4 * (len(ws) - 3))
+
+    # The $sp discipline, which is the easiest thing here to get wrong: a
+    # bail ABOVE the frame-open must skip the close, and a bail BELOW it must
+    # go through the close. Mixing them leaves $sp 0x40 adrift, which loads
+    # $ra from the wrong slot and hands the caller a corrupt frame.
+    open_at, close_at = adj[0][0], adj[1][0]
+    exit_at = close_at + 4
+
+    def target(va, w):
+        return va + 4 + (struct.unpack("<h", struct.pack("<H", w & 0xFFFF))[0] << 2)
+
+    below = [(va, w) for va, w in ws
+             if va > open_at and (w >> 26) in (4, 5, 6, 7)]
+    above = [(va, w) for va, w in ws
+             if va < open_at and (w >> 26) in (4, 5, 6, 7)]
+    check("no branch below the frame-open skips the close",
+          below and all(target(va, w) != exit_at for va, w in below),
+          "%d branches below" % len(below))
+    # Above the frame-open there are two kinds of branch now: a bail to the
+    # exit, and the texture scan looping back to itself. What must never
+    # happen is one of them landing INSIDE the loop, with no frame under it.
+    check("every branch above the frame-open either exits or stays above it",
+          above and all(target(va, w) <= open_at or target(va, w) == exit_at
+                        for va, w in above),
+          "%d bails above" % len(above))
+
+    # R6DecalGroup::AddDecal copies FOUR floats out of the position, so the
+    # fourth is not padding -- it reaches AR6Decal+0x1BC.
+    stores = {(w & 0xFFFF) for _va, w in ws
+              if (w >> 26) in (0x2B, 0x39) and ((w >> 21) & 31) == 29}
+    check("all four words of the position are written, including the fourth "
+          "the callee copies", {0x00, 0x04, 0x08, 0x0C} <= stores,
+          str(sorted(stores)))
+
+    # The native is Engine.Actor.ExplosionDamage, declared on Actor, and
+    # R6ExplodingBarel.Explode calls it too. On a barrel +0x380 is the INT
+    # m_iHitPoints, so the class default is not a radius at all; the
+    # parameter on the stack is, for every caller.
+    # The hooked native is Engine.Actor.ExplosionDamage, declared on Actor,
+    # and R6ExplodingBarel.Explode calls it too. On a barrel every grenade
+    # field offset means something else, in bounds and silently wrong -- so
+    # the radius is the native's own parameter and the ONLY thing still read
+    # off the actor is Actor::Level, which every actor has.
+    check("the radius comes off the native's own parameter, never off $s4",
+          any((w >> 26) == 0x31 and ((w >> 21) & 31) == 29
+              and (w & 0xFFFF) == 0x46C + 0xC0 for _va, w in ws)
+          and not any((w >> 26) == 0x31 and ((w >> 21) & 31) == 20
+                      for _va, w in ws))
+    check("the only field read off the detonating actor is Actor::Level",
+          [(w & 0xFFFF) for _va, w in ws
+           if (w >> 26) == 0x23 and ((w >> 21) & 31) == 20] == [0x104])
+    check("nothing reads the class field that is an AActor* on a barrel",
+          not any((w >> 26) == 0x23 and (w & 0xFFFF) == 0x3D8
+                  for _va, w in ws))
+    check("the pointers it does chase are alignment- and range-checked",
+          sum(1 for _va, w in ws if (w >> 26) == 0x0C and (w & 0xFFFF) == 3) >= 2
+          and sum(1 for _va, w in ws if (w >> 26) == 0x0F
+                  and (w & 0xFFFF) == 0x0200) >= 2
+          and sum(1 for _va, w in ws
+                  if (w >> 26) == 0 and (w & 0x3F) == 0x2B) >= 2)
+    # The texture is the game's own bullet-hole set, off the impact cache,
+    # not the blast's smoke sprite -- which is the other half of why v1
+    # smeared. Fixed global bases, per-load pointers inside.
+    check("the texture comes from the impact cache's decal arrays",
+          any((w >> 26) == 0x23 and (w & 0xFFFF) == 0x388 for _va, w in ws)
+          and any((w >> 26) == 0x23 and (w & 0xFFFF) == 0x38C
+                  for _va, w in ws)
+          and any((w >> 26) == 0x0F
+                  and (w & 0xFFFF) == ((0x006DD6C0 + 0x8000) >> 16)
+                  for _va, w in ws))
+
+    # sqrt.s: the R5900 form takes its operand in ft, and capstone mis-prints
+    # it, so it is checked by shape against the 84 the game itself ships.
+    sq = [w for _va, w in ws if (w >> 26) == 0x11
+          and ((w >> 21) & 31) == 16 and (w & 0x3F) == 0x04]
+    check("the one hand-built sqrt.s has the shape the game's own 84 use",
+          len(sq) == 1 and ((sq[0] >> 11) & 31) == 0
+          and ((sq[0] >> 16) & 31) == ((sq[0] >> 6) & 31),
+          "%08X" % (sq[0] if sq else 0))
+    span = range(D.CAVE, D.CAVE + 4 * len(ws))
+    check("every branch lands inside the cave",
+          all((va + 4 + (struct.unpack("<h", struct.pack("<H", w & 0xFFFF))[0] << 2))
+              in span for va, w in ws if (w >> 26) in (4, 5, 6, 7)))
+    check("every branch, jump and call is followed by its delay slot",
+          all(ws[i + 1][1] == 0 for i in range(len(ws) - 1)
+              if (ws[i][1] >> 26) in (2, 3, 4, 5, 6, 7)))
+
+    # ---- the mark count --------------------------------------------------
+    a, b = dict(D.words(12)), dict(D.words(20))
+    check("the mark count moves exactly one word, and it is the ori",
+          [va for va in a if a[va] != b[va]] == [D.COUNT_AT]
+          and (a[D.COUNT_AT] & 0xFFFF) == 12 and (b[D.COUNT_AT] & 0xFFFF) == 20
+          and (a[D.COUNT_AT] >> 26) == 0x0D)
+    check("the lui feeding it is zero, so the count is a plain 16-bit value",
+          a[D.COUNT_AT - 4] == 0x3C160000)
+    check("a count of zero or past the immediate is refused, not truncated",
+          _raises(lambda: D.words(0), D.DecalError)
+          and _raises(lambda: D.words(0x10000), D.DecalError))
+
+    # ---- the profile -----------------------------------------------------
+    n = PROFILE.setting("blast_decals")
+    # Played 2026-09-28: the marks were counted in a savestate (11 placed,
+    # 5 of 6 rays for one blast), so this one is genuinely "verified" and
+    # the check guards against it being quietly demoted again.
+    check("the card reaches the profile, off by default, watched in game",
+          n is not None and n.default == 0 and n.enabled
+          and n.confidence == "verified")
+    sz = PROFILE.setting("blast_decal_size")
+    check("the size card is back, now that the ring owns its own DrawScale",
+          sz is not None and sz.default == "1.25"
+          and [float(c.value) for c in sz.choices] == list(D.DRAWSCALES))
+    check("and it only shows once the marks themselves are on",
+          list(sz.requires) == ["blast_decals"])
+    d0 = PROFILE.defaults()
+
+    _mine = ({va for va, _s, _n in D.BRANCH_WORDS}
+             | {va for va, _s, _n in D.INCIDENCE_WORDS} | {D.DRAWSCALE})
+
+    def plan(**kw):
+        eff = PROFILE.effective(dict(d0, **kw))
+        return ([e for e in PROFILE.build_edits(eff) if e.va in _mine],
+                [e for e in PROFILE.build_pnach(eff)
+                 if e.va == D.HIJACK_AT or e.va >= D.CAVE])
+
+    check("stock writes neither a disc word nor a cheat row", plan() == ([], []))
+    de, pn = plan(blast_decals=12)
+    check("turning it on writes every branch and incidence word, a DrawScale "
+          "and the whole cave",
+          {e.va for e in de} == _mine
+          and all(e.value == dict((va, nw) for va, _s, nw in
+                                  D.BRANCH_WORDS + D.INCIDENCE_WORDS)[e.va]
+                  for e in de if e.va != D.DRAWSCALE)
+          and len(pn) == len(ws) + 1
+          and pn[0].va == D.HIJACK_AT and pn[0].value == D.HIJACK)
+    check("and the size card picks the DrawScale",
+          [e.value for e in plan(blast_decals=12, blast_decal_size="2.0")[0]
+           if e.va == D.DRAWSCALE] == [D.drawscale_word(2.0)])
+    _de, pn3 = plan(blast_decals=16)
+    check("the count reaches the cheat file",
+          [e.value for e in pn3 if e.va == D.COUNT_AT] == [0x36D60010])
+
+    # ---- the ring it writes into ----------------------------------------
+    # The ring wraps silently, so more marks than slots is not an error
+    # anywhere -- it just means the marks are not there.
+    def warn(**kw):
+        return [x for x in PROFILE.combination_warnings(
+            PROFILE.effective(dict(d0, **kw))) if "hrapnel" in x]
+
+    # ---- the impact stagger ----------------------------------------------
+    # Three impacts in one frame are one thud. Deferring them needs a hook
+    # that runs ONCE per frame: UGameEngine::Tick, not ULevel::Tick, which
+    # runs twice because GEngine+0x460 is a second live ULevel -- fine for
+    # the claymore's proximity check, wrong for anything counting frames.
+    check("the frame hook is the load we measured, and still stock",
+          img.read_word(D.STAGGER_HOOK) == D.STAGGER_HOOK_STOCK
+          == 0x8E04045C and STOCK[D.STAGGER_HOOK] == D.STAGGER_HOOK_STOCK)
+    check("it is a `lw` replaced by a `j` to the consumer",
+          (D.STAGGER_HOOK_STOCK >> 26) == 0x23
+          and (D.STAGGER_HOOK_JUMP >> 26) == 0x02
+          and ((D.STAGGER_HOOK_JUMP & 0x03FFFFFF) << 2) == D.CONSUMER)
+    check("the delay slot it jumps over is the constant we must re-supply",
+          img.read_word(D.STAGGER_HOOK + 4) == 0x24050002)
+
+    sw = D.stagger_words()
+    swv = {va for va, _w in sw}
+    cons = [w for va, w in sw if va < D.ENQUEUE]
+    check("the consumer re-does the displaced load and re-supplies that $a1",
+          D.STAGGER_HOOK_STOCK in cons[-6:] and 0x24050002 in cons[-6:])
+    check("and returns PAST the delay slot, never to the hook itself",
+          any((w >> 26) == 0x02
+              and ((w & 0x03FFFFFF) << 2) == D.STAGGER_HOOK + 8
+              for w in cons[-6:])
+          and not any((w >> 26) == 0x02
+                      and ((w & 0x03FFFFFF) << 2) == D.STAGGER_HOOK
+                      for w in cons))
+    # The queue is runtime state. A pnach row rewrites its address EVERY
+    # frame, so emitting it would reset the queue forever and the feature
+    # would silently do nothing at all.
+    check("the queue's RAM is never among the emitted words",
+          all(not (D.QUEUE <= va < D.QUEUE_END) for va in swv))
+    check("the two routines sit clear of the cave, the claymore cave and "
+          "each other",
+          not (swv & {va for va, _w in ws})
+          and all(not (0x000F0000 <= va < 0x000F0800) for va in swv)
+          and max(va for va, _w in sw if va < D.ENQUEUE) < D.ENQUEUE)
+    check("and every one of them is below the ELF load base",
+          all(va < 0x00100000 for va in swv))
+
+    # Switching it on changes exactly ONE word of the cave: where the impact
+    # goes. The helper takes the same registers and tail-calls the impact
+    # entry point when it cannot queue, so the worst case is today.
+    now, queued = dict(D.words(12)), dict(D.words(12, stagger=True))
+    moved = [va for va in now if now[va] != queued[va]]
+    check("staggering moves exactly one word of the cave, the impact call",
+          moved == [D.IMPACT_CALL_AT]
+          and now[D.IMPACT_CALL_AT] == D.IMPACT_CALL_NOW
+          and queued[D.IMPACT_CALL_AT] == D.IMPACT_CALL_QUEUED
+          and (D.IMPACT_CALL_NOW >> 26) == 0x03
+          and (D.IMPACT_CALL_QUEUED >> 26) == 0x03, str(moved))
+    check("and it retargets that call from the impact point to the helper",
+          ((D.IMPACT_CALL_NOW & 0x03FFFFFF) << 2) == 0x003F08C0
+          and ((D.IMPACT_CALL_QUEUED & 0x03FFFFFF) << 2) == D.ENQUEUE)
+
+    st = PROFILE.setting("blast_stagger")
+    check("the card reaches the profile, off by default",
+          st is not None and st.default is False and st.enabled
+          and st.confidence in BADGES
+          and st.requires == {"blast_decals": tuple(range(1, 49))})
+    _de, pn_off = plan(blast_decals=12)
+    _de, pn_on = plan(blast_decals=12, blast_stagger=True)
+    check("turning it on adds the two routines and the frame hook, and "
+          "nothing else", len(pn_on) - len(pn_off) == len(sw) + 1)
+    check("and never a row inside the queue",
+          not any(D.QUEUE <= e.va < D.QUEUE_END for e in pn_on))
+    check("with it off, neither routine nor the hook is written",
+          not any(e.va in swv or e.va == D.STAGGER_HOOK for e in pn_off))
+
+    check("more marks than the ring holds is called out", len(warn(
+        blast_decals=12, grenade_decals=8)) == 1)
+    check("exactly filling the ring is called out more gently", len(warn(
+        blast_decals=12, grenade_decals=12)) == 1)
+    check("and twice the headroom says nothing", warn(
+        blast_decals=12, grenade_decals=24) == [])
+    check("nor does the feature being off", warn(grenade_decals=8) == [])
+
+
+def run_claymore_prox(args):
+    """The claymore proximity cave, both builds (2026-09-25).
+
+    A placed claymore already listens for a Timer (ProbeMask 0x0B00, measured
+    on a live instance) and R6Grenade.Timer is `Explode(); return;`, so the
+    cave arms the timer instead of calling script. CONFIRMED IN PLAY: a
+    claymore in front of a closed door self-detonated, which also proves
+    PCSX2 applies pnach rows below the ELF load base.
+    """
+    print("\n[Rainbow Six 3 -- the claymore as a proximity mine]")
+    if not (args.soz or args.iso or args.rs3data):
+        print("  SKIP  needs --soz, --iso or --rs3data")
+        return
+    import math
+    import struct
+    from tcps2 import rseclaymore as C, rsegadget as G
+    from tcps2.games.r6_3 import CAVE_WORDS, STOCK
+    img = SozImage.unpack(stock_container(args), PROFILE.overlays[0].base_va)
+
+    check("the hook is the actor-tick call we measured",
+          img.read_word(C.HIJACK[0]) == C.HIJACK_STOCK == 0x0C089050
+          and STOCK[C.HIJACK[0]] == C.HIJACK_STOCK)
+    check("and it is a jal, replaced by a j to the cave",
+          (C.HIJACK_STOCK >> 26) == 0x03 and (C.HIJACK[1] >> 26) == 0x02
+          and ((C.HIJACK_STOCK & 0x03FFFFFF) << 2) == 0x00224140
+          and ((C.HIJACK[1] & 0x03FFFFFF) << 2) == 0x000F0000)
+
+    # Both builds live below the ELF load base. An earlier home at 0x005C2A40
+    # looked perfect -- no code reference, no data reference, zero in every
+    # savestate -- and was still the flat tail of an audio pan table that
+    # 0x004D3068 indexes at runtime. "No static references" is not enough for
+    # data inside the image, so the cave must not be inside the image at all.
+    base = PROFILE.overlays[0].base_va
+    for name, ws in (("all-round", C.ALLROUND_WORDS), ("front arc", C.CONE_WORDS)):
+        check("%s: every word is below the ELF load base" % name,
+              base == 0x00100000 and ws
+              and all(va + 4 <= base for va, _w in ws)
+              and ws[0][0] == 0x000F0000)
+        check("%s: and none of it is an overlay word" % name,
+              not [va for va, _w in ws if va in STOCK])
+    check("the audio pan table that rejected the first home is real, and "
+          "nothing targets it now",
+          img.read_word(0x005C2940) != 0
+          and not [va for va, _w in C.CONE_WORDS + C.ALLROUND_WORDS
+                   if 0x005C2940 <= va <= 0x005C2B44])
+
+    check("the all-round build is 65 contiguous words",
+          len(C.ALLROUND_WORDS) == 65
+          and all(C.ALLROUND_WORDS[i + 1][0] - C.ALLROUND_WORDS[i][0] == 4
+                  for i in range(len(C.ALLROUND_WORDS) - 1)))
+    code = [(va, w) for va, w in C.CONE_WORDS if va < 0x000F0400]
+    tab = [(va, w) for va, w in C.CONE_WORDS if va >= 0x000F0400]
+    check("the front-arc build is 94 words of code plus a 256-entry table",
+          len(C.CONE_WORDS) == 350 and len(code) == 94 and len(tab) == 256
+          and tab[0][0] == 0x000F0400 and tab[-1][0] == 0x000F07FC)
+
+    vals = [struct.unpack("<f", struct.pack("<I", w))[0] for _a, w in tab]
+    worst = max(abs(vals[i] - math.cos(2 * math.pi * i / 256)) for i in range(256))
+    check("and that table really is a cosine, to the last bit",
+          worst < 1e-6, "%g" % worst)
+
+    def radius_m(pair):
+        hi, lo = pair
+        r2 = struct.unpack(">f", struct.pack(">I",
+                                             ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)))[0]
+        return (r2 ** 0.5) / 100.0
+
+    check("the three settings decode to 1, 2 and 3 metres",
+          [round(radius_m(C.RADIUS_WORDS[k]), 3) for k in ("1", "2", "3")]
+          == [1.0, 2.0, 3.0])
+    for name in ("1", "2", "3"):
+        for arc, src in ((True, C.CONE_WORDS), (False, C.ALLROUND_WORDS)):
+            got = C.words(name, front_arc=arc)
+            moved = {va for (va, w), (_v, base_w) in zip(got, src) if w != base_w}
+            check("radius %s, %s: only the radius pair and the cone constant "
+                  "move" % (name, "front arc" if arc else "all round"),
+                  len(got) == len(src)
+                  and moved <= set(C.RADIUS_AT) | ({C.CONE_K_AT} if arc else set()),
+                  str(["%08X" % v for v in moved]))
+
+    # The trigger arc is COMPUTED from the blast's own cone, so the two
+    # cannot drift apart. The blast ships 0.766 = cos 40.004 degrees.
+    k = dict(C.words("2", front_arc=True))[C.CONE_K_AT]
+    check("the cone constant is a lui carrying cos squared of the blast's "
+          "own angle",
+          (k >> 26) == 0x0F and k == C.cone_word(G.STOCK["cone"]))
+    half = math.degrees(math.acos(struct.unpack(
+        "<f", struct.pack("<I", (k & 0xFFFF) << 16))[0] ** 0.5))
+    check("which is the blast's 40 degrees, within a tenth",
+          abs(half - math.degrees(math.acos(G.STOCK["cone"]))) < 0.1,
+          "%.3f deg" % half)
+    check("and a different blast cone flows straight through",
+          abs(math.degrees(math.acos(struct.unpack(
+              "<f", struct.pack("<I", (C.cone_word(0.5) & 0xFFFF) << 16))[0] ** 0.5))
+              - 60.0) < 0.2)
+
+    s = PROFILE.setting("claymore_prox")
+    arc = PROFILE.setting("claymore_arc")
+    check("both cards reach the profile, cheat-file only",
+          s is not None and s.default == "off" and s.pnach_only and s.enabled
+          and arc is not None and arc.default is True and arc.pnach_only
+          and arc.requires == {"claymore_prox": ["1", "2", "3"]})
+    d = PROFILE.defaults()
+    check("off writes nothing at all",
+          not PROFILE.build_pnach(PROFILE.effective(d)))
+    on = PROFILE.build_pnach(PROFILE.effective(dict(d, claymore_prox="2")))
+    check("the front arc is the default, and writes the bigger cave",
+          len(on) == 351 and on[0].va == C.HIJACK[0]
+          and on[0].stock == C.HIJACK_STOCK)
+    flat = PROFILE.build_pnach(PROFILE.effective(
+        dict(d, claymore_prox="2", claymore_arc=False)))
+    check("and turning the arc off writes the small one",
+          len(flat) == 66)
+    check("neither ever reaches the disc -- a cave cannot survive a load",
+          not ({va for va, _w in C.CONE_WORDS} | {C.HIJACK[0]})
+          & {e.va for e in PROFILE.build_edits(PROFILE.effective(
+              dict(d, claymore_prox="2")))})
+
+    mw = {va for va, _w in CAVE_WORDS} | {0x0040ACA0}
+    cl = {va for va, _w in C.CONE_WORDS} | {C.HIJACK[0]}
+    check("it does not overlap the map-wide spawn cave", not (mw & cl))
+    both = PROFILE.build_pnach(PROFILE.effective(dict(
+        d, wave_enable=True, wave_mapwide=True, claymore_prox="3")))
+    vas = [e.va for e in both]
+    check("and with both caves on, no address is claimed twice",
+          len(vas) == len(set(vas)) == 419, "%d" % len(vas))
+
+
+def run_fps_uncap(args):
+    """The 30 FPS cap, and the one word that lifts it (2026-09-25).
+
+    Single player presents one frame per two NTSC fields. A vblank ISR at
+    0x0019F700 counts fields and releases a flip only once the count reaches
+    a divider, and renderer init writes 2 into that divider. Split screen
+    reaches 60 by accident: it builds the renderer twice, each build
+    registers the same ISR, nothing ever removes one, so the body runs twice
+    per field.
+
+    These checks are about the SHIPPED overlay, so they read the pristine
+    image rather than the disc.
+    """
+    print("\n[Rainbow Six 3 -- the 30 FPS frame-pacing cap]")
+    if not (args.soz or args.iso or args.rs3data):
+        print("  SKIP  needs --soz, --iso or --rs3data")
+        return
+    from tcps2.games.r6_3 import PRESENT_DIVIDER, PRESENT_DIVIDER_FREE, STOCK
+    img = SozImage.unpack(stock_container(args), PROFILE.overlays[0].base_va)
+
+    stock = img.read_word(PRESENT_DIVIDER)
+    check("the shipped overlay writes the divider where we think it does",
+          stock == STOCK[PRESENT_DIVIDER] == 0xAF828088, "%08X" % stock)
+    # sw rt, imm(gp): opcode 0x2B, base $gp = 28. Patching only swaps the
+    # source register to $zero, so the destination cannot move.
+    def sw_parts(word):
+        return (word >> 26, (word >> 21) & 31, (word >> 16) & 31, word & 0xFFFF)
+    op_s, base_s, rt_s, off_s = sw_parts(stock)
+    op_n, base_n, rt_n, off_n = sw_parts(PRESENT_DIVIDER_FREE)
+    check("it is a gp-relative store, and the patch only changes its source "
+          "register to $zero",
+          (op_s, base_s) == (0x2B, 28) and (op_n, base_n) == (0x2B, 28)
+          and off_s == off_n and rt_s == 2 and rt_n == 0,
+          "%r vs %r" % (sw_parts(stock), sw_parts(PRESENT_DIVIDER_FREE)))
+
+    # The pacing ISR reads the very word this store writes: same gp offset.
+    isr_load = img.read_word(0x0019F704)
+    check("and the frame-pacing interrupt reads that same word",
+          (isr_load >> 26) == 0x23 and ((isr_load >> 21) & 31) == 28
+          and (isr_load & 0xFFFF) == off_s, "%08X" % isr_load)
+
+    # The register holding 2 is reused as the interrupt cause a few
+    # instructions later, which is why the constant itself must not be touched.
+    check("the constant 2 is loaded into $v0, which later becomes the "
+          "interrupt-cause argument -- so that instruction is left alone",
+          img.read_word(0x001AE464) == 0x24020002
+          and img.read_word(0x001AE490) == 0x0040202D
+          and (img.read_word(0x001AE494) >> 26) == 0x03)
+
+    # The blast-mark ring, separate from the bullet-hole one.
+    from tcps2.games.r6_3 import GRENADE_DECALS, grenade_decal_word
+    gw = img.read_word(GRENADE_DECALS)
+    check("the grenade decal ring ships at 8, its own word",
+          gw == STOCK[GRENADE_DECALS] == 0x24050008
+          and GRENADE_DECALS != 0x00379B30)
+    check("and the bullet-hole ring is a different word, at 32",
+          img.read_word(0x00379B30) == 0x24060020)
+    check("raising it keeps the instruction and only moves the immediate",
+          all((grenade_decal_word(n) >> 16) == (gw >> 16)
+              and (grenade_decal_word(n) & 0xFFFF) == n
+              for n in (8, 24, 32, 64)))
+    gs = PROFILE.setting("grenade_decals")
+    check("the option reaches the profile, defaulting to the shipped 8",
+          gs is not None and gs.default == 8
+          # 128 slots is 180 KB against a worst-observed 1.37 MiB of
+          # contiguous free heap, 12.6% -- measured, and the ceiling was
+          # raised to it once the shrapnel marks started filling the ring.
+          and (gs.minimum, gs.maximum) == (8, 128) and gs.enabled)
+    gbase = {e.va for e in PROFILE.build_edits(PROFILE.effective(
+        PROFILE.defaults()))}
+    check("8 writes nothing", GRENADE_DECALS not in gbase)
+    gon = [e for e in PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), grenade_decals=24)))
+        if e.va == GRENADE_DECALS]
+    check("and another value writes exactly one word, from stock",
+          len(gon) == 1 and gon[0].value == grenade_decal_word(24)
+          and gon[0].stock == gw)
+
+    s = PROFILE.setting("fps_uncap")
+    check("the option reaches the profile, unplayed",
+          s is not None and s.confidence in BADGES and s.enabled
+          and s.kind == "bool" and s.default is False)
+    off = {e.va for e in PROFILE.build_edits(PROFILE.effective(
+        PROFILE.defaults()))}
+    on = PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), fps_uncap=True)))
+    mine = [e for e in on if e.va not in off]
+    check("off it writes nothing; on it writes exactly the one word",
+          PRESENT_DIVIDER not in off and len(mine) == 1
+          and mine[0].va == PRESENT_DIVIDER
+          and mine[0].value == PRESENT_DIVIDER_FREE
+          and mine[0].stock == stock,
+          str([("%08X" % e.va) for e in mine]))
+    every = PROFILE.build_edits(PROFILE.effective(dict(
+        PROFILE.defaults(), **{x.key: True for x in PROFILE.settings
+                               if x.kind == "bool" and x.enabled})))
+    claims = [e for e in every if e.va == PRESENT_DIVIDER]
+    check("and with every option on, no other option claims that word",
+          len(claims) == 1, str(len(claims)))
+
+
+def run_flashlight_hands_pass(args):
+    """Three fixes from the 2026-09-24 play-test, read-only on shipped bytes:
+    a dead terrorist's weapon light, player 2's arms, and the icon pass."""
+    print("\n[dead flashlight, player 2's arms, one interaction pass per half]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, rseflashlight, rsehands, rseorders
+    from tcps2 import rsesquad
+    from tcps2.uscode import Script, compact_decode
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    plains = {}
+    for name in ("/COMMON_SS.LIN", "/COMMONOFF.LIN", "/COMMON.LIN"):
+        keys = [k for k in store.index if k.endswith(name)]
+        if keys:
+            plains[name] = lin.decompress(store.original(
+                store.index[keys[0]]["archive"], name)[0])
+    if "/COMMON_SS.LIN" not in plains:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+
+    def own_refs(p, at):
+        out = []
+        for top in Script.at(p, at).toks:
+            for t in top.walk():
+                n = 0
+                for kind, val in t.parts:
+                    if kind == "ref":
+                        if not (t.op in (0x0E, 0x1B, 0x21, 0x38)
+                                or (t.op == 0x40 and n == 1)):
+                            v = compact_decode(val, 0)[0]
+                            if v > 0:
+                                out.append(v)
+                        n += 1
+        return out
+
+    ok = True
+    for name, p in plains.items():
+        at, mode = rseflashlight.find(p)
+        ok &= mode == "stock"
+        for m in ("on", "off"):
+            q, n = rseflashlight.apply(p, m)
+            a, b = Script.at(p, at - 4), Script.at(q, at - 4)
+            ok &= (n == 1 and rseflashlight.reads(q) == m and len(q) == len(p)
+                   and (a.mem_len, a.disk_len) == (b.mem_len, b.disk_len)
+                   and own_refs(p, at - 4) == own_refs(q, at - 4)
+                   and rseflashlight.apply(q, "stock")[0] == p)
+    check("dead flashlight: both choices keep StartFalling's size and its own "
+          "references, in every COMMON, and switch back exactly", ok)
+    got = {m: [e for e in PROFILE.build_data(PROFILE.effective(dict(
+        PROFILE.defaults(), dead_flashlight=m))) if e.op == "dead_flashlight"]
+        for m in ("stock", "on", "off")}
+    check("and it is written offline and split screen, never online",
+          not got["stock"] and all(
+              len(got[m]) == 1 and got[m][0].matches("/COMMON_SS.LIN")
+              and got[m][0].matches("/COMMONOFF.LIN")
+              and not got[m][0].matches("/COMMON.LIN") for m in ("on", "off")))
+
+    ss = plains["/COMMON_SS.LIN"]
+    sites = rsehands._sites(ss)
+    check("player 2's arms: the three sites are where they were measured",
+          [s[0] for s in sites] == list(rsehands.KNOWN_OFFSETS)
+          and all(s[3] == "stock" for s in sites))
+    q, n = rsehands.apply(ss, True)
+    a, b = Script.at(ss, 0x1470A3), Script.at(q, 0x1470A3)
+    check("and CreatePlayerTeam keeps its size, with the edit idempotent",
+          n == 3 and (a.mem_len, a.disk_len) == (b.mem_len, b.disk_len)
+          and rsehands.apply(q, True) == (q, 0) and len(q) == len(ss))
+    first = rsesquad.apply(q, True, canon=True)[0]
+    second = rsehands.apply(rsesquad.apply(ss, True, canon=True)[0], True)[0]
+    check("and it composes with the AI teammates and canon in either order",
+          first == second and rsehands.reads(first))
+    eds = [e for e in PROFILE.build_data(PROFILE.effective(dict(
+        PROFILE.defaults(), split_hands=True))) if e.op == "split_hands"]
+    check("and it is written to the split-screen package only",
+          len(eds) == 1 and eds[0].matches("/COMMON_SS.LIN")
+          and not eds[0].matches("/COMMONOFF.LIN")
+          and not eds[0].matches("/COMMON.LIN"))
+
+    img = SozImage.unpack(stock_container(args), PROFILE.overlays[0].base_va)
+    check("icon pass: the three words are the shipped reloads",
+          all(img.read_word(va) == st for va, st, _n, _t in rseorders.PASS_WORDS))
+    need = dict(PROFILE.defaults(), split_squad=True, split_wheel=True,
+                split_wheel_labels=True)
+    on = {e.va: e.value for e in PROFILE.build_edits(PROFILE.effective(
+        dict(need, split_team_orders=True)))}
+    off = {e.va for e in PROFILE.build_edits(PROFILE.effective(need))}
+    check("and they are written only with team orders",
+          all(on.get(va) == new for va, _s, new, _t in rseorders.PASS_WORDS)
+          and not off & {va for va, _s, _n, _t in rseorders.PASS_WORDS})
+
+    from collections import Counter
+    from tcps2 import rsecarry
+    check("carry-over: the 70 words are the shipped ones in the two natives",
+          len(rsecarry.WORDS) == 70
+          and all(img.read_word(va) == st for va, st, _n, _t in rsecarry.WORDS)
+          and all(0x003B6160 <= va < 0x003B7200 for va, *_r in rsecarry.WORDS))
+    # 2026-09-24: a player who died in part A starts part B dead. The first
+    # version skipped his record here; the shipped words are back.
+    check("carry-over: a dead player's record takes the shipped dead path",
+          not {0x003B62BC, 0x003B62C0} & {va for va, *_r in rsecarry.WORDS})
+    new = {va: n for va, _s, n, _t in rsecarry.WORDS}
+    check("and the closing pass visits player 2's slot first, player 1's last",
+          new.get(0x003B69E8) == 0x8FA800A8 and new.get(0x003B69EC) == 0x0008800B
+          and new.get(0x003B69F0) == 0x0112800A
+          and new.get(0x003B61D0) == 0xAFA900A8)
+    carry = {va for va, *_r in rsecarry.WORDS}
+    squad = {e.va: e.value for e in PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), split_squad=True, split_carry=True)))}
+    plain = {e.va for e in PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), split_squad=True)))}
+    alone = {e.va for e in PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), split_carry=True)))}
+    check("and they are written with their own option, which needs the AI "
+          "teammates",
+          all(squad.get(va) == new for va, _s, new, _t in rsecarry.WORDS)
+          and not carry & plain and not carry & alone)
+    every = PROFILE.build_edits(PROFILE.effective(dict(
+        PROFILE.defaults(), **{s.key: True for s in PROFILE.settings
+                               if s.kind == "bool" and s.enabled})))
+    dup = [va for va, n in Counter(e.va for e in every).items() if n > 1]
+    check("with every option on, no two edits claim the same word",
+          not dup, str([hex(v) for v in dup]))
+
+
+def run_creation_order(args):
+    """A script edit must first-touch its OWN package's objects in stock order.
+
+    The loader creates a package's exports as their first references are
+    serialized, then reads each from the recording in that order. Two edits
+    that kept the SET of references but not their first-touch ORDER hung Oil
+    Refinery's split-screen load ("R63rdWeapons.SubSR2: SERIAL SIZE MISMATCH:
+    GOT 536, EXPECTED 527", 2026-09-23): TeamMemberDead's gate read DeadPawn
+    before iMemberId, and the team-orders rewrite of PostRender reordered five
+    locals and three properties.
+
+    Imports of CONTENT -- a Sound, a Texture, a Font -- are checked the same
+    way. A script import of a class or a property resolves into a package
+    whose classes are already built, and those changes are proven in play. A
+    content object is created when it is first referenced, like the package's
+    own exports. The call-outs named two of Price's Sound objects from
+    R6PlayerController; stock first reaches them through R6PriceVoices, far
+    later, and Terrorist Hunt on the Garage hung its load in a voice package
+    ("Bad name index -70/109", 2026-09-24). The own-export check passed it.
+    """
+    print("\n[script edits keep each package's creation order]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    from tcps2 import dataedit, lin, uscode, upackage
+    from tcps2.uscode import Script, compact_decode
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith("/COMMON_SS.LIN")]
+    if not keys:
+        print("  SKIP  no stored COMMON_SS.LIN")
+        return
+    stock = lin.decompress(store.original(store.index[keys[0]]["archive"],
+                                          "/COMMON_SS.LIN")[0])
+    blocks = uscode.find_blocks(stock)
+    name_ref = {0x1B, 0x38, 0x21, 0x0E}
+
+    def refs(p, at):
+        out = []
+        for t0 in Script.at(p, at).toks:
+            for x in t0.walk():
+                nref = 0
+                for k, v in x.parts:
+                    if k == "ref":
+                        if not (x.op in name_ref or (x.op == 0x40 and nref == 1)):
+                            o = compact_decode(v, 0)[0]
+                            if o:
+                                out.append(o)
+                        nref += 1
+        return out
+
+    def import_classes(data, base):
+        """Each import's class name, walked as upackage.tables walks them."""
+        pkg = upackage.Package(data, base)
+        names, pos = [], base + pkg.o_names
+        for _ in range(pkg.n_names):
+            ln, pos = upackage.compact_index(data, pos)
+            names.append(data[pos:pos + ln - 1].decode("latin-1"))
+            pos += ln + 4
+        out = []
+        for _ in range(pkg.n_imports):
+            _cp, pos = upackage.compact_index(data, pos)
+            cn, pos = upackage.compact_index(data, pos)
+            pos += 4
+            _nm, pos = upackage.compact_index(data, pos)
+            out.append(names[cn])
+        return out
+
+    script_kinds = {"Class", "Function", "State", "Struct", "Enum", "Const",
+                    "Package", "TextBuffer"}
+
+    packs = []
+    for base, _p in upackage.packages(stock):
+        try:
+            names, _imports, exports = upackage.tables(stock, base)
+        except Exception:                                    # noqa: BLE001
+            continue
+        if "CreatePlayerTeam" in names or "R6PracticeModeGameForSplitScreen" in names:
+            if any(e[0] == "Class" for e in exports):
+                packs.append((base, names, exports))
+    check("found the gameplay and game-mode packages", len(packs) >= 2,
+          str([hex(b) for b, _n, _e in packs]))
+
+    def owned(base, names, exports):
+        by_name = {}
+        for i, e in enumerate(exports):
+            if e[0] in ("Function", "State", "Class") and e[2] > 0:
+                by_name.setdefault(e[1], []).append(e[2])
+        out = []
+        for at in blocks:
+            try:
+                sc = Script.at(stock, at)
+            except Exception:                                # noqa: BLE001
+                continue
+            for w in (1, 2, 3):
+                try:
+                    v, n = compact_decode(stock, at - 8 - w)
+                except Exception:                            # noqa: BLE001
+                    continue
+                if n != w or not 0 <= v < len(names):
+                    continue
+                if any(0 <= size - (sc.disk_len + 4) - (8 + w) <= 64
+                       for size in by_name.get(names[v], ())):
+                    out.append(at)
+                    break
+        return out
+
+    def creation(p, mine):
+        seen, order = set(), []
+        for at in mine:
+            for o in refs(p, at):
+                if o > 0 and o not in seen:
+                    seen.add(o)
+                    order.append(o)
+        return order
+
+    def content(p, mine, kinds):
+        seen, order = set(), []
+        for at in mine:
+            for o in refs(p, at):
+                if (o < 0 and o not in seen and -o - 1 < len(kinds)
+                        and kinds[-o - 1] not in script_kinds
+                        and not kinds[-o - 1].endswith("Property")):
+                    seen.add(o)
+                    order.append(o)
+        return order
+
+    mines = [(base, owned(base, names, exports)) for base, names, exports in packs]
+    kinds = {base: import_classes(stock, base) for base, _n, _e in packs}
+    check("stock script reaches content imports, so the check has something "
+          "to hold", all(content(stock, mine, kinds[base])
+                         for base, mine in mines))
+
+    def planned(**on):
+        for k in on:
+            assert PROFILE.setting(k) is not None, k
+        plain = stock
+        for e in PROFILE.build_data(PROFILE.effective(dict(PROFILE.defaults(),
+                                                           **on))):
+            if (re.search(e.select, "/COMMON_SS.LIN", re.I)
+                    and e.op not in dataedit._RECORDING_OPS):
+                fn = dataedit.OPS[e.op]
+                if e.op in dataedit._WANTS_CONTAINER:
+                    plain, _n = fn(plain, e.params, None)
+                else:
+                    plain, _n = fn(plain, e.params)
+        return plain
+
+    # The split-screen set as played -- Oil Refinery loads with it -- with the
+    # rebuilt team orders, and then every other option that rewrites script
+    # in this file.
+    split = dict(split_squad=True, canon_team=True, split_muzzle=True,
+                 split_wheel=True, split_cycle=True, split_draw_once=True,
+                 split_wheel_labels=True, split_team_orders=True,
+                 split_hands=True, split_down_callouts=True,
+                 split_thunt_ai=True, fov=110, switch_rate=150)
+    rest = dict(split, hostage_rainbow_voice=True,
+                ai_finite_ammo=True, ai_sidearm=50, ai_say_dry=50,
+                rpg_speed=2, grenade_carry=50)
+    for label, on in (("the split-screen set", split),
+                      ("every script option", rest)):
+        plain = planned(**on)
+        check("%s changes the package" % label, plain != stock)
+        for base, mine in mines:
+            check("%s, package 0x%06x: its own objects are created in stock "
+                  "order" % (label, base),
+                  creation(stock, mine) == creation(plain, mine),
+                  "%d blocks" % len(mine))
+            check("%s, package 0x%06x: and the content it names too"
+                  % (label, base),
+                  content(stock, mine, kinds[base])
+                  == content(plain, mine, kinds[base]))
+    plain = planned(**split)
+    from tcps2 import rsecallouts, rsechatter, rsemandown, rseorders
+    check("team orders, rebuilt, are in that set and offered again",
+          rseorders.reads(plain)
+          and PROFILE.setting("split_team_orders").enabled)
+    # Each withdrawn for exactly this. The death call-out hung a disc that
+    # carried nothing else; the first team-orders rewrite hung Oil Refinery;
+    # the call-outs kept every own object in order and still hung the Garage,
+    # by naming Price's sounds early.
+    for label, key, fn in (
+            ("the death call-out", "ss_man_down",
+             lambda p: rsemandown.apply(p, True)[0]),
+            ("the kill call-out", "ss_chatter_kill",
+             lambda p: rsechatter.apply(p, 10, True)[0]),
+            ("the call-outs", "split_callouts",
+             lambda p: rsecallouts.apply(p, True)[0])):
+        alt = fn(plain)
+        check("%s: this check catches the rewrite" % label,
+              alt != plain and any(
+                  creation(plain, mine) != creation(alt, mine)
+                  or content(plain, mine, kinds[_b]) != content(alt, mine,
+                                                               kinds[_b])
+                  for _b, mine in mines))
+        check("%s: and its card stays off until it passes" % label,
+              PROFILE.setting(key).enabled is False)
+
+
 def run_team_recordings(args):
     """AI teammates in split screen, through the real apply path on the disc.
 
@@ -5846,7 +9227,13 @@ def run_team_recordings(args):
             # which is only ever READ here -- so this starts from stock.
             shipped = dataedit.Store(engine.backup_dir_for(iso_path))
             for name, arc in shadows.items():
-                for key in watch + ["/COMMON_SS.LIN"]:
+                # Both halves, not just the split-screen one. The splice
+                # compares a map's _SS against its OFF sibling and requires
+                # exactly one difference, so leaving the OFF half as the disc
+                # has it fails the moment ANY option edits the level
+                # containers -- breach_stun writes all 60 (2026-09-25).
+                for key in (watch + [rsesplice.sibling(p) for p in watch]
+                            + ["/COMMON_SS.LIN"]):
                     ent = arc.files.get(key)
                     got = ent and shipped.original(name, ent.path)
                     if not got:
@@ -5920,6 +9307,10 @@ def run_team_recordings(args):
                       and rsesquad.buries_dead_ai(lin.decompress(
                           a.read_file("/COMMON_SS.LIN")))
                       and rsesquad.fails_on_both_players(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      and rsesquad.hands_off_lead(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      and rsesquad.ladder_is_leaders(lin.decompress(
                           a.read_file("/COMMON_SS.LIN")))]
             check("the team code and the whole-team skins land in every copy "
                   "of the split-screen package",
@@ -5958,49 +9349,73 @@ def run_team_recordings(args):
                         return sc
 
             def _refs(sc):
-                return {(t.op in (0x0E, 0x1B, 0x21, 0x38),
-                         compact_decode(v, 0)[0])
+                """Object references only; a new NAME loads nothing."""
+                return {compact_decode(v, 0)[0]
                         for s in sc.toks for t in s.walk()
-                        for k, v in t.parts if k == "ref"}
+                        for i, (k, v) in enumerate(t.parts) if k == "ref"
+                        and t.op not in (0x0E, 0x1B, 0x21, 0x38)}
 
             def _goes(sc, mstart):
                 t = [s for s in sc.toks if s.mstart == mstart][0]
-                return t.op, [v.mstart for k, v in t.parts
-                              if k == "jump" and v is not END]
+                return [v.mstart for k, v in t.parts
+                        if k == "jump" and v is not END]
 
-            same = sane = flow = 0
+            # (stock region, new region, ScriptSize, rewritten memory
+            #  ranges, objects added, objects removed, jumps)
+            _edited = (
+                ("TeamMemberDead", rsesquad.DEAD_GATE, rsesquad.DEAD_GATE_NEW,
+                 1062, ((0x0000, 0x0182), (0x01A8, 0x023C)), set(), set(),
+                 {0x0005: [0x004A], 0x0034: [0x0047], 0x0047: [0x01AB],
+                  0x0085: [0x0182], 0x01A8: [0x023C], 0x01AB: [0x01D3]}),
+                ("PawnKilled", rsesquad.WIPED_TEST, rsesquad.WIPED_TEST_NEW,
+                 1727, ((0x0434, 0x050A),), set(), set(),
+                 {0x0434: [0x0528], 0x04A2: [0x050A]}),
+                ("regrouponme", rsesquad.REGROUP, rsesquad.REGROUP_NEW, 105,
+                 ((0x0000, 0x0069),), {11}, {-203}, {0x0000: [0x002C]}),
+                ("ToggleTeamHold", rsesquad.TOGGLE_FOLLOW,
+                 rsesquad.TOGGLE_FOLLOW_NEW, 282, ((0x00AB, 0x00BA),), set(),
+                 set(), {0x00B1: [0x00BA]}),
+                ("RainbowDebugTeam", rsesquad.HANDOFF, rsesquad.HANDOFF_NEW,
+                 850, ((0x0000, 0x0352),), set(), set(),
+                 {0x0000: [0x001A], 0x0041: [0x008D], 0x008A: [0x0041]}),
+                ("TeamLeaderIsClimbingLadder", rsesquad.LADDER_START,
+                 rsesquad.LADDER_START_NEW, 576, ((0x0000, 0x015F),), set(),
+                 {-18}, {0x0000: [0x015F]}),
+                ("MemberFinishedClimbingLadder", rsesquad.LADDER_END,
+                 rsesquad.LADDER_END_NEW, 305, ((0x0055, 0x0097),), set(),
+                 set(), {0x0055: [0x0097]}))
+            same, sane, flow = [], [], []
             for n, raw in commons.items():
                 was = lin.decompress(raw)
                 now = lin.decompress(shadows[n].read_file("/COMMON_SS.LIN"))
-                for old, new, mem, keep in (
-                        (rsesquad.DEAD_GATE, rsesquad.DEAD_GATE_NEW, 1062,
-                         0x00A7),
-                        (rsesquad.WIPED_TEST, rsesquad.WIPED_TEST_NEW, 1727,
-                         0x050A)):
+                for (name, old, new, mem, spans, plus, minus,
+                     jumps) in _edited:
                     a, b = _fn(was, old, mem), _fn(now, new, mem)
-                    if b is None:
+                    if a is None or b is None:
                         continue
-                    same += (b.mem_len == a.mem_len
-                             and b.disk_len == a.disk_len
-                             and [(t.mstart, t.mlen) for t in b.toks
-                                  if t.mstart >= keep]
-                             == [(t.mstart, t.mlen) for t in a.toks
-                                 if t.mstart >= keep])
-                    sane += _refs(b) == _refs(a)
-                b = _fn(now, rsesquad.DEAD_GATE_NEW, 1062)
-                w = _fn(now, rsesquad.WIPED_TEST_NEW, 1727)
-                flow += (b is not None and w is not None
-                         and _goes(b, 0x0000) == (0x07, [0x0031])
-                         and _goes(b, 0x006C) == (0x06, [0x00A7])
-                         and _goes(w, 0x0434) == (0x07, [0x0528])
-                         and _goes(w, 0x04A2) == (0x06, [0x050A]))
-            check("TeamMemberDead and PawnKilled still parse at their shipped "
-                  "size, every later statement where it was",
-                  same == 2 * len(commons), "%d of %d" % (same, 2 * len(commons)))
-            check("and each still references exactly the objects and names it "
-                  "did, so the recording reads the same", sane == 2 * len(commons))
-            check("the new jumps land past the player gate, on 'has been "
-                  "incapacitated' and on 'wiped out'", flow == len(commons))
+
+                    def _out(sc, _spans=spans):
+                        return [(t.mstart, t.mlen) for t in sc.toks
+                                if not any(lo <= t.mstart < hi
+                                           for lo, hi in _spans)]
+                    if (b.mem_len == a.mem_len and b.disk_len == a.disk_len
+                            and _out(b) == _out(a)):
+                        same.append(name)
+                    if (_refs(b) - _refs(a) == plus
+                            and _refs(a) - _refs(b) == minus):
+                        sane.append(name)
+                    if all(_goes(b, m) == t for m, t in jumps.items()):
+                        flow.append(name)
+            _want = len(_edited) * len(commons)
+            check("the seven edited functions still parse at their shipped "
+                  "size, every statement outside the rewrites where it was",
+                  len(same) == _want, "%d of %d" % (len(same), _want))
+            check("each references only objects it or its class already did: "
+                  "regrouponme gains its class's m_pawn for bCheatFlying, "
+                  "TeamLeaderIsClimbingLadder drops bShowLog",
+                  len(sane) == _want, "%d of %d" % (len(sane), _want))
+            check("and every new jump lands where it was built to",
+                  len(flow) == _want, "%d of %d" % (len(flow), _want))
             check("and the offline and online packages are untouched",
                   all(shadows[n].read_file(k) == b
                       for (n, k), b in others.items()))
@@ -6099,6 +9514,56 @@ def run_team_recordings(args):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _fake_vokes(files, slack, tail=0x2000):
+    """A vokes archive in memory, with `slack` bytes of padding after file 0.
+
+    Record layout, from `tcps2.vokes`: +0x00 name offset, +0x08 parent index,
+    +0x14 is-a-file, +0x18 size, +0x1C raw size, +0x20 data offset. The
+    header carries the file size at 0, the entry table bounds at 2 and 3, the
+    name table at 4 and the data start at 5, and the table must begin at
+    0x800 or the parser refuses it.
+    """
+    import io as _io
+    import struct as _struct
+    from tcps2.vokes import Region as _Region, Vokes as _Vokes
+
+    REC, ENT = 48, 0x800
+    names, name_at = bytearray(), {}
+    for name, _size in files:
+        name_at[name] = len(names)
+        names += name.encode("latin1") + b"\0"
+    ent_end = ENT + (len(files) + 1) * REC
+    name_off = (ent_end + 0xF) & ~0xF
+    data_off = (name_off + len(names) + 0x7FF) & ~0x7FF
+
+    laid, at = [], data_off
+    for i, (name, size) in enumerate(files):
+        laid.append((name, at, size))
+        at = (at + size + slack) if i == 0 else ((at + size + 0xF) & ~0xF)
+    filesize = at + tail
+
+    ent = bytearray((len(files) + 1) * REC)
+    for i, (name, off, size) in enumerate(laid, start=1):
+        base = i * REC
+        _struct.pack_into("<I", ent, base + 0x00, name_at[name])
+        _struct.pack_into("<I", ent, base + 0x08, 0)
+        _struct.pack_into("<I", ent, base + 0x14, 1)
+        _struct.pack_into("<I", ent, base + 0x18, size)
+        _struct.pack_into("<I", ent, base + 0x1C, size)
+        _struct.pack_into("<I", ent, base + 0x20, off)
+
+    buf = bytearray(filesize)
+    head = [0] * 16
+    head[0], head[2], head[3] = filesize, ENT, ent_end
+    head[4], head[5] = name_off, data_off
+    buf[0:64] = _struct.pack("<16I", *head)
+    buf[ENT:ENT + len(ent)] = ent
+    buf[name_off:name_off + len(names)] = names
+    for i, (_name, off, size) in enumerate(laid):
+        buf[off:off + size] = bytes([0x41 + i]) * size
+    return _Vokes(_Region(_io.BytesIO(buf), 0, "FAKE.IMG"))
+
+
 def run_vokes_stay_home(args):
     """A file that grows by a byte must not be exiled to the end of the archive.
 
@@ -6126,57 +9591,78 @@ def run_vokes_stay_home(args):
         return
     print("\n[vokes -- a file that grows a byte stays where it was]")
 
-    class Shadow(Region):
-        def __init__(self, inner):
-            super().__init__(inner.fh, inner.base, inner.name)
-            self.w = []
-        def read(self, off, n):
-            d = bytearray(super().read(off, n))
-            for o, b in self.w:
-                s0, e0 = max(off, o), min(off + n, o + len(b))
-                if s0 < e0:
-                    d[s0 - off:e0 - off] = b[s0 - o:e0 - o]
-            return bytes(d)
-        def write(self, off, data):
-            self.w.append((off, bytes(data)))
+    # Built here rather than found on the disc. This used to hunt a real
+    # archive for a file with alignment padding after it, which made the run
+    # depend on what happened to be applied: `ai_finite_ammo` rewrites
+    # R6GAMESETTINGS.INI and spends exactly that padding, so the check failed
+    # with "0 bytes" on an applied disc and passed on a stock one. Four
+    # consecutive runs with identical arguments went pass, pass, fail, fail.
+    #
+    # The invariant is worth keeping, so the padding is now chosen rather
+    # than discovered, and the archive is a BytesIO that no previous run can
+    # have touched.
+    SLACK = 12
+    arc = _fake_vokes([("A.BIN", 100), ("B.BIN", 256)], SLACK)
+    a_home = arc.files["/A.BIN"].offset
+    a_size = arc.files["/A.BIN"].size
+    b_home = arc.files["/B.BIN"].offset
+    body = arc.read_file("/A.BIN")
 
-    with Iso(iso_path) as iso:
-        arcs = open_archives(iso, r"/VOKES0\.IMG$")
-        if not arcs:
-            return
-        arc = arcs[0]
-        arc.r = Shadow(arc.r)
-        key = "/R6GAMESETTINGS.INI"
-        if key.upper() not in arc.files:
-            return
-        ent = arc.files[key.upper()]
-        home, size = ent.offset, ent.size
-        body = arc.read_file(key)
+    check("the archive we built parses as one, with both files",
+          sorted(arc.files) == ["/A.BIN", "/B.BIN"]
+          and body == b"A" * 100
+          and arc.read_file("/B.BIN") == b"B" * 256)
+    check("the packer's alignment padding is the gap we left",
+          arc._align_slack(arc.files["/A.BIN"]) == SLACK,
+          "%d bytes" % arc._align_slack(arc.files["/A.BIN"]))
+    check("and it is padding, never a whole missing file",
+          arc._align_slack(arc.files["/A.BIN"]) < arc.ALIGN)
 
-        slack = arc._align_slack(ent)
-        check("the packer left alignment padding after it", slack > 0,
-              "%d bytes" % slack)
-        check("and it is padding, never a whole missing file", slack < arc.ALIGN)
-
-        arc.write(key, body + b" ", home=(home, size))
-        check("one byte longer still fits in its own slot",
-              arc.files[key.upper()].offset == home,
-              "moved to 0x%x" % arc.files[key.upper()].offset)
-        check("and the record grew with it",
-              arc.files[key.upper()].size == size + 1)
+    # Every growth the padding can absorb keeps the file in its slot, and
+    # the file after it never moves. One byte is the case that matters --
+    # on the real disc a one-byte growth of R6GAMESETTINGS.INI was enough to
+    # exile it to the end of the archive, a gigabyte from everything read
+    # with it at level load.
+    for grow in (1, SLACK // 2, SLACK):
+        one = _fake_vokes([("A.BIN", 100), ("B.BIN", 256)], SLACK)
+        one.write("/A.BIN", body + b" " * grow, home=(a_home, a_size))
+        e = one.files["/A.BIN"]
+        check("%d byte(s) longer still fits in its own slot" % grow,
+              e.offset == a_home, "moved to 0x%x" % e.offset)
+        check("and the record grew with it", e.size == a_size + grow)
         check("the next file is still where it was",
-              min(o.offset for o in arc.files.values() if o.offset > home)
-              == home + size + slack)
+              one.files["/B.BIN"].offset == b_home)
+        check("and reads back as what we wrote",
+              one.read_file("/A.BIN") == body + b" " * grow)
 
-        # now force a real relocation, then check it comes home again
-        arc.write(key, body + b" " * (slack + 64), home=(home, size))
-        moved = arc.files[key.upper()].offset
-        check("a growth past the padding does relocate", moved != home)
-        arc.write(key, body, home=(home, size))
-        check("and shrinking back brings it home", 
-              arc.files[key.upper()].offset == home,
-              "left at 0x%x" % arc.files[key.upper()].offset)
-        check("with its bytes intact", arc.read_file(key) == body)
+    # Past the padding it has to move, and it has to come home again.
+    two = _fake_vokes([("A.BIN", 100), ("B.BIN", 256)], SLACK)
+    two.write("/A.BIN", body + b" " * (SLACK + 64), home=(a_home, a_size))
+    moved = two.files["/A.BIN"].offset
+    check("a growth past the padding does relocate", moved != a_home,
+          "stayed at 0x%x" % moved)
+    check("and the file it used to sit in front of is untouched",
+          two.files["/B.BIN"].offset == b_home
+          and two.read_file("/B.BIN") == b"B" * 256)
+    two.write("/A.BIN", body, home=(a_home, a_size))
+    check("and shrinking back brings it home",
+          two.files["/A.BIN"].offset == a_home,
+          "left at 0x%x" % two.files["/A.BIN"].offset)
+    check("with its bytes intact", two.read_file("/A.BIN") == body)
+
+    # One assertion against a real archive, chosen so it holds whatever is
+    # applied: padding is by definition smaller than the alignment, so a
+    # value at or above it would mean `_align_slack` had handed out a gap
+    # left by a missing file rather than the packer's own padding.
+    iso_path = args.rs3data or args.iso
+    if iso_path:
+        with Iso(iso_path) as iso:
+            for real in open_archives(iso, r"/VOKES\d\.IMG$"):
+                bad = [k for k, e in real.files.items()
+                       if not 0 <= real._align_slack(e) < real.ALIGN]
+                check("%s: no file claims more padding than the alignment"
+                      % real.r.name, not bad, str(bad[:3]))
+                break
 
 
 def run_mem_size_preserved(args):
@@ -6314,7 +9800,9 @@ def run_chunks_fill_exactly(args):
         for path in ("/COMMON.LIN", "/COMMON_SS.LIN"):
             if path.upper() not in arc.files:
                 continue
-            raw = arc.read_entry(arc.files[path.upper()])
+            # the shipped file, not the disc's: the disc may carry edits to
+            # the very functions these cases rewrite (split_callouts does)
+            raw = _stock_bytes(iso_path, arc, path)
             plain = lin.decompress(raw)
             # Only these two reach an exact fill on this disc; ss_chatter and
             # canon_team land on a chunk no reachable compression fills, and

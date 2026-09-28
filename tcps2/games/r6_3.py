@@ -25,18 +25,28 @@ Provenance of the wave numbers, briefly, because they are not obvious:
 
 from __future__ import annotations
 
+import re
 import struct
 
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
-from . import r6tuning, xboxbuild
+from . import r6_3_slus20883_sig, r6tuning, xboxbuild
 from .. import (rseaicover, rsecanon, rseclark, rsedebrief, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
                 rsedeadpath, rsefov, rsehudteam, rsemandown, rsemuzzle,
                 rsesplice, rsesquad, rseswitch,
                 rserescue, rseteam,
                 rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
-                rseorders, rsewheel)
+                rseorders, rsewheel, rsecallouts, rseflashlight, rsehands, rsecarry,
+                rsedowncall, rseroguecall, rsethuntai, rsegadget,
+                rsehostagerun, rseflashcost, rsecorpsehit, rsegunaudio,
+                rseclaymore, rseff,
+                rsedecal, rseaihunt, rsesmoke, rseuzilight, rsepuffs,
+                rseviewport, rsespectate, rsetracer, rseslomo,
+                rsepenetrate,
+                rsemirror, rseaifire, rseburstsnd, rsesoundgate,
+                rsefollowleg,
+                rsemolotov)
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -52,6 +62,28 @@ SP = Overlay(
 
 # -- stock words, all read back out of a pristine SP.SOZ -------------------
 STOCK = {
+    # sw $v0, -0x7f78($gp) -- renderer init writing g_PresentDivider = 2
+    # (0x00653778). The vblank pacing ISR at 0x0019F700 counts vblanks and
+    # only releases a flip once the count reaches this divider, so 2 means
+    # one presented frame per two NTSC fields: 29.97 Hz. See PRESENT_DIVIDER.
+    # addiu $a1, $zero, 8 -- R6DecalGroup m_MaxSize for the GRENADE ring. The
+    # five rings are 32 footsteps, 32 wall hits, 16 blood splats, 8 blood
+    # baths and 8 grenade marks; 96 pooled R6Decal actors in total, which is
+    # exactly what a savestate holds. `decal_ring` patches 0x00379B30, whose
+    # one register feeds footsteps AND wall hits -- it never touched this.
+    0x00379B38: 0x24050008,
+    0x002F10C8: 0x3C0240A0,   # lui v0, 0x40A0 = 5.0f  flashbang screen effect
+    0x001AE478: 0xAF828088,
+    # R6DZoneWave::Tick's release loop. Stock it calls SpawnOne exactly n
+    # times and ignores the return; a NULL return means the engine built
+    # nothing (the template roll failed, or the class would not resolve), so
+    # the remaining calls are certain to fail too. `movz $s1,$s0,$v0` forces
+    # the counter to the bound on NULL and the loop exits; the increment
+    # moves into the branch delay slot, which runs on both paths, so a
+    # successful release still runs exactly n times. MOVZ is already used by
+    # this function at 0x0040A8B0.
+    0x0040A8D4: 0x26310001,   # addiu s1, s1, 1      release-loop counter
+    0x0040A8E0: 0x00000000,   # nop                  its branch delay slot
     0x0040AF58: 0x02221021,   # addu v0, s1, v0      m_iNbToSpawn
     0x0040A8A8: 0x02028021,   # addu s0, s0, v0      released per wave
     0x0040AFDC: 0x02231821,   # addu v1, s1, v1      m_iNextWaveTrigger seed
@@ -288,6 +320,95 @@ for _va, _stock, _new, _note in rsedebrief.EDITS:
     STOCK[_va] = _stock
 for _va, _word, _stock, _note in rsehudteam.speak_words():
     STOCK[_va] = _stock
+# Part A -> part B carry-over by player, not by slot (rsecarry).
+for _va, _stock, _new, _note in rsecarry.WORDS:
+    STOCK[_va] = _stock
+# The shrapnel-decal cave (rsedecal) hooks the explosion native's epilogue.
+# The cave itself is a cheat-file thing; only the hijack is an overlay word.
+STOCK[rsedecal.HIJACK_AT] = rsedecal.HIJACK_STOCK
+# Its disc words patch R6DecalGroup::Init's explosion branch in place: four
+# to give it the wall-hit look, four to cap the incidence angle that was
+# letting marks smear, and one for its own DrawScale.
+for _va, _stock, _new in rsedecal.BRANCH_WORDS + rsedecal.INCIDENCE_WORDS:
+    STOCK[_va] = _stock
+#: The withdrawn first attempt at the same feature. It repointed the decal
+#: type dispatch at the wall-hit branch, which worked but handed the ring the
+#: bullet holes' own DrawScale, so making explosion marks bigger enlarged
+#: those too. Patching the ring's own branch replaced it. Registered here and
+#: written by nothing, so a disc that still carries the old word is
+#: recognised and put back -- without this a previously applied disc reports
+#: as carrying changes this tool does not know, and cannot be used as a
+#: source of stock data.
+STOCK[0x00378B44] = 0x106200AD
+#: The penetration gate. The model ships complete and switched OFF --
+#: every material on the disc has m_iPenetration 0, which means
+#: impenetrable -- so these words open it rather than tune it.
+STOCK.update(rsepenetrate.stock_words())
+# Terrain projection for decal groups. Stock, the GRENADE group has
+# bit 1 CLEAR -- explosion marks never projected on terrain. The patch
+# that gave them the bullet-hole look switched it on, and each mark
+# then gathered against every terrain sector of every zone, with the
+# AABB test at the leaf and no hierarchical rejection. See rsedecal.
+for _grp in (rsedecal.TERRAIN_OFF_SHRAPNEL, rsedecal.TERRAIN_OFF_BLOOD,
+             rsedecal.TERRAIN_OFF_HOLES, rsedecal.TERRAIN_KILL):
+    for _va, _st, _nw in _grp:
+        STOCK[_va] = _st
+STOCK[rsedecal.DRAWSCALE] = rsedecal.DRAWSCALE_STOCK
+# And the per-frame hook the impact stagger uses, in UGameEngine::Tick.
+STOCK[rsedecal.STAGGER_HOOK] = rsedecal.STAGGER_HOOK_STOCK
+# The blood-splatter cave (rsedecal) hooks the one word that ends the PAWN
+# branch of the bullet trace native. Like the shrapnel cave, only the hook is
+# an overlay word; the cave itself lives below the ELF load base.
+STOCK[rsedecal.BLOOD_HOOK] = rsedecal.BLOOD_HOOK_STOCK
+# And the BloodSplats ring size, which is a plain disc word.
+STOCK[rsedecal.BLOOD_RING] = rsedecal.BLOOD_RING_STOCK
+# The loadout-mirror cave hooks the `jr $ra` that ends
+# execGetMissionDescription; its delay slot, `addiu $sp,$sp,0x20`, runs
+# either way, so the cave starts with the frame already popped. Only the
+# hook is an overlay word and even that is delivered as a cheat row, but
+# it is registered here so a disc that somehow carries it is recognised
+# and put back.
+STOCK.update(rsemirror.stock_words())
+# How hard the squad shoots: three `addiu` immediates inside
+# R6RainbowAI::Tick that set the trigger-hold envelope. No cave and no
+# hook -- the burst length is not a data value on PS2, it is rolled from
+# these literals every attack cycle. The divisor is registered but never
+# changed; it keeps the 0.05 s quantum.
+STOCK[rseaifire.MOD_AT] = rseaifire.MOD_STOCK
+STOCK[rseaifire.FLOOR_AT] = rseaifire.FLOOR_STOCK
+STOCK[rseaifire.DIV_AT] = rseaifire.DIV_STOCK
+# The tracer VISIBILITY gates -- independent of the colour work above.
+# The game stamps each tracer with the firing player's viewport and then
+# refuses to draw it in that same viewport, so nobody ever sees his own;
+# and AI fire is cone-gated to two degrees. See rsetracer.
+STOCK.update(rsetracer.visible_stock_words())
+# Three-round burst plays m_BurstFireStereoSnd, which is None on all 30
+# weapons and whose recording is not on the disc -- so burst fires
+# silently. One word repoints it at m_SingleFireStereoSnd. See
+# rseburstsnd.
+STOCK.update(rseburstsnd.stock_words())
+# Being flashbanged re-runs the whole deafening routine every frame for
+# six seconds, because one line in UGameEngine::Tick clears the latch
+# that says it already ran. See rseflashcost.
+STOCK.update(rseflashcost.stock_words())
+# Molotovs and flashbangs for the terrorists. ONE overlay word: the hook
+# in PickGrenadeClass, delivered as a cheat row. Its delay slot is
+# deliberately NOT registered -- `lui $at, 0x005e` is the top half of an
+# overlay address, every entry here becomes a relocation signature, and
+# relocate() can never confirm such a word because a rebuilt data segment
+# changes that immediate. Registering it for documentation made the whole
+# option undeliverable on any other pressing. See rsemolotov.
+STOCK.update(rsemolotov.stock_words())
+
+# The claymore proximity cave (rseclaymore), delivered in the cheat file. Only
+# the hijack is an overlay word; the cave itself lives in RAM below the ELF
+# load base, which is not part of the image and so has no stock value.
+STOCK[rseclaymore.HIJACK[0]] = rseclaymore.HIJACK_STOCK
+# Projectors in split screen: the level render's split-screen skip (rseshadow).
+STOCK[rseshadow.PROJECTOR_BRANCH] = rseshadow.PROJECTOR_BRANCH_STOCK
+# Team orders: each viewport's interactions drawn only in its own pass.
+for _va, _stock, _new, _note in rseorders.PASS_WORDS:
+    STOCK[_va] = _stock
 # The split-screen aim branch ss_accuracy removes: beqz $v0 on the flag at
 # 0x006546F4, which is 1 in split screen and 0 in single player.
 SS_AIM_BRANCH = 0x003F3D90
@@ -336,7 +457,15 @@ CAVE_WORDS = [
     (0x005BA56C, 0x00000000), (0x005BA570, 0x8D040000), (0x005BA574, 0x10000005),
     (0x005BA578, 0x00000000), (0x005BA57C, 0x00008021), (0x005BA580, 0x08102B6E),
     (0x005BA584, 0x00000000), (0x005BA588, 0x03002021), (0x005BA58C, 0x08102B31),
-    (0x005BA590, 0x00000000),
+    # THE FIX for the spawn runaway. Both paths into the point's spawn call
+    # funnel through the `j 0x0040ACC4` above, so this shared branch delay
+    # slot is the last instruction to run before it -- and it is the cave's
+    # own word, so the cave does not grow. `sw $s5, 0x480($a0)`: store the
+    # REQUESTING zone into the chosen point's owner field, so the new enemy
+    # is credited to the zone that asked instead of to the point's owner
+    # (NULL on 14 of Shipyard's 18 points). $s5 holds the zone for all of
+    # R6DZoneWave::SpawnOne and no cave word writes it.
+    (0x005BA590, 0xAC950480),
 ]
 
 #: Counted from the recovered export table, which names each object's class --
@@ -559,6 +688,15 @@ REASSEMBLED = ("ss_man_down",)
 #: not the first.
 
 REASSEMBLED_REASON = (
+    "UPDATE 2026-09-24: the mismatch is found, by reading, not yet by a "
+    "load. It adds `new R6PriceVoices` to PlaySoundDamage, which makes that "
+    "function the first place the split-screen package touches the "
+    "R6PriceVoices class -- earlier than the stock stream does. The loader "
+    "creates, and then reads from the recording, a package's own objects "
+    "in the order their first references are serialized, so the class is "
+    "read where the recording holds something else. That is the same kind "
+    "of change that hung Oil Refinery on 2026-09-23, and the suite now "
+    "checks every edit for it.\n\n"
     "UPDATE 2026-09-22. canon_team, withdrawn beside this under the same "
     "reasoning, turned out to hang for a reason that is now measured: a "
     "split-screen level file is a RECORDING of what one load read, and its "
@@ -636,8 +774,74 @@ REASSEMBLED_REASON = (
 #: itself -- they were withdrawn because they share the re-assembly path with
 #: the two that were. That is a real reason to suspect them and not a reason to
 #: hide them, so they are selectable again and marked for what they are.
-RETRY = ("ai_sidearm", "ai_sidearm_contact", "ai_say_dry",
-         "ss_chatter_kill", "ss_chatter_hostage")
+RETRY = ("ai_sidearm", "ai_sidearm_contact", "ai_say_dry")
+
+#: Options whose patch has been written to a disc and READ BACK from it
+#: -- so the bytes are known to land -- but whose effect has not been
+#: watched in play. That is what the "applied" badge means, and leaving
+#: these at "experimental" understated 34 options at once (1.0 pass).
+#: Promotion only: nothing here is ever demoted by this table.
+PROVEN_APPLIED = frozenset(('ai_hunt', 'ai_hunt_fire', 'ai_hunt_run', 'ai_trigger_hold', 'blast_decal_size', 'blast_stagger', 'breach_stun', 'burst_fire_sound', 'claymore_prox', 'dead_flashlight', 'decal_terrain', 'ff_player_victim', 'ff_retaliate', 'ff_rogue_side', 'flashbang_cost', 'fps_uncap', 'grenade_decals', 'hostage_rainbow_voice', 'impact_puffs', 'keep_viewport', 'mirror_launcher', 'mirror_scope', 'penetration', 'rogue_tango', 'slomo', 'smoke_ramp', 'spectate_no_wait', 'split_carry', 'split_down_callouts', 'split_hands', 'split_shadows', 'split_team_orders', 'split_thunt_ai', 'ss_accuracy'))
+
+
+#: A second pass on 2026-09-28: the player played split screen with all
+#: of these on and reported the Split Screen, Weapons and Teammates
+#: groups working. `mirror_loadout` is in here on a direct retraction --
+#: it was reported NOT matching earlier the same night, then confirmed
+#: working after the installer and its guard were rebuilt.
+#:
+#: Held back deliberately, and why:
+#:   spectate_enable/_no_wait  the camera still does not open for him
+#:   ai_sidearm, ai_say_dry    in RETRY, which already says re-check
+#:   gun_audio_fix             applied minutes earlier; no M16 or M4
+#:                             has actually been heard yet
+PLAYED_SPLIT_SCREEN = frozenset(('ai_trigger_hold', 'breach_stun', 'burst_fire_sound', 'claymore_prox', 'ff_player_victim', 'ff_retaliate', 'ff_rogue_side', 'keep_viewport', 'mirror_launcher', 'mirror_loadout', 'mirror_scope', 'penetration', 'rogue_tango', 'smoke_ramp', 'split_carry', 'split_down_callouts', 'split_hands', 'split_shadows', 'split_team_orders', 'split_thunt_ai', 'split_wheel_labels', 'ss_accuracy', 'ss_clark'))
+
+
+#: Watched working in the running game, and what was seen:
+#:   blast_decals       marks counted in a savestate, 5 of 6 rays placed
+#:   blood_splats       a splat on the floor beside a body, on camera
+#:   corpse_hitbox      rounds registering on a body, on camera
+#:   stun_flash         the flashbang effect running -- it cost frames
+#:   terrorist_grenades an enemy seen throwing a flashbang
+#:   tracer_calibre     tracers seen, reported working
+#:   wave_enable        the enemies it adds, reported and seen
+PROVEN_IN_GAME = frozenset(('blast_decals', 'blood_splats', 'corpse_hitbox', 'stun_flash', 'terrorist_grenades', 'tracer_calibre', 'wave_enable'))
+
+
+#: Played and found wanting. These keep their badge but gain a note,
+#: because "untested" would be a kinder claim than the truth.
+#: `mirror_loadout` used to sit here. It was confirmed working in play on
+#: 2026-09-28 after its installer was rebuilt, so the note came off rather
+#: than being left to contradict its own badge.
+RETEST_IN_PLAY = {
+    'ai_weapon_sound':
+        "Partly confirmed. An MP5A4 case was reported fixed, but "
+        "enemies carrying a UMP45 and a MAC-11 were still silent on "
+        "2026-09-28. Both of those are silenced weapons, which the "
+        "MP5A4 is not.",
+    'spectate_enable':
+        "Reported not working in play on 2026-09-28, before the no-wait "
+        "option existed. Re-test before trusting it: the action is Joy8 "
+        "in PSX2USER.INI, and there is no HUD while spectating.",
+}
+
+
+#: Withdrawn 2026-09-24 without ever being played: the same first-touch
+#: change as ss_man_down, found by the suite's creation-order check.
+FIRST_TOUCH = ("ss_chatter_kill", "ss_chatter_hostage")
+
+FIRST_TOUCH_REASON = (
+    "Withdrawn 2026-09-24 before it was ever played. It adds `new "
+    "R6PriceVoices` to PlaySoundInflictedDamage, which makes that function "
+    "the first place the split-screen package touches the R6PriceVoices "
+    "class -- earlier than the stock stream does. The loader creates, and "
+    "then reads from the recording, a package's own objects in the order "
+    "their first references are serialized, so this change reads the "
+    "recording out of step. The death call-out makes the same change in "
+    "PlaySoundDamage and hung the load on a disc carrying nothing else, and "
+    "the same kind of change hung Oil Refinery on 2026-09-23. It returns "
+    "when the line can be spoken without moving that first reference.")
 
 RETRY_NOTE = (
     "RISKY. This edit RE-ASSEMBLES UnrealScript rather than poking bytes in "
@@ -658,8 +862,109 @@ RETRY_NOTE = (
     "as it shipped.")
 
 
+#: How far each enemy card is from the Xbox build, measured 2026-09-23 from the
+#: pristine PS2 disc and the stock Xbox `xboxdynamic.umd`: the global INI keys,
+#: all 118 PS2 / 114 Xbox terrorist templates, the pawn and AI class defaults,
+#: the 29 terrorist weapons' accuracy fields and the sight/aim code. The two
+#: builds differ in exactly three places -- the Recruit skill multiplier, the
+#: templates (99 of the 108 both ship were retuned for PS2), and a PS2-only
+#: distance factor on enemy shot spread (`R6Weapons.GetFiringDirection`,
+#: FloatConsts 0.5 / 0.5 / 1.0 at plain 0x1DDCE0 / 0x1DDCF3 / 0x1DDCF9).
+XBOX_NOTES = {
+    "terro_skill": (
+        "Xbox ships 0.40 / 0.70 / 1.25 -- only Recruit differs (0.20 here). "
+        "To match it, set Recruit to 0.40: no choice on this card does that, "
+        "but 'Play it the way the Xbox build does' > Enemies writes exactly "
+        "that key."),
+    "xbox_tuning": (
+        "Enemies writes the one enemy key the two INIs disagree on (Recruit "
+        "skill 0.20 -> 0.40). It cannot reach the rest of the difference: the "
+        "PS2 port retuned 99 of the 108 enemy templates both discs ship, and "
+        "only the PS2 build scales enemy shot spread with distance. So Veteran "
+        "and Elite enemies stay PS2-tuned -- on Elite they settle their aim "
+        "about 1.5x faster than the Xbox's do."),
+    "enemy_aim": (
+        "Xbox templates are lower but far more random: on average Assault 54, "
+        "SelfControl 54 and Observation 66, and 48 of them add a 0-50 roll to "
+        "every skill at each spawn. PS2 averages 69 / 63 / 77, and 93 of its "
+        "118 templates roll only 0-10. After the roll PS2 enemies still lead "
+        "by about 7 Assault, 4 Observation and 1 SelfControl, with much less "
+        "spread. One value here cannot reproduce that."),
+    "sight": (
+        "Xbox ships the same 5000 and the same observation scaling -- leave "
+        "it. The difference is the Observation skill in the templates: Xbox "
+        "enemies see about 9% farther on Recruit, PS2's about 2% farther on "
+        "Veteran and Elite."),
+    "spotting": (
+        "Xbox ships the same four movement factors (0.8 / 0.6, 1.2 / 1.4). "
+        "Leave it at Stock."),
+    "perfect_dist": (
+        "Xbox ships the same 500. Past it, only the PS2 build scales an "
+        "enemy's shot spread with distance: tighter than Xbox from 5 to 17 m, "
+        "up to 1.5x looser beyond 50 m. No card changes that factor yet."),
+    "fire_delay": (
+        "Xbox ships the same 1.0 s and 0.5 s, and no delay on Elite. Leave it "
+        "at Stock."),
+    "enemy_loadout": (
+        "37 enemy templates carry a different gun on Xbox -- Airport's G3A3, "
+        "M249 and TAR21 are L85A1s here, Oil Refinery's P90, SR2 and M1 are "
+        "AUGs or PSG1s. Every gun's accuracy stats are identical on both "
+        "discs, so this is which gun, not how well a gun shoots."),
+    "search_time": "Same value on the Xbox build.",
+    "speed": "Same value on the Xbox build.",
+    "toughness": "Same value on the Xbox build.",
+}
+
+
+#: Cards whose value lives in `R6GameplaySettings`, an UnrealScript class whose
+#: `config` properties are read from `R6GAMESETTINGS.INI` ONCE, at boot. The
+#: caution used to sit on `toughness` alone; it applies to all of these, and
+#: two are worse than "restart" -- `m_fSightRadius` is copied into each pawn's
+#: `SightRadius` when it spawns, and the difficulty skill multiplier is baked
+#: in `R6Terrorist.CommonInit`, so those need a NEW MISSION, not just a fresh
+#: boot. Measured 2026-09-25, and named as the most likely reason someone
+#: decides one of these sliders does nothing.
+INI_BACKED = ("grenade_dist", "grenade_delay", "terro_skill", "perfect_dist",
+              "fire_delay", "sight", "search_time", "speed", "spotting",
+              "toughness", "xbox_tuning", "player_mags", "sens_boost")
+INI_BACKED_NOTE = (
+    "The game reads this once, when it starts. Apply to the disc, then "
+    "restart the emulator -- changing it while the game is running does "
+    "nothing.")
+#: The two that are not merely boot-time: they are copied per pawn at spawn.
+INI_PER_MISSION = ("sight", "terro_skill", "xbox_tuning")
+INI_PER_MISSION_NOTE = (
+    "This one is copied onto each enemy as it spawns, so a mission already "
+    "in progress keeps the old value even after a restart -- start the "
+    "mission again to see it.")
+
+
+#: Cards word their not-played warning half a dozen ways -- "Not yet
+#: played.", "Never played.", "NOT YET PLAYED -- ...". Pinning the strip
+#: to one literal left two verified cards still telling the reader they
+#: had never been played, which is worse than not badging them at all.
+_UNPLAYED = re.compile(
+    r"^\s*(not yet played|never played|not play-tested)\b[^.]*\.\s*",
+    re.I)
+
+
+def _drop_unplayed_claim(caution):
+    """Remove a leading 'never played' sentence from a caution."""
+    out = _UNPLAYED.sub("", caution or "", count=1)
+    return out.strip()
+
+
 def _settings():
+    import dataclasses
+
     out = _build_settings()
+    for s in out:
+        if s.key in INI_BACKED and s.enabled:
+            note = INI_BACKED_NOTE
+            if s.key in INI_PER_MISSION:
+                note += " " + INI_PER_MISSION_NOTE
+            if note not in (s.caution or ""):
+                s.caution = (s.caution + "\n\n" if s.caution else "") + note
     for s in out:
         if s.key in RETRY and s.enabled:
             s.confidence = "untested"
@@ -668,7 +973,39 @@ def _settings():
             s.enabled = False
             s.confidence = "broken"
             s.disabled_reason = REASSEMBLED_REASON
-    return out
+        if s.key in FIRST_TOUCH and s.enabled:
+            s.enabled = False
+            s.confidence = "broken"
+            s.disabled_reason = FIRST_TOUCH_REASON
+    # 1.0: badges that match the evidence. Promotion only, and the
+    # "Not yet played." line is stripped from anything that HAS been
+    # played, because leaving it there contradicts its own badge.
+    for s in out:
+        if not s.enabled:
+            continue
+        if s.key in PROVEN_APPLIED and s.confidence == "experimental":
+            s.confidence = "applied"
+        if s.key in PROVEN_IN_GAME or s.key in PLAYED_SPLIT_SCREEN:
+            s.confidence = "verified"
+            s.caution = _drop_unplayed_claim(s.caution)
+        # A card cannot claim it was watched working while its own caution
+        # OPENS by saying it was not. The caution is the deliberate
+        # sentence; the badge may simply be a default nobody chose. Mid-text
+        # is left alone on purpose -- `split_wheel_labels` says the option
+        # works and that one NEWER PART of it has not been played, which is
+        # a real distinction worth keeping.
+        if s.confidence == "verified" and _UNPLAYED.match(s.caution or ""):
+            s.confidence = "applied"
+        note = RETEST_IN_PLAY.get(s.key)
+        if note and note not in (s.caution or ""):
+            c = (s.caution or "").replace("Not yet played.", "").strip()
+            s.caution = note + ("\n\n" + c if c else "")
+    # Copies, not edits: several of these cards come from builders the other
+    # Unreal-family profiles share.
+    return [dataclasses.replace(
+                s, help=(s.help + "\n\n" if s.help else "")
+                + "Compared with the Xbox build: " + XBOX_NOTES[s.key])
+            if s.key in XBOX_NOTES else s for s in out]
 
 
 def _build_settings():
@@ -678,12 +1015,18 @@ def _build_settings():
                 help="Rainbow Six 3 already ships a terrorist deployment-zone "
                      "system that the campaign uses and Terrorist Hunt never "
                      "triggers. This switches it on and hands you its dials.",
-                caution="Terrorist Hunt will not finish loading with this on. "
-                        "Measured on Parade: stock loads, a stock-plus-defaults "
-                        "patch hangs on the load screen, and the same patch with "
-                        "this off loads. The campaign is unaffected. Which of "
-                        "the dials does it is not yet known, so treat the whole "
-                        "feature as campaign-only for now.",
+                caution="Split-screen Terrorist Hunt and split-screen "
+                        "practice have both been played with this on "
+                        "(Shipyard, 2026-09-25) and both load. That "
+                        "supersedes the older note that Terrorist Hunt would "
+                        "not finish loading, which was measured on Parade "
+                        "while the map-wide spawn option's cheat file was "
+                        "being written to a PCSX2 the game was not launched "
+                        "from -- a disc patched for waves WITHOUT that cheat "
+                        "file asks the shipped spawn picker for far more "
+                        "points than one zone can serve. So keep the cheat "
+                        "file and the disc in step. Single-player Terrorist "
+                        "Hunt has not been retried since.",
                 confidence="verified"),
         Setting("wave_gate", "Where waves feed", CHOICE, "always", "Enemies",
                 choices=[
@@ -709,37 +1052,51 @@ def _build_settings():
                 requires={"wave_enable": True}, confidence="verified"),
         Setting("wave_size", "Released per wave", INT, 1, "Enemies",
                 minimum=1, maximum=8, unit="enemies",
-                help="How many come out each time a wave fires. Capped by the "
-                     "number of spawn points the zone can reach, so on most maps "
-                     "anything above 2-4 does nothing.",
+                help="How many come out each time a wave fires. The game ships "
+                     "these zones set to release 1 or 2. Capped by the number "
+                     "of spawn points the zone can reach, so on most maps "
+                     "anything above 2-4 does nothing -- and each release the "
+                     "zone cannot place still costs the console a whole enemy "
+                     "to build and throw away, so a high number here is the "
+                     "most expensive setting on this page.",
                 requires={"wave_enable": True}, confidence="verified"),
         Setting("wave_trigger", "Alive before the next wave", INT, 2, "Enemies",
                 minimum=0, maximum=12, unit="enemies",
                 help="THE VOLUME DIAL. A zone tops itself up until more than "
                      "this many of its enemies are alive, so steady state per "
-                     "zone is about this number plus the release size. Set this "
-                     "first, then the wave size, then the total.",
+                     "zone is about this number plus the release size. The game "
+                     "ships these zones set to 1. Set this first, then the wave "
+                     "size, then the total.",
                 requires={"wave_enable": True}, confidence="verified"),
-        Setting("wave_hunt", "Enemies hunt you from the start", BOOL, True,
-                "Enemies",
-                help="This is the switch for enemies who come looking for you "
-                     "rather than waiting to see you. Every enemy a wave "
-                     "releases starts already hunting, so they cross the map "
-                     "toward you instead of holding a patrol -- turn it off "
-                     "and a zone waits to be triggered by the level's own "
-                     "script, which in Terrorist Hunt never happens, so "
-                     "nothing comes at all. Pair it with \"Spawn across the "
-                     "whole map\" and the pressure arrives from every "
-                     "direction rather than one corner.",
-                caution="It reaches the enemies the wave system releases, not "
-                        "the ones the designers placed by hand. Those keep "
-                        "their authored behaviour and still have to see or "
-                        "hear you first -- their strategy is chosen at "
-                        "runtime and is not in the level file, so there is "
-                        "nothing to edit for them short of rewriting script. "
-                        "And nothing here lets anyone see through walls; the "
+        Setting("wave_hunt", "Enemies hunt you from the start", BOOL, False,
+                "Enemies", enabled=False,
+                disabled_reason=(
+                    "Withdrawn 2026-09-26: measured inert. It set "
+                    "m_bHuntFromStart on the WAVE actor, and the only code "
+                    "that reads that flag reads it from the SPAWN POINT "
+                    "instead -- a wave never spawns anything itself, it picks "
+                    "a point and calls that point's spawner, so the bit it "
+                    "set was never looked at. Use \"Enemies hunt you\" "
+                    "instead, which reaches the same enemies through script."),
+                help="Withdrawn. It claimed to make wave-released enemies "
+                     "start out hunting, and it did nothing at all.\n\n"
+                     "What it wrote was correct in itself -- three "
+                     "instructions setting the hunt flag as the wave zone "
+                     "starts up. The flag was simply on the wrong object. "
+                     "A wave zone does not create enemies; it picks one of "
+                     "the level's spawn points and asks that point to do it, "
+                     "and the code that decides whether a new enemy hunts "
+                     "reads the flag off the point it came from. The wave's "
+                     "own copy is read by nothing.\n\n"
+                     "The behaviour it promised is real and is now delivered "
+                     "by \"Enemies hunt you\" in the same group, which "
+                     "rewrites the decision itself rather than a flag feeding "
+                     "it -- and reaches the wave-released enemies too, who "
+                     "skip that decision entirely because of a separate "
+                     "latch the wave sets on their controller.",
+                caution="Nothing here ever let anyone see through walls; the "
                         "engine has no such flag.",
-                requires={"wave_enable": True}, confidence="verified"),
+                requires={"wave_enable": True}, confidence="broken"),
         Setting("wave_mapwide", "Spawn across the whole map", BOOL, True,
                 "Enemies", pnach_only=True,
                 help="Stock, a wave can only use the two or three spawn points "
@@ -748,7 +1105,30 @@ def _build_settings():
                      "level, which also brings a real spread of enemy types.",
                 caution="Delivered as a PCSX2 cheat file, not written to the "
                         "disc. A code cave baked into the overlay does not "
-                        "survive a level load.",
+                        "survive a level load.\n\n"
+                        "This used to bring the game to a crawl, and that is "
+                        "fixed as of 2026-09-25 -- but the fix is in the "
+                        "cheat file, so SAVE A FRESH ONE after updating. The "
+                        "game credits each new enemy to the spawn point's "
+                        "owning zone rather than to the zone that asked, and "
+                        "most points have no owner (on Shipyard, 14 of 18), "
+                        "so enemies were built and placed correctly while "
+                        "nobody was credited -- leaving the zone below its "
+                        "refill threshold and releasing another batch every "
+                        "single frame. Measured on Shipyard: 2,492 enemies "
+                        "in 132 seconds, about two frames a second. The cave "
+                        "now hands the point to the zone that asked, so the "
+                        "count advances.\n\n"
+                        "Two things follow. A zone's \"keep this many alive\" "
+                        "becomes \"keep this many of mine alive ANYWHERE on "
+                        "the map\", so the pressure is global rather than "
+                        "local and the zone next to you goes quiet once its "
+                        "quota is alive elsewhere. And zones now genuinely "
+                        "spend their budget and fall silent when it is gone, "
+                        "which is what \"enemies each zone owes\" was always "
+                        "meant to mean -- so raise that number if you want "
+                        "waves to keep coming. Turning this option off is "
+                        "best followed by reloading the level.",
                 requires={"wave_enable": True}, confidence="verified"),
 
 
@@ -818,10 +1198,20 @@ def _build_settings():
         Setting("perfect_dist", "Range at which enemies never miss", INT, 500,
                 "Enemy Behaviour", minimum=50, maximum=3000, unit="units",
                 confidence="applied", touches="data",
-                help="Inside this distance an NPC's shots have no dispersion at "
-                     "all. It ships at 500. Lowering it is the most direct way "
-                     "to make enemies less lethal up close; raising it does the "
-                     "opposite."),
+                help="`m_fDistanceForPerfectAccuracy`, which the disc ships "
+                     "at 500. It is the distance inside which the game marks "
+                     "a shot as point-blank.\n\n"
+                     "TRACED AND FOUND INERT (2026-09-25): the only code "
+                     "that reads this sets a flag on the enemy, and nothing "
+                     "reads that flag back -- all 53 uses of it were "
+                     "classified. The spread maths never consults it, and "
+                     "the distance term in the aim cone is a fixed 5000 that "
+                     "no setting can reach. So this almost certainly does "
+                     "nothing. The claim it used to carry here -- that "
+                     "lowering it is the most direct way to make enemies "
+                     "less lethal up close -- was not supported by the "
+                     "code. Use the aim slider or the difficulty "
+                     "multiplier instead."),
 
         # ---- shared with the other two Unreal-family discs ---------------
     ] + r6tuning.cards(
@@ -875,6 +1265,16 @@ def _build_settings():
                         "not from watching the code, so 0 is the setting to "
                         "use if you want the line reliably."),
     ] + rsesidearm.cards("", TEAM_GROUP) + rsekits.cards("", TEAM_GROUP) + [
+        # `team_match_player` just above rewrites the map INI, so the AI
+        # copy the kit the mission HANDS the player. These copy what the
+        # player actually chose in the gear room this run, in RAM, and
+        # they are applied later -- so with both on, these win. See
+        # rsemirror.
+        *rsemirror.cards("", TEAM_GROUP),
+        rseaifire.card("", TEAM_GROUP),
+        rseburstsnd.card("", "Weapons"),
+        rsesoundgate.card("", TEAM_GROUP),
+        rsefollowleg.card("", TEAM_GROUP),
 
         # ---- controls ----------------------------------------------------
         Setting("sens_steps", "Look sensitivity ceiling", INT, 10, "Controls",
@@ -917,6 +1317,31 @@ def _build_settings():
         rsewheel.cycle_card("", "Split Screen"),
         rsewheel.label_card("", "Split Screen"),
         rseorders.card("", "Split Screen"),
+        rsecallouts.card("", "Split Screen"),
+        rsedowncall.card("", "Split Screen"),
+        *rseviewport.cards("", "Split Screen"),
+        *rsespectate.cards("", "Split Screen"),
+        rseroguecall.card("", "Split Screen"),
+        rsethuntai.card("", "Split Screen"),
+        rsegadget.card("", "Weapons"),
+        rseclaymore.card("", "Weapons"),
+        rseclaymore.arc_card("", "Weapons"),
+        *rsedecal.cards("", "World"),
+        *rsepuffs.cards("", "World"),
+        rsehostagerun.card("", "World"),
+        rsecorpsehit.card("", "World"),
+        rseflashcost.card("", "World"),
+        rsegunaudio.card("", "Weapons"),
+        *rsetracer.cards("", "Weapons"),
+        *rseslomo.cards("", "World"),
+        *rsepenetrate.cards("", "Weapons"),
+        *rseaihunt.cards("", "Enemies"),
+        rsemolotov.card("", "Enemies"),
+        rsesmoke.card("", "Weapons"),
+        rseuzilight.card("", "Weapons"),
+    ] + rseff.cards("", "Teammates") + [
+        rsehands.card("", "Split Screen"),
+        rsecarry.card("", "Split Screen"),
         rsescope.card("", "Split Screen"),
         rsedraw.card("", "Split Screen"),
         rseviewmodel.card("", "Split Screen"),
@@ -1037,7 +1462,7 @@ def _build_settings():
                     "degrees off their body facing, and a standing player at "
                     "10 m is about 2.2 degrees wide, so it should be very "
                     "noticeable.")),
-    ] + rseaicover.cards("", "Enemies") + rsefragwarn.cards("", TEAM_GROUP) + rsechatter.cards("", TEAM_GROUP) + [
+    ] + rseaicover.cards("", "Enemies") + [rseflashlight.card("", "Enemies")] + rsefragwarn.cards("", TEAM_GROUP) + rsechatter.cards("", TEAM_GROUP) + [
         rsemandown.card("", "Split Screen"),
         rsecanon.card("", "Split Screen"),
         Setting("teammates", "AI teammates: the first attempt", BOOL, False,
@@ -1046,6 +1471,80 @@ def _build_settings():
                 help="Split screen deliberately builds a one-man team."),
 
         # ---- world ------------------------------------------------------
+        Setting("stun_flash", "Flashbang screen effect", CHOICE, "stock",
+                "World",
+                choices=[
+                    Choice("stock", "Full (as it shipped)",
+                           "Five seconds of white-out, and five seconds at "
+                           "about a third of the frame rate."),
+                    Choice("4", "Four seconds", "A fifth shorter."),
+                    Choice("3", "Three seconds", "Noticeably shorter."),
+                    Choice("2", "Two seconds",
+                           "Still clearly a flashbang, and the slow window "
+                           "drops to well under half."),
+                    Choice("1.5", "One and a half seconds",
+                           "About as short as it can be and still read as a "
+                           "flash."),
+                    Choice("off", "No screen effect at all",
+                           "You are still blinded in every way that matters "
+                           "to the game, but you can see. That is an "
+                           "advantage, so it is not the recommended setting."),
+                ],
+                help="Getting flashbanged starts a full-screen wash that the "
+                     "renderer redraws every frame for five seconds, and it "
+                     "is the whole reason the game crawls while you are "
+                     "stunned -- measured at about 12 frames a second against "
+                     "30 the instant before. Nothing else about the stun is "
+                     "expensive: the blindness itself is a handful of "
+                     "instructions. This shortens the effect, or removes it.",
+                caution="Not yet played. It does not change the stun itself. "
+                        "You are blinded for the same six seconds, the enemy "
+                        "AI reacts the same way, and the sound is unchanged -- "
+                        "only the screen effect's length moves. Turning it "
+                        "off entirely lets you see through a flashbang, which "
+                        "is a real advantage in a co-op game, so a middle "
+                        "value is the fairer choice.",
+                confidence="experimental"),
+        Setting("fps_uncap", "Let the game present 60 frames a second",
+                BOOL, False, "World",
+                help="Single player presents one frame per two NTSC fields, "
+                     "so it tops out at 30. Split-screen Terrorist Hunt "
+                     "reaches 60 -- not by design, but because split screen "
+                     "builds its renderer twice and registers the frame-pacing "
+                     "interrupt twice with it, which makes the counter reach "
+                     "its target in half the time. This removes the limit "
+                     "everywhere, so single player can present 60 too.",
+                caution="Not yet played. The limit is a FLOOR on frame time, "
+                        "not a lock: scenes that already run below 30 are "
+                        "unaffected, so this does not fix a slow level. What "
+                        "it can cost is steadiness -- light scenes run at 60 "
+                        "and heavy ones drop to 30 or lower, and the switching "
+                        "is visible, where a held 30 looks even. Game speed "
+                        "should not change, because the engine times itself "
+                        "from a measured clock rather than counting frames, "
+                        "and split screen already runs this same engine at 60. "
+                        "Online play is untouched.",
+                confidence="experimental"),
+        Setting("grenade_decals", "Explosion marks kept on screen", INT, 8,
+                # 128 slots is 180 KB against a worst-observed 1.37 MiB of
+                # contiguous free heap -- 12.6%, measured. The hard encoding
+                # limit is 0x7FFF, because addiu sign-extends.
+                "World", minimum=8, maximum=128, unit="marks",
+                confidence="experimental",
+                help="Blast marks live in their own ring, separate from bullet "
+                     "holes, and the game only keeps EIGHT of them -- against "
+                     "32 each for footprints and bullet holes. One grenade can "
+                     "fill that on its own, and the next one wipes it. This "
+                     "raises the ring.\n\n"
+                     "Worth raising if you turn on scattered shrapnel marks, "
+                     "since a single blast then spends most of the ring.",
+                caution="Not yet played. The pool is built once when a level "
+                        "loads, so this only takes effect on a fresh level -- "
+                        "and it costs about 1.4 KB of console memory per "
+                        "extra mark.\n\n"
+                        "The oldest mark is dropped silently when the ring is "
+                        "full; nothing fails, so a number too low just means "
+                        "marks vanish sooner than you expect."),
         Setting("decal_ring", "Bullet holes kept on screen", INT, 32, "World",
                 minimum=32, maximum=160, unit="decals",
                 help="Footprints and wall hits share a fixed-size ring buffer, "
@@ -1072,6 +1571,59 @@ def _build_settings():
     ] + _mission_settings()
 
 
+#: Where the frame-pacing divider is written, and the word that writes zero
+#: there instead of 2 (`sw $zero` rather than `sw $v0`).
+#:
+#: Single player is capped at 30 by design; split screen reaches 60 BY
+#: ACCIDENT. The renderer is constructed twice in split screen and each
+#: construction calls `AddIntcHandler(2, 0x0019F700, 0)`, with no matching
+#: `RemoveIntcHandler` anywhere in the renderer, so the pacing ISR body runs
+#: twice per vblank and the counter meets the divider after a single field.
+#: Measured across 65 savestates: single player holds 1 registration, split
+#: screen 2 (and 3-4 after reloads, from the same leak).
+#:
+#: Zero rather than one because the counter is reset at the present and
+#: incremented BEFORE the compare, so `slt(1, 0)` and `slt(1, 1)` are both
+#: false -- they release on the same vblank, and zero is reachable in one word.
+#:
+#: Deliberately NOT patched: 0x001AE464 (`addiu $v0, $zero, 2`), whose
+#: register also becomes the INTC cause argument at 0x001AE490 -- changing it
+#: moves the handler off vblank and destroys all pacing.
+#:
+#: Only `SP.SOZ` is patched. `MP.SOZ` carries the same ISR and the same write
+#: at 0x001A2598, but this profile does not list that overlay.
+#: Where the grenade decal ring's size is set, and how to write a new one.
+#: `R6DecalGroup::Init` spawns exactly `m_MaxSize` actors into its array and
+#: the cursor wraps at `m_MaxSize`, so this MUST be a disc word: raising it at
+#: runtime would index past the array it was built with. Each extra slot costs
+#: about 1.4 KB of `R6Decal` defaults.
+GRENADE_DECALS = 0x00379B38
+
+
+def grenade_decal_word(n: int) -> int:
+    """`addiu $a1, $zero, n`."""
+    return 0x24050000 | (int(n) & 0xFFFF)
+
+
+#: `lui $v0, 0x40A0` -- the 5.0f handed to StartScreenEffect when a flashbang
+#: goes off near the local player. Only the low halfword matters, and it is the
+#: HIGH half of an IEEE float, so the duration is graded by rewriting it.
+#: StartScreenEffect returns immediately on `duration <= 0`, so 0.0 costs
+#: nothing per frame rather than running a zero-strength pass.
+STUN_FLASH_SECONDS = 0x002F10C8
+STUN_FLASH_WORDS = {
+    "stock": 0x3C0240A0,   # 5.0
+    "4": 0x3C024080,       # 4.0
+    "3": 0x3C024040,       # 3.0
+    "2": 0x3C024000,       # 2.0
+    "1.5": 0x3C023FC0,     # 1.5
+    "off": 0x3C020000,     # 0.0
+}
+
+PRESENT_DIVIDER = 0x001AE478
+PRESENT_DIVIDER_FREE = 0xAF808088      # sw $zero, -0x7f78($gp)
+
+
 def build_edits(v: dict) -> list:
     """Turn a settings dict into the words to bake into SP.SOZ."""
     e = []
@@ -1079,6 +1631,14 @@ def build_edits(v: dict) -> list:
     def w(va, value, note):
         e.append(WordEdit(va, value, STOCK[va], note))
 
+    if v.get("flashbang_cost"):
+        # One redundant store. Removing it makes the deafen block run
+        # once instead of sixty times a second. It is written to the
+        # disc rather than the cheat file because its page holds
+        # UGameEngine::Tick, and a row re-applied every vsync would
+        # keep the recompiler rebuilding it. See rseflashcost.
+        w(rseflashcost.LATCH_CLEAR_AT, rseflashcost.LATCH_CLEAR_NEW,
+          "flashbang: deafen once, not every frame")
     if v.get("wave_enable"):
         w(0x0040AF58, li(V0, int(v["wave_total"])),
           "wave: each zone owes %d" % v["wave_total"])
@@ -1088,16 +1648,39 @@ def build_edits(v: dict) -> list:
           "wave: next-wave trigger = %d (seed)" % v["wave_trigger"])
         w(0x0040A874, li(V0, int(v["wave_trigger"])),
           "wave: next-wave trigger = %d (rearm)" % v["wave_trigger"])
-        if v.get("wave_hunt"):
-            # Three instructions that the m_iNbToSpawn constant above makes
-            # dead: two pad nops and the mfhi whose result it overwrites.
-            w(0x0040AF4C, 0x8E010388, "wave: m_bHuntFromStart |= 0x40 (lw)")
-            w(0x0040AF50, 0x34210040, "wave: m_bHuntFromStart |= 0x40 (ori)")
-            w(0x0040AF54, 0xAE010388, "wave: m_bHuntFromStart |= 0x40 (sw)")
+        # `wave_hunt` used to write three words here, setting
+        # m_bHuntFromStart (bit 0x40 of +0x388) on the WAVE actor, in the
+        # three instructions the m_iNbToSpawn constant above makes dead.
+        #
+        # It was inert, and the disassembly of the pristine overlay says
+        # exactly why. The flag is read in ONE place --
+        # AR6DeploymentZone::InitTerrorist at 0x00386B88, which sets
+        # m_eStrategy = 3 (HuntRainbow) when bit 0x40 is set and bit 0x20
+        # (m_bHuntDisallowed) is clear. It reads that word off `this`, and
+        # `this` is never the wave: AR6DZoneWave overrides the "spawn at
+        # init" slot with a stub returning 0 (0x0040AF00), and its
+        # SpawnATerrorist picks a point out of m_aSpawningPoint and calls
+        # THAT point's spawner through vtable+0x188 at 0x0040ACCC. So `this`
+        # is the R6DZonePoint all the way down to InitTerrorist, which is
+        # also what pawn->m_DZone is set to at 0x00386B04. Confirmed the
+        # other way too: across 0x0040AB60..0x0040AFE0 there is not one load
+        # or store of offset 0x388 at all.
+        #
+        # The behaviour it promised is delivered by rseaihunt's `case_wave`
+        # region, which repoints R6TerroristAI.NoThreat's wave branch at
+        # HuntRainbow. That is also the only thing that CAN work for these
+        # enemies: the wave latches m_bSpawnedByWave on the controller at
+        # 0x0040AD5C, and NoThreat tests that latch before it ever reads
+        # m_eStrategy, so the strategy byte this used to aim at is computed
+        # and then thrown away.
         gate = v.get("wave_gate", "always")
         if gate != "stock":
             w(0x0040A790, WAVE_GATES[gate], "wave: stasis gate = %s" % gate)
 
+    _pen = str(v.get("penetration", rsepenetrate.DEFAULT)
+               or rsepenetrate.DEFAULT)
+    for _va, _stock, _new in rsepenetrate.words(_pen):
+        w(_va, _new, "penetration: %s" % _pen)
     if v.get("ss_accuracy"):
         w(SS_AIM_BRANCH, SS_AIM_ALWAYS,
           "split screen: enemies aim at their target, not along their head")
@@ -1152,14 +1735,59 @@ def build_edits(v: dict) -> list:
     if v.get("split_squad"):
         for va, value, _stock, note in rsedebrief.words():
             w(va, value, note)
+    if v.get("split_carry"):
+        # needs the layout block's restore-after-move order (split_squad)
+        for va, value, _stock, note in rsecarry.words():
+            w(va, value, note)
+    if v.get("split_team_orders"):
+        for va, value, _stock, note in rseorders.pass_words():
+            w(va, value, note)
     if labels:
         for va, value, _stock, note in rsewheel.label_words(freed=True):
             w(va, value, note)
         for va, value, _stock, note in rsewheel.owner_words(freed=True):
             w(va, value, note)
+    if v.get("stun_flash", "stock") != "stock":
+        w(STUN_FLASH_SECONDS, STUN_FLASH_WORDS[v["stun_flash"]],
+          "flashbang: screen effect lasts %s"
+          % ("no time at all" if v["stun_flash"] == "off"
+             else v["stun_flash"] + "s instead of 5s"))
+    if v.get("wave_enable"):
+        w(0x0040A8D4, 0x0202880A, "wave: a release that built nothing stops "
+                                  "the rest of the batch (movz)")
+        w(0x0040A8E0, 0x26310001, "wave: its counter moves to the delay slot")
+    if int(v.get("grenade_decals", 8) or 8) != 8:
+        n = int(v["grenade_decals"])
+        w(GRENADE_DECALS, grenade_decal_word(n),
+          "explosion marks: %d kept on screen instead of 8" % n)
+    if int(v.get("blast_decals", 0) or 0) > 0:
+        # AddDecal never writes the projector bools, so the ring keeps
+        # whatever Init gave it -- and Init gives the explosion ring an
+        # opaque, hard-edged, floor-only scorch. These give its own branch
+        # the wall-hit look instead, which leaves its DrawScale free.
+        for _va, _stock, _new in rsedecal.BRANCH_WORDS:
+            w(_va, _new, "shrapnel marks: explosion decals look like "
+                         "bullet holes")
+        # sin(90) is sine's maximum, so the pooled decals' minProjectAngle of
+        # 90 can never win the min() that builds the acceptance threshold --
+        # every surface up to 89.5 degrees off square was being accepted.
+        for _va, _stock, _new in rsedecal.INCIDENCE_WORDS:
+            w(_va, _new, "shrapnel marks: marks stop stretching across "
+                         "surfaces they barely graze")
+        _dsz = float(v.get("blast_decal_size", "1.25") or 1.25)
+        if _dsz != 8.0:
+            w(rsedecal.DRAWSCALE, rsedecal.drawscale_word(_dsz),
+              "shrapnel marks: each mark is %g x a bullet hole" % _dsz)
+    _bring = int(v.get("blood_ring", 16) or 16)
+    if v.get("blood_splats") and _bring != 16:
+        w(rsedecal.BLOOD_RING, rsedecal.blood_ring_word(_bring),
+          "blood marks: %d kept on screen instead of 16" % _bring)
+    if v.get("fps_uncap"):
+        w(PRESENT_DIVIDER, PRESENT_DIVIDER_FREE,
+          "frame pacing: present every field, not every second field")
     if v.get("split_shadows"):
-        w(rseshadow.SHADOW_GATE, rseshadow.SHADOW_GATE_FORCED,
-          "split screen: let the shadow pass run")
+        w(rseshadow.PROJECTOR_BRANCH, rseshadow.PROJECTOR_BRANCH_OPEN,
+          "split screen: draw projectors (the level render's split-screen skip)")
     if v.get("fx_impact"):
         w(0x003F1934, NOP, "split screen: static-world impact decal")
         w(0x003F1BB4, NOP, "split screen: actor-attached impact decal")
@@ -1410,6 +2038,13 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("frag_warning", r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"enable": True},
                             "teammates warn you about their own frag"))
+    lamp = str(v.get("dead_flashlight", "stock"))
+    if lamp != "stock":
+        # Offline and split screen: online hides the dropped gun anyway.
+        out.append(FileEdit("dead_flashlight", r"/COMMON(OFF|_SS)\.LIN$", "",
+                            {"mode": lamp},
+                            "a dead terrorist's weapon light stays on his gun (%s)"
+                            % lamp))
     cover = str(v.get("ai_cover", "stock"))
     if cover != "stock":
         out.append(FileEdit("ai_cover", r"/COMMON(OFF|_SS)?\.LIN$", "",
@@ -1442,6 +2077,24 @@ def build_data(v: dict) -> list:
                             {"chance": sidearm, "in_contact": contact,
                              "say_chance": say},
                             "; ".join(notes)))
+    # A guarded hostage who has already seen a Rainbow operative says
+    # nothing when one turns up -- the take exists and finished, and the
+    # console build deleted its caller. Two length-neutral blocks in
+    # R6HostageAI put it back. See rsehostagerun.
+    # The PS2 build drops a corpse out of collision entirely, where the
+    # Xbox build keeps it shootable. Four one-byte opcode swaps put the
+    # Xbox behaviour back. See rsecorpsehit.
+    if v.get("corpse_hitbox"):
+        out.append(FileEdit("corpse_hitbox",
+                            r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "dead bodies can still be shot"))
+    if v.get("hostage_rainbow_voice"):
+        out.append(FileEdit("hostage_rainbow_voice",
+                            r"/COMMON(OFF|_SS)?\.LIN$", "",
+                            {"enable": True},
+                            "hostages react out loud when Rainbow "
+                            "arrives"))
     chatter = int(v.get("ss_chatter_kill", 0))
     if chatter:
         # COMMON_SS.LIN only, same reason as the canon team below.
@@ -1452,7 +2105,9 @@ def build_data(v: dict) -> list:
                             % chatter))
     if v.get("canon_team"):
         # COMMON_SS.LIN only: that IS the split-screen package, which is what
-        # keeps single player and Terrorist Hunt untouched by construction.
+        # keeps single player untouched by construction. Split-screen Terrorist
+        # Hunt shares this package AND the level recordings, so it gets the
+        # canon team too; keeping Price there hung the load (2026-09-24).
         out.append(FileEdit("canon_team", r"/COMMON_SS\.LIN$", "",
                             {"enable": True},
                             "split screen: player 2 is the mission's operative"))
@@ -1472,6 +2127,208 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("split_cycle", r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"enable": True},
                             "split screen: a tap of L1 toggles two weapons"))
+    if v.get("split_hands"):
+        # COMMON_SS.LIN only: in the other two copies the region is live
+        # single-player code. See rsehands.
+        out.append(FileEdit("split_hands", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True},
+                            "split screen: player 2's arms in the mission outfit"))
+    if v.get("split_callouts"):
+        # COMMON_SS.LIN only: three split-screen script functions, see rsecallouts.
+        out.append(FileEdit("split_callouts", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True},
+                            "split screen: teammates call out downs and kills"))
+    if v.get("split_down_callouts"):
+        # COMMON_SS.LIN only, and after "squad" above: it rewrites the
+        # split-screen branch of TeamMemberDead that squad adds. See
+        # rsedowncall.
+        out.append(FileEdit("split_down_callouts", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True},
+                            "split screen: teammates call out a downed player"))
+        if v.get("rogue_tango"):
+            # Strictly after the edit above: it rewrites two of the three
+            # runs rsedowncall leaves in the file. See rseroguecall.
+            out.append(FileEdit("rogue_tango", r"/COMMON_SS\.LIN$", "",
+                                {"enable": True},
+                                "split screen: a traitor's death is called "
+                                "\"Tango down\""))
+    if int(v.get("breach_stun", 10) or 10) != int(round(rsegadget.STOCK_METRES)):
+        # The 60 single-player and co-op level containers -- the gadget classes
+        # are not in COMMON at all. See rsegadget.
+        out.append(FileEdit("breach_stun", rsegadget.SELECT, "",
+                            {"metres": int(v["breach_stun"])},
+                            "breaching charge: stun reach %d m"
+                            % int(v["breach_stun"])))
+    # Which damage state ends the mission. Both settings rewrite the downed
+    # arm of the same handler the trigger dial wants, so the dial stays
+    # mutually exclusive with them by `requires` -- which costs nothing on
+    # "kill", the dial's own default, because that emits no dial region.
+    _fail = ("fail_on_kill" if str(v.get("ff_fail_when", "kill")) == "kill"
+             else "fail_on_hit")
+    # "retaliate" no longer has regions of its own: the team change in the
+    # trigger region IS the whole feature, and the mark-based edits it used
+    # to carry were writing a flag IsEnemy never reads.
+    _ff_note = {"fail_on_kill": "killing one fails the mission",
+                "fail_on_hit": "wounding one fails the mission"}
+    _ff = [(_fail, _ff_note[_fail])] if v.get("ff_fail_mission") else []
+    # Every setting including "5" (a kill) now writes the mark from the AI's
+    # own damage handler. It used to lean on SetTeamKillerPenalty for a kill,
+    # and that function is never entered in Terrorist Hunt -- measured: after
+    # a team kill neither player gained a bit anywhere near R6Pawn's own
+    # properties, so no mark was being written and the squad never turned.
+    # ...but not while the mission-failure option is on: both write the SAME
+    # region of the damage handler, which is why `requires` greys the dial
+    # out. That never mattered before, because a kill emitted nothing.
+    if v.get("ff_retaliate") and not v.get("ff_fail_mission"):
+        _lvl = str(v.get("ff_trigger", "5"))
+        _side = str(v.get("ff_rogue_side", "terrorists"))
+        _ff.append(("trigger:%s:%s" % (_lvl, _side),
+                    "the squad turns on you at hurt level " + _lvl))
+        if v.get("ff_player_victim"):
+            # The shipped regions live in the AI's own damage handler, so
+            # shooting the OTHER PLAYER ran none of them and the squad never
+            # turned -- reported from play. These write the same mark from
+            # R6Pawn.R6Died and R6PlayerController.PlaySoundDamage, the two
+            # places a human casualty does go through. See rseff.
+            _ff.append(("playerkill:%s:%s" % (_lvl, _side),
+                        "killing the other player turns the squad too"))
+        if _side == "noside":
+            # The team change alone leaves him NEUTRAL, and the bullet path
+            # zeroes damage against a neutral unless the shooter can fire on
+            # one -- which Rainbow cannot. These two bytes are what make him
+            # shootable at all, not decoration. See rseff.
+            _ff.append(("noside", "a traitor is on nobody's side"))
+    for _which, _note in _ff:
+        # COMMONOFF + COMMON_SS only: offline and split screen. The online
+        # package is left alone on purpose -- see rseff.
+        out.append(FileEdit("friendly_fire", rseff.SELECT, "",
+                            {"which": _which, "enable": True},
+                            "friendly fire: " + _note))
+    # Terrorists that hunt you: repoint the strategy switch's non-hunt cases
+    # at HuntRainbow, which the game already ships and never enters.
+    # `case_wave` is NOT one of the switch's arms -- it is the
+    # `if (m_bSpawnedByWave)` branch that runs BEFORE the switch and skips it,
+    # which is how about half the enemies on a level were missing the feature
+    # altogether. A wave enemy has no authored patrol to preserve, so it
+    # belongs to the gentler setting as well as to the loud one.
+    _hunt = str(v.get("ai_hunt", "off"))
+    _hunt_which = {"guard": ["case_guardpoint", "case_wave"],
+                   "all": ["case_patrolpath", "case_patrolarea",
+                           "case_guardpoint", "case_wave"]}.get(_hunt, [])
+    for _w in _hunt_which:
+        out.append(FileEdit("ai_hunt", rseaihunt.SELECT, "", {"which": _w},
+                            "enemies hunt you: %s"
+                            % _w.replace("case_", "").replace("_", " ")))
+    if _hunt_which and v.get("ai_hunt_run"):
+        out.append(FileEdit("ai_hunt", rseaihunt.SELECT, "",
+                            {"which": "pace_run"},
+                            "enemies hunt you: at a run"))
+    if _hunt_which and v.get("ai_hunt_fire"):
+        out.append(FileEdit("ai_hunt", rseaihunt.SELECT, "",
+                            {"which": "fire_on_move"},
+                            "enemies hunt you: firing while they close"))
+    if v.get("uzi_flashlight"):
+        # 60 of the 69 payloads carry the SR-2 mesh, two copies each; the
+        # module leaves the other nine alone rather than failing on them.
+        # This one GROWS the payload, so it repacks through lin.rebuild_exact
+        # -- which is safe here because it adds no name, import or export:
+        # the tag is an inline literal and the array's own count byte is what
+        # keeps the recorded read stream in step.
+        out.append(FileEdit("uzi_flashlight", r"\.LIN$", "", {},
+                            "the SR-2 gets the flashlight mount it never had"))
+    _smoke = str(v.get("smoke_ramp", "off"))
+    if _smoke != "off":
+        # One record per level container; COMMON carries only the weapon
+        # package's header, so the edit is per-level by nature.
+        out.append(FileEdit("smoke_ramp", rsesmoke.SELECT, "",
+                            {"seconds": _smoke},
+                            "smoke blinds in %s seconds instead of thirty"
+                            % _smoke))
+    # A MAXIMUM, not a minimum -- the comparison is `<`, disassembled and
+    # cross-checked against the engine source's `native(176) ... bool < `.
+    # Raising it is what produces more grenades. See rseaihunt.
+    _gr = str(v.get("ai_grenade_range", "off"))
+    if _gr != "off":
+        out.append(FileEdit("ai_hunt", rseaihunt.SELECT, "",
+                            {"which": "range:" + _gr},
+                            "enemy grenades: never thrown"
+                            if _gr == "0" else
+                            "enemy grenades: thrown from up to %g m away"
+                            % (int(_gr) / 100.0)))
+    # The genuine floor, and it is not bytecode at all: the refusal in
+    # R6TerroristAI.ThrowingGrenade.CheckDistance reads this straight out of
+    # the settings file and adds 50 units to it.
+    _gm = str(v.get("ai_grenade_min", "off"))
+    if _gm != "off":
+        out.append(FileEdit("ini_values", r"/R6GAMESETTINGS\.INI$", "",
+                            {"values": {"m_fMinDistToThrowGrenade": _gm}},
+                            "enemy grenades: thrown from as close as %g m"
+                            % ((int(_gm) + 50) / 100.0)))
+    # DeployCharacters hands viewport 0 to whoever leads the team after the
+    # squad is rebuilt, and never unbinds the previous owner -- so a dead
+    # player 1 ends up sharing player 2's controller, and player 1's buttons
+    # fire on player 2's weapon. Two bytes redirect the assignment at an
+    # unused local. See rseviewport.
+    if v.get("keep_viewport"):
+        out.append(FileEdit("keep_viewport", rseviewport.SELECT, "",
+                            {"enable": True},
+                            "split screen: a dead player keeps his own "
+                            "screen"))
+    # A dead player in split screen already has a spectator camera, and it
+    # already knows how to find a living teammate. The action button that
+    # opens it is disarmed EVERY FRAME by a check in PlayerTick written for
+    # a network game -- offline the server state is never RSS_InGame, so the
+    # ready flag is stamped false and the whole path has never been
+    # reachable. `spectate_enable` is that one byte. See rsespectate.
+    for _k, _note in (
+            ("spectate_enable",
+             "split screen: a dead player can watch a living teammate"),
+            ("spectate_headcam",
+             "split screen: a dead player spectates in first person"),
+            ("spectate_cycle",
+             "split screen: the action button changes who you watch"),
+            ("spectate_no_wait",
+             "split screen: no wait before the spectator camera opens")):
+        if v.get(_k):
+            out.append(FileEdit("spectate", rsespectate.SELECT, "",
+                                {"which": _k, "enable": True}, _note))
+    # Teammates are silent with some weapons because the PS2 port added
+    # first-person-only sound properties and only substitutes them when
+    # the pawn is a PLAYER. For guns whose third-person sample was never
+    # made -- the TMP among them -- an AI gets a null and you hear the
+    # trigger click and no shot. One byte retargets the gate past the Log
+    # so everyone gets the override. See rsesoundgate.
+    # Ten of the fifteen hostage voice sets resolve "follow me" to a
+    # random container with a kind-15 NULL leg, so the acknowledgement is
+    # silence one roll in three -- one in two on the Penthouse. Four bytes
+    # per set re-point the NULL leg at the take beside it. No weight is
+    # touched, because how the runtime reads a weight is unresolved. See
+    # rsefollowleg.
+    # Two shipped defects in the third-person weapon banks: the M16's
+    # fire events are the only ones on the disc at 0.707 volume, and the
+    # M4's are the only ones with a 3.5/4.0/60.0 distance triple instead
+    # of 10.0/10.5/70.0. See rsegunaudio.
+    if v.get("gun_audio_fix"):
+        out.append(FileEdit("gun_audio_fix", rsegunaudio.SELECT, "",
+                            {"enable": True},
+                            "the M16 and M4 fire at the volume and range "
+                            "every other weapon uses"))
+    if v.get("hostage_follow_voice"):
+        out.append(FileEdit("hostage_follow_voice", rsefollowleg.SELECT,
+                            "", {"enable": True},
+                            "hostages always answer \"follow me\""))
+    if v.get("ai_weapon_sound"):
+        out.append(FileEdit("ai_weapon_sound", rsesoundgate.SELECT, "",
+                            {"enable": True},
+                            "teammates fire with the first-person gunshots"))
+    if v.get("split_thunt_ai"):
+        # COMMON_SS.LIN only, and after "squad" (which applies canon first):
+        # it rewrites the forms those two leave in CreatePlayerTeam. See
+        # rsethuntai.
+        out.append(FileEdit("split_thunt_ai", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True},
+                            "split screen: Terrorist Hunt on the canon maps "
+                            "adds the other two operatives"))
     if v.get("split_team_orders"):
         # COMMON_SS.LIN only: it rewrites a single-player arm that this copy
         # never reaches, which the other two copies do.
@@ -1489,6 +2346,215 @@ def build_pnach(v: dict) -> list:
                             "map-wide spawn points: hijack the point picker"))
         out += [WordEdit(va, word, 0, "map-wide spawn points: cave")
                 for va, word in CAVE_WORDS]
+    if v.get("claymore_prox", "off") != "off":
+        # A separate cave, in the one clean zero run in the overlay. It does
+        # not touch the map-wide cave's words or its hijack.
+        out.append(WordEdit(rseclaymore.HIJACK[0], rseclaymore.HIJACK[1],
+                            STOCK[rseclaymore.HIJACK[0]],
+                            "claymore proximity: hook the actor tick"))
+        # The blast's own cone lives in the level containers as a float
+        # (rsegadget's "cone"), and the cave's trigger arc is COMPUTED from
+        # it rather than pinned, so the two cannot disagree. No card changes
+        # it today, so the shipped value is right; if one is ever added, read
+        # it off the disc and pass it here.
+        front = bool(v.get("claymore_arc", True))
+        out += [WordEdit(va, word, 0, "claymore proximity: cave")
+                for va, word in rseclaymore.words(
+                    v["claymore_prox"], front_arc=front,
+                    cone_cos=rsegadget.STOCK["cone"])]
+    _terr = str(v.get("decal_terrain") or rsedecal.TERRAIN_DEFAULT)
+    if _terr != "stock":
+        out += [WordEdit(va, new, stock,
+                         "marks on open ground: %s" % _terr)
+                # terrain_words yields (va, STOCK, NEW) -- unpacking it as
+                # (va, new, stock) wrote the stock value back and made the
+                # whole option a silent no-op.
+                for va, stock, new in rsedecal.terrain_words(_terr)]
+    if int(v.get("blast_decals", 0) or 0) > 0:
+        # A third cave, well clear of the other two: the map-wide picker sits
+        # in the overlay and the claymore one at 0x000F0000..0x000F0800.
+        out.append(WordEdit(rsedecal.HIJACK_AT, rsedecal.HIJACK,
+                            STOCK[rsedecal.HIJACK_AT],
+                            "shrapnel marks: hook the explosion epilogue"))
+        _stag = bool(v.get("blast_stagger"))
+        out += [WordEdit(va, word, 0, "shrapnel marks: cave")
+                for va, word in rsedecal.words(int(v["blast_decals"]), _stag)]
+        if _stag:
+            # A second hook, in UGameEngine::Tick rather than ULevel::Tick --
+            # that one runs twice a frame, which is fine for the claymore's
+            # proximity check and wrong for anything that counts frames.
+            out.append(WordEdit(rsedecal.STAGGER_HOOK,
+                                rsedecal.STAGGER_HOOK_JUMP,
+                                STOCK[rsedecal.STAGGER_HOOK],
+                                "shrapnel marks: hook the frame tick"))
+            # The queue's own RAM is deliberately absent: a pnach row rewrites
+            # its address every frame, which would reset the queue forever.
+            out += [WordEdit(va, word, 0, "shrapnel marks: stagger")
+                    for va, word in rsedecal.stagger_words()]
+    # Blood on the surfaces behind whoever you shoot. A fourth cave, clear of
+    # the other three and of the puff pool. Nothing here is runtime state --
+    # the roll is hashed from the wound and the surface point -- so unlike the
+    # stagger queue every word of it belongs in the cheat file.
+    if v.get("blood_splats"):
+        out.append(WordEdit(rsedecal.BLOOD_HOOK, rsedecal.BLOOD_HOOK_JUMP,
+                            STOCK[rsedecal.BLOOD_HOOK],
+                            "blood marks: hook the pawn-hit branch"))
+        _breach = float(v.get("blood_reach", rsedecal.BLOOD_REACH_DEFAULT)
+                        or rsedecal.BLOOD_REACH_DEFAULT)
+        out += [WordEdit(va, word, 0, "blood marks: cave")
+                for va, word in rsedecal.blood_words(_breach)]
+    # Slow time when the last enemy goes down. The lever is one float --
+    # LevelInfo.TimeDilation at +0x458, which multiplies into m_dT at +0x47C
+    # and is clamped to [0.0005, 0.4] -- and the trigger is the game's own
+    # count of living terrorists. NOT hooked in ULevel::Tick, which runs up
+    # to THREE times a frame; this rides once-per-frame in UGameEngine::Tick.
+    # The sound does not slow with it, which is measured, not feared. See
+    # rseslomo.
+    if v.get("slomo"):
+        out += [WordEdit(va, word, 0, "slow motion: %s, %s"
+                         % (v.get("slomo_strength", rseslomo.PRESET_DEFAULT),
+                            v.get("slomo_when", rseslomo.THRESHOLD_DEFAULT)))
+                for va, word in rseslomo.words(
+                    str(v.get("slomo_strength") or rseslomo.PRESET_DEFAULT),
+                    str(v.get("slomo_when") or rseslomo.THRESHOLD_DEFAULT))]
+    # Teammates carry the loadout the player actually picked. The cave still
+    # hooks the `jr $ra` of execGetMissionDescription (0x00273200); all twelve
+    # authored AI equipment blocks are written, because CreateTeamMember picks
+    # among the plain, silenced and terrorist-hunt variants at runtime. The
+    # guard is a five-word once-per-level identity costing 23 instructions on
+    # a call that does nothing, and 0x000F67F8 counts every entry.
+    #
+    # HOT-PAGE FIX 2026-09-27. THERE IS DELIBERATELY NO ROW FOR HOOK_AT. A
+    # pnach row is re-applied every vsync, and page 0x00273000 holds eleven
+    # UnrealScript natives -- the hottest code there is during a level load --
+    # so rewriting that one word sixty times a second made the emulator throw
+    # away and rebuild the whole page continuously, and the load stalled with
+    # the audio breaking up. Proven by bisect IN PLAY: the 254 cave words alone
+    # load clean, the hook word alone stalls it. The hook word is now installed
+    # by the game, once per level load, from the ten-word installer at
+    # 0x000F6900 hooked into UGameEngine::LoadMap at 0x002F8CE4 -- a page whose
+    # every instruction belongs to LoadMap and to nothing else. See rsemirror.
+    if v.get("mirror_loadout"):
+        out.append(WordEdit(rsemirror.ARM_AT, rsemirror.ARM_NEW,
+                            STOCK[rsemirror.ARM_AT],
+                            "loadout mirror: install the hook once per level"))
+        out += [WordEdit(va, word, 0, "loadout mirror: installer")
+                for va, word in rsemirror.arm_words()]
+        _mscope = str(v.get("mirror_scope") or rsemirror.SCOPE_DEFAULT)
+        _mlaunch = str(v.get("mirror_launcher") or rsemirror.LAUNCHER_DEFAULT)
+        out += [WordEdit(va, word, 0,
+                         "loadout mirror: %s, %s" % (_mscope, _mlaunch))
+                for va, word in rsemirror.words(_mscope, _mlaunch)]
+    # How hard the squad shoots. Two plain `addiu` immediates -- no cave, no
+    # hook, no delay slot. The terrorist fire loop is UnrealScript and the
+    # Rainbow one is native, so this does not port their code; it widens the
+    # trigger-hold envelope the native tick rolls from, taking the squad's
+    # duty cycle from 35% towards the terrorists' 77%. See rseaifire for why
+    # a single long magazine dump is NOT reachable and why the 0.5 s attack
+    # cycle is a hard ceiling.
+    _fire = str(v.get("ai_trigger_hold") or rseaifire.PRESET_DEFAULT)
+    if _fire != rseaifire.PRESET_DEFAULT:
+        out += [WordEdit(va, word, STOCK[va],
+                         "trigger discipline: %s" % _fire)
+                for va, word in rseaifire.words(_fire)]
+    # Tracer colour from the cartridge. The game already picks a colour PAIR
+    # per tracer, out of R6GameplaySettings by the record's team flag -- but
+    # all four slots hold the same 0x00FFFF80, so every gun fires the same
+    # yellow. The four picks are repointed at two spare fields in the tracer
+    # record itself, and the cave fills them when the record is created.
+    #
+    # Calibre is not a field anywhere -- the HUD's "(5.56MM)" is a
+    # localisation string with no numeric key. What IS per-cartridge is
+    # `m_pEmptyShells` at weapon +0x544, a class pointer to one of eighteen
+    # R6Shell* classes, whose FName index is load-stable where the weapon
+    # class names are not. See rsetracer.
+    if v.get("tracer_calibre"):
+        _pal = str(v.get("tracer_palette", rsetracer.PALETTE_DEFAULT)
+                   or rsetracer.PALETTE_DEFAULT)
+        _thin = int(v.get("tracer_every", rsetracer.THIN_DEFAULT)
+                    or rsetracer.THIN_DEFAULT)
+        for _va, _stock, _new in rsetracer.COLOUR_WORDS:
+            out.append(WordEdit(_va, _new, _stock,
+                                "tracers: colour comes from the record"))
+        out += [WordEdit(va, word, 0, "tracers: %s" % _pal)
+                for va, word in rsetracer.words(palette=_pal, thin=_thin)]
+    # Whose tracers get drawn at all. Separate from the colour: the
+    # record is created either way, and these two words decide whether
+    # the renderer is allowed to show it. Independent of tracer_calibre.
+    # Burst fire has no gunshot sample on this build. One word points the
+    # burst handler at the single-shot one, which every weapon has. The
+    # AI never reach it -- they are always full auto -- so this is for
+    # the player's own weapon. See rseburstsnd.
+    if v.get("burst_fire_sound"):
+        out += [WordEdit(va, new, stock,
+                         "burst fire: use the single-shot gunshot")
+                for va, new, stock in rseburstsnd.words(True)]
+    _tvis = str(v.get("tracer_visible") or rsetracer.VISIBLE_DEFAULT)
+    if _tvis != rsetracer.VISIBLE_DEFAULT:
+        out += [WordEdit(va, new, stock, "tracers visible: %s" % _tvis)
+                for va, new, stock in rsetracer.visible_words(_tvis)]
+    # Independent of the marks: the engine keeps ONE timer for impact dust and
+    # skips any burst inside half a second of the last one, anywhere. The
+    # sound is played upstream of that test, which is why several impacts are
+    # audible and one is visible. A cheat row rather than a disc word because
+    # it lives in the overlay and is a single branch.
+    #
+    # It is MUTUALLY EXCLUSIVE with the puff pool below, and not merely
+    # redundant with it: with the limit gone, every shot re-fires the game's
+    # ONE shared actor for that material, and re-firing a busy emitter runs
+    # it through Init -> Reset, which zeroes the live particles. That is the
+    # "puff stops and jumps to the newest hit" the pool exists to cure, so
+    # leaving this on alongside the pool reintroduces it. `requires` keeps
+    # the card greyed out, and this guard is the belt to that braces.
+    if v.get("blast_puffs") and not v.get("impact_puffs"):
+        out.append(WordEdit(rsedecal.BURST_GATE, rsedecal.BURST_GATE_OFF,
+                            rsedecal.BURST_GATE_STOCK,
+                            "impact dust: every impact raises its own"))
+    # A private ring of emitter actors, so consecutive impacts stop sharing
+    # one. Hooked at the last instruction before the impact visual tests the
+    # material for a spark class, where the pooled effect actor's Location
+    # and Rotation are already written -- so one word serves every bullet,
+    # ricochet, exit wound and material, AND the shrapnel cave's own
+    # impacts, which the placer-side hooks would have missed. See rsepuffs.
+    if v.get("impact_puffs"):
+        _pn = int(v.get("impact_puff_count", rsepuffs.COUNT_DEFAULT)
+                  or rsepuffs.COUNT_DEFAULT)
+        # A puff lives for its SPAWN WINDOW, not its declared lifetime: the
+        # engine retires it the moment the last sprite is out, because
+        # RespawnDeadParticles is false. At the shipped MaxParticles of 3
+        # that is 3/60 = 0.05 s, which is why no ring size could ever show
+        # two at once. See rsepuffs.
+        _pl = int(v.get("impact_puff_length", rsepuffs.MAXPART_DEFAULT)
+                  or rsepuffs.MAXPART_DEFAULT)
+        out += [WordEdit(va, word, 0,
+                         "impact dust: %d puffs, %.2f s each"
+                         % (_pn, rsepuffs.visible_seconds(_pl)))
+                for va, word in rsepuffs.words(_pn, particles=_pl)]
+    # Molotovs and flashbangs for the terrorists. 62 words at
+    # 0x000F6C00..0x000F6CF8 plus two dial words at 0x000F6FE0, clear of
+    # every other cave and of the loadout mirror's installer at 0x000F6900.
+    #
+    # The hook is at 0x003C9374, where PickGrenadeClass's two paths
+    # converge and $s0 still holds the raw UClass* -- so the substitution
+    # is ONE register store and the game builds the name string itself
+    # afterwards. That is why this route has none of the padding problem
+    # that withdrew the data edit: no string in any package changes length.
+    #
+    # The hook IS a plain pnach row, unlike the loadout mirror's, because
+    # page 0x003C9000 holds nine ORDINARY functions, none in the native
+    # dispatch table, eight with exactly one static caller each. The
+    # mirror's 0x00273000 held nine natives reached only by jalr from the
+    # bytecode interpreter -- the hottest code in a level load.
+    #
+    # words() yields TWO-tuples, (va, word). The hook is delivered
+    # separately so it cannot be mistaken for a cave word.
+    _tgren = str(v.get("terrorist_grenades") or rsemolotov.PRESET_DEFAULT)
+    if _tgren != "off":
+        out.append(WordEdit(rsemolotov.HOOK_AT, rsemolotov.HOOK_NEW,
+                            STOCK[rsemolotov.HOOK_AT],
+                            "terrorist grenades: hook the grenade picker"))
+        out += [WordEdit(va, word, 0, "terrorist grenades: %s" % _tgren)
+                for va, word in rsemolotov.words(_tgren)]
     # The two split-screen HUD caves used to be emitted here. They are
     # disc words now, living in the scope draw's dead path -- see
     # rsedeadpath for why a cheat file could not hold them.
@@ -1510,6 +2576,28 @@ def combination_warnings(v: dict) -> list:
     """
     out = []
 
+    # The explosion decal ring wraps silently at its size, so a blast that
+    # asks for more marks than the ring holds overwrites its own earlier ones
+    # in the same frame. Nothing fails and nothing is logged -- the marks
+    # simply are not there, which is indistinguishable from the feature not
+    # working. Said whenever the numbers disagree, not only in combination.
+    _marks = int(v.get("blast_decals", 0) or 0)
+    _ring = int(v.get("grenade_decals", 8) or 8)
+    if _marks > _ring:
+        out.append(
+            "Shrapnel marks are set to %d per explosion but only %d "
+            "explosion marks are kept on screen, so each blast overwrites "
+            "its own marks as it places them and you would see %d. Raise "
+            "\"Explosion marks kept on screen\" to at least %d -- two or "
+            "three times that if you want one blast's marks to survive the "
+            "next one." % (_marks, _ring, _ring, _marks))
+    elif _marks and _ring < 2 * _marks:
+        out.append(
+            "Shrapnel marks (%d) fit the explosion ring (%d) exactly once, "
+            "so the next blast erases the last one's marks completely. That "
+            "works; %d or more would let a couple of blasts stay on the "
+            "walls together." % (_marks, _ring, 2 * _marks))
+
     # Said every time wave mode is on, not just in combination.
     #
     # Turning the DEFAULT off does nothing for anyone who already has it
@@ -1519,13 +2607,32 @@ def combination_warnings(v: dict) -> list:
     # the window carried wave mode -- and that sent one investigation after
     # an option that turned out to be innocent. A default is advice to new
     # discs; a warning is the only thing that reaches an old profile.
-    if v.get("wave_enable"):
+    # The spawn runaway, measured on Shipyard 2026-09-25. R6DZonePoint's
+    # SpawnOne credits the new pawn to the POINT's owner zone (point +0x480,
+    # m_pWave) -- NOT to the zone that asked. 14 of Shipyard's 18 points have
+    # a NULL owner, so a map-wide pick builds and places the enemy fine and
+    # credits nobody. The requesting zone's live list and m_iNbSpawned never
+    # move, it stays under its trigger, and it releases again next frame,
+    # forever. The release size only scales the waste; the picker is the bug.
+    if v.get("wave_enable") and v.get("wave_mapwide"):
         out.append(
-            "Wave mode is on, and Terrorist Hunt will not finish loading "
-            "with it. Measured on Parade: stock loads, stock plus this hangs "
-            "on the load screen, and turning this one setting off loads "
-            "again. The campaign is unaffected. Turn it off under Enemies if "
-            "you are playing Terrorist Hunt.")
+            "\"Spawn across the whole map\" carries its fix in the CHEAT "
+            "FILE, not on the disc, so save a fresh one from this window "
+            "after applying. An older cheat file sends each wave to spawn "
+            "points whose enemies are credited to nobody, which leaves the "
+            "zone releasing another batch every frame -- measured on "
+            "Shipyard as 2,492 enemies in 132 seconds and about two frames a "
+            "second.")
+
+    if v.get("wave_enable") and not v.get("wave_mapwide"):
+        out.append(
+            "Wave mode is on with the map-wide spawn points off, so every "
+            "wave asks one deployment zone for all its spawn points. That is "
+            "the combination that hung Terrorist Hunt on Parade. With the "
+            "map-wide option on -- and its cheat file saved into the PCSX2 "
+            "you actually launch -- split-screen Terrorist Hunt and practice "
+            "both load (Shipyard, 2026-09-25). Turn the map-wide option on, "
+            "or lower how much each zone owes.")
 
     feeding = (v.get("wave_enable")
                and v.get("wave_gate", "stock") != "stock")
@@ -1567,6 +2674,14 @@ PROFILE = GameProfile(
     boot="SLUS_208.83",
     volume_hint="SLUS_20883",
     pcsx2_crc="21CC1EC3",
+    # Other pressings this tool has been shown. A disc CRC is an XOR over the
+    # BOOT executable, so a later manufacturing run can read a different one with
+    # SP.SOZ -- the only file any of these options patch -- untouched. Adding a
+    # CRC here is only ever a claim about WHICH GAME the disc is; whether its
+    # addresses are usable is decided by `sig_table` and the overlay hash, not
+    # by this list.
+    also_crcs=(),
+    sig_table=r6_3_slus20883_sig.SIGS,
     stock_words=STOCK,
     overlays=[SP],
     settings=_settings(),

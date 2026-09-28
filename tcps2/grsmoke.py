@@ -47,6 +47,17 @@ maps' own say 1000000). This adds one, in four parts.
     load) forgets every cloud. Both routines return at once, untouched, when
     no cloud is alive.
 
+  * The kits. js_smoke_kits gives some grenade kits smoke from the start:
+    their <ItemFileName>frag.prj becomes squirrel.prj (four bytes of
+    indentation pay for the longer name, so each .KIT keeps its length).
+    The detonation routine recognises the smoke grenade by its explosion
+    data (IkeDataMgr vtable +0x48, GetProjectileData(9), +0x4C): the
+    howitzer shell (5) also has visual type 0.
+
+  * The AI. See 'the AI pops smoke when it runs for cover' below: a
+    soldier running for cover may first throw smoke 10 m toward his
+    threat (caves 0x00197F00, 0x0018CAB0, both unreferenced routines).
+
 Caves: three unreferenced library routines (DMA/GS register save and
 restore) at 0x00175678 (99 words), 0x00175808 (82) and 0x00175D58 (118), and
 a thread body with the routine that would start it (0x00173908, 103; only
@@ -643,7 +654,424 @@ def edits(look: str = LOOKS[2]):
 
 
 def js_edits(v: dict):
-    return edits(v.get("js_smoke_look", LOOKS[2])) if v.get("js_smoke") else []
+    if not v.get("js_smoke"):
+        return []
+    return edits(v.get("js_smoke_look", LOOKS[2])) + ai_edits(v.get("js_smoke_ai", "all"))
+
+
+# ---- the AI pops smoke when it runs for cover -------------------------------------------------
+# RunForCoverBehavior::Process (JS 0x001B76E0; vtable 0x005A37E0 = GR's + 0xF640) finds a cover point and,
+# the first time (+0x3A), pushes a LocationBehavior to it: AddElement at 0x001B7914 (s2 = the HumanAI,
+# s3 = the behaviour, threat position +0x18; s0/s1/s4/s5 are only restored after, by its epilogue). The
+# routine pushes the move as before and then, maybe, a FragLocationBehavior on top -- he throws first,
+# then runs. The throw is made smoke at its release: IkeSimulationMgr's ControllerThrewItem handler reads
+# the item's projectile at 0x00376470 (thrower SimHuman in s2) and a marked soldier's frag leaves as smoke;
+# FragLocationBehavior's "no friendly near the blast" check at the throw (IsOkToFragHereNow, 0x001B0A44,
+# a3 = the HumanAI) is answered yes for a marked soldier -- smoke has no blast -- and so is its arc check
+# (HumanAI::FragLOSBlocked at 0x001B09D0: a branch within the first metres cancelled the first smoke seen
+# in play). A mark lasts 10 s. The queue leaves the team's grenade clock alone (the throw sets it, through
+# ReportGrenadeUse, as a frag's does): stamping it at the queue blocked that team's frags for 30 s even when
+# the throw never came. Instead a gate (0x00175AF0): 15 s between AI smokes anywhere, none while 2 clouds
+# are alive -- a large cloud is heavy on the frame rate.
+
+CAVES_AI = [(0x00197F00, 0x001980A0), (0x0018CAB0, 0x0018CC7C), (0x00175AF0, 0x00175BA8)]
+HOOK_RFC, HOOK_RFC_STOCK = 0x001B7914, 0x0C06DB84   # jal RSScript::AddElement (slot: move a1, s0)
+HOOK_OK, HOOK_OK_STOCK = 0x001B0A44, 0x0C0F829C     # jal IsOkToFragHereNow (slot: move a3, s2)
+HOOK_IDX, HOOK_IDX_STOCK = 0x00376470, 0x0C08AF38   # jal InventoryItem::GetIndex (slot: move a0, s1)
+HOOK_ARC, HOOK_ARC_STOCK = 0x001B09D0, 0x0C0FA55C   # jal HumanAI::FragLOSBlocked (slot: swc1 f0, 0x58(sp))
+AI_GAP = 15.0                                       # s between two AI smokes, anywhere
+AI_MAX_CLOUDS = 2                                   # no AI smoke while this many clouds are alive
+AI_CHANCE = 0x3F00                                  # 0.5 per run for cover
+AI_SIDES = ("off", "squad", "enemies", "all")
+
+AI_SYMS = dict(
+    ADDELEM=0x001B6E10, ISOK=0x003E0A70, GETNUMGREN=0x003EA060, HASLAUNCHER=0x003EA140,
+    REPORTGREN=0x003E0FB0, FRAGCTOR=0x001B0720, NEW=0x00103470, RANDOMFLOAT=0x001129C0, RNG=0x00613510,
+    CLOCK=0x00684768, SQUAD_CO=0x0057A1C8, LOSBLOCKED=0x003E9570,
+)
+
+SRC_RFC = """
+rfc_smoke:                          ; AddElement(a0 script, a1 the move) in RunForCover
+    addiu sp, sp, -0x40
+    sd    ra, 0x30(sp)
+    jal   ADDELEM                   ; the move, as before
+    nop
+    lw    s0, 0x14(s2)              ; his SimHuman
+    beqz  s0, rs_out
+    nop
+    lw    t0, 0x178(s0)             ; his company
+    lui   at, %hi(SQUAD_CO)
+    lw    t1, %lo(SQUAD_CO)(at)
+    xor   t0, t0, t1                ; 0: the players' squad
+{SIDE}
+    lbu   t0, 0x132(s2)             ; carries grenades at all
+    beqz  t0, rs_out
+    lw    s1, 0xa4(s2)              ; (delay) his fireteam
+    beqz  s1, rs_out
+    lui   t0, %hi(CLOCK)
+    lw    t0, %lo(CLOCK)(t0)
+    beqz  t0, rs_out
+    nop
+    lwc1  $f0, 0xd4(t0)             ; now
+    lwc1  $f1, 0xec(s1)             ; the team's last grenade
+    sub.s $f1, $f0, $f1
+    lui   t1, 0x41f0                ; 30 s, the game's own wait
+    mtc1  t1, $f2
+    c.lt.s $f1, $f2
+    bc1t  rs_out
+    nop
+    jal   smk_gate                  ; 15 s since the last AI smoke, fewer than 2 clouds alive
+    nop
+    beqz  v0, rs_out
+    nop
+    jal   GETNUMGREN
+    move  a0, s2
+    blez  v0, rs_out
+    nop
+    jal   HASLAUNCHER               ; a launcher would fire, not throw
+    move  a0, s2
+    andi  v0, v0, 0xff
+    bnez  v0, rs_out
+    lui   a0, %hi(RNG)
+    addiu a0, a0, %lo(RNG)
+    move  a1, zero
+    move  a2, zero
+    mtc1  zero, $f12
+    lui   v0, 0x3f80
+    jal   RANDOMFLOAT               ; 0..1
+    mtc1  v0, $f13
+    lui   v0, {CHANCE}
+    mtc1  v0, $f1
+    nop
+    c.lt.s $f0, $f1
+    bc1f  rs_out
+    nop
+    b     rs_geo
+    nop
+rs_out:
+    ld    ra, 0x30(sp)
+    jr    ra
+    addiu sp, sp, 0x40
+
+smk_ok:                             ; IsOkToFragHereNow(a0 team, a1 &aim, a2 level, a3 HumanAI) at the throw
+    lw    t8, 0x14(a3)
+    move  t9, ra
+    jal   smk_find
+    nop
+    move  ra, t9
+    beqz  v0, so_ask
+    nop
+    jr    ra
+    li    v0, 1                     ; smoke: no blast to keep friends from
+so_ask:
+    j     ISOK
+    nop
+
+smk_arc:                            ; FragLOSBlocked(a0 HumanAI, a1 &point, f12 reach) before the throw
+    lw    t8, 0x14(a0)
+    move  t9, ra
+    jal   smk_find
+    nop
+    move  ra, t9
+    beqz  v0, sa_ask
+    nop
+    jr    ra
+    move  v0, zero                  ; smoke: a branch in the way does not matter
+sa_ask:
+    j     LOSBLOCKED
+    nop
+
+smk_idx:                            ; InventoryItem::GetIndex(a0) at the release; s2 = the thrower
+    lhu   v1, 8(a0)
+    li    t0, {FRAG}
+    bne   v1, t0, si_out
+    move  t8, s2
+    move  t9, ra
+    jal   smk_find
+    nop
+    move  ra, t9
+    beqz  v0, si_out
+    nop
+    sw    zero, 0(v0)               ; used up
+    jr    ra
+    li    v0, {SMOKE}
+si_out:
+    jr    ra
+    move  v0, v1
+"""
+
+SRC_RFC2 = """
+rs_geo:                             ; 12-90 m from the threat: throw 10 m toward it
+    lwc1  $f3, 0x18(s3)
+    lwc1  $f4, 0x2c(s2)
+    sub.s $f3, $f3, $f4
+    lwc1  $f4, 0x1c(s3)
+    lwc1  $f5, 0x30(s2)
+    sub.s $f4, $f4, $f5
+    lwc1  $f5, 0x20(s3)
+    lwc1  $f6, 0x34(s2)
+    sub.s $f5, $f5, $f6
+    mul.s $f6, $f3, $f3
+    mul.s $f7, $f4, $f4
+    add.s $f6, $f6, $f7
+    mul.s $f7, $f5, $f5
+    add.s $f6, $f6, $f7             ; d^2
+    lui   t0, 0x4310                ; 12^2
+    mtc1  t0, $f7
+    c.lt.s $f6, $f7
+    bc1t  rs_out
+    lui   t0, 0x45fd
+    ori   t0, t0, 0x2000            ; 90^2
+    mtc1  t0, $f7
+    c.lt.s $f7, $f6
+    bc1t  rs_out
+    nop
+    sqrt.s $f6, $f6                 ; d
+    lui   t0, 0x4120                ; 10 m
+    mtc1  t0, $f7
+    div.s $f7, $f7, $f6             ; k = 10 / d
+    mul.s $f3, $f3, $f7
+    mul.s $f4, $f4, $f7
+    mul.s $f5, $f5, $f7
+    lwc1  $f6, 0x2c(s2)
+    add.s $f3, $f3, $f6
+    swc1  $f3, 0x00(sp)             ; the aim point
+    lwc1  $f6, 0x30(s2)
+    add.s $f4, $f4, $f6
+    swc1  $f4, 0x04(sp)
+    lwc1  $f6, 0x34(s2)
+    add.s $f5, $f5, $f6
+    swc1  $f5, 0x08(sp)
+    jal   NEW
+    li    a0, 0x34
+    beqz  v0, rs_out
+    nop
+    jal   FRAGCTOR
+    move  a0, v0
+    move  s4, v0
+    lwc1  $f0, 0x00(sp)
+    swc1  $f0, 0x1c(s4)
+    lwc1  $f0, 0x04(sp)
+    swc1  $f0, 0x20(s4)
+    lwc1  $f0, 0x08(sp)
+    swc1  $f0, 0x24(s4)
+    sw    zero, 0x2c(s4)            ; level: found at the throw
+    lw    a0, 0xc(s2)
+    jal   ADDELEM                   ; on top: he throws, then runs
+    move  a1, s4
+    lui   t0, %hi(CLOCK)            ; mark him for 10 s: a free, stale or his own slot
+    lw    t0, %lo(CLOCK)(t0)
+    lwc1  $f0, 0xd4(t0)
+    lui   t5, %hi(smk_ai_last)
+    swc1  $f0, %lo(smk_ai_last)(t5) ; the gate's clock
+    lui   t1, %hi(smk_marks)
+    addiu t1, t1, %lo(smk_marks)
+    move  t4, t1                    ; fallback: slot 0
+    li    t2, 4
+rs_slot:
+    lw    t3, 0(t1)
+    beq   t3, s0, rs_put
+    lwc1  $f1, 4(t1)
+    c.lt.s $f1, $f0
+    bc1t  rs_put                    ; expired (or never used)
+    addiu t2, t2, -1
+    bnez  t2, rs_slot
+    addiu t1, t1, 8
+    move  t1, t4
+rs_put:
+    lui   t0, 0x4120                ; 10 s
+    mtc1  t0, $f1
+    add.s $f1, $f0, $f1
+    sw    s0, 0(t1)
+    b     rs_out
+    swc1  $f1, 4(t1)
+
+smk_find:                           ; t8 = SimHuman -> v0 = his live mark, or 0. t0-t3, f0-f1.
+    lui   t0, %hi(CLOCK)
+    lw    t0, %lo(CLOCK)(t0)
+    beqz  t0, sf_no
+    nop
+    lwc1  $f0, 0xd4(t0)
+    lui   v0, %hi(smk_marks)
+    addiu v0, v0, %lo(smk_marks)
+    li    t2, 4
+sf_loop:
+    lw    t3, 0(v0)
+    bne   t3, t8, sf_next
+    lwc1  $f1, 4(v0)
+    c.lt.s $f0, $f1
+    bc1t  sf_yes
+    nop
+sf_next:
+    addiu t2, t2, -1
+    bnez  t2, sf_loop
+    addiu v0, v0, 8
+sf_no:
+    move  v0, zero
+sf_yes:
+    jr    ra
+    nop
+
+smk_marks:
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+"""
+
+SRC_GATE = """
+smk_gate:                           ; v0 = 1: {GAP} s since the last AI smoke and fewer than {MAXC} clouds alive
+    lui   t0, %hi(CLOCK)
+    lw    t0, %lo(CLOCK)(t0)
+    beqz  t0, sg_no
+    nop
+    lwc1  $f0, 0xd4(t0)             ; now
+    lui   t1, %hi(smk_ai_last)
+    lwc1  $f1, %lo(smk_ai_last)(t1)
+    sub.s $f1, $f0, $f1
+    mtc1  zero, $f3
+    c.lt.s $f1, $f3
+    bc1t  sg_count                  ; the clock went back (a load): no wait
+    lui   t2, {GAP_HI}
+    mtc1  t2, $f2
+    c.lt.s $f1, $f2
+    bc1t  sg_no
+    nop
+sg_count:
+    lui   t3, %hi(SMK_RING)
+    addiu t3, t3, %lo(SMK_RING)
+    li    t4, 8
+    move  t5, zero
+    lui   t2, {LIFE_HI}             ; a cloud's life
+    mtc1  t2, $f2
+sg_loop:
+    lwc1  $f1, 12(t3)
+    sub.s $f1, $f0, $f1             ; its age
+    c.lt.s $f1, $f3
+    bc1t  sg_next                   ; from before a load
+    nop
+    c.lt.s $f1, $f2
+    bc1f  sg_next
+    nop
+    addiu t5, t5, 1
+sg_next:
+    addiu t4, t4, -1
+    bnez  t4, sg_loop
+    addiu t3, t3, 16
+    jr    ra
+    sltiu v0, t5, {MAXC}
+sg_no:
+    jr    ra
+    move  v0, zero
+smk_ai_last:
+    .word {INVALID}
+"""
+
+_SIDE_SRC = {
+    "squad": "    bnez  t0, rs_out                ; your squad only\n    nop",
+    "enemies": "    beqz  t0, rs_out                ; everyone but your squad\n    nop",
+    "all": "",
+}
+
+_AI_STOCK_HEX = {
+    0x00197F00: (
+        "27BDFF60 FFB70080 FFB20030 3C170058 FFBF0090 0080902D FFB60070 FFB50060"
+        "FFB40050 FFB30040 FFB10020 FFB00010 AE400008 8E510000 1000003B 8E550004"
+        "8E42000C 26100004 1040000C 02B4B021 8E420010 8C430000 0070182B 00000000"
+        "00000000 00000000 00000000 00000000 00000000 1460FFFA 00000000 0C065FB2"
+        "0220202D 0040982D 8E42000C 1040000D 0200882D 8E420010 02132021 8C430000"
+        "0064102B 00000000 00000000 00000000 00000000 00000000 00000000 1440FFFA"
+        "00000000 0274102B 1040000E 02A0302D AFB40000 0220202D 0260282D 03A0382D"
+        "0C066496 0000402D 8FA30000 10740009 26E42F68 0C05ADDE 0220282D 10000006"
+        "8E420008 02A0202D 0220282D 0C05A8D6 0260302D 8E420008 02338821 02C0A82D"
+        "00541021 AE420008 8E42000C 1040000B 26300004 8E420010 8C430000 0070182B"
+        "00000000 00000000 00000000 00000000 00000000 1460FFFA 00000000 0C065FB2"
+        "0220202D 0040A02D 1680FFB5 0200882D 0200102D DFBF0090 DFB70080 DFB60070"
+        "DFB50060 DFB40050 DFB30040 DFB20030 DFB10020 DFB00010 03E00008 27BD00A0"),
+    0x00175AF0: (   # a DMA/GS register save routine, like the first three caves: unreferenced
+        "27BDFFE0 FFB00000 FFBF0010 0C05D6B0 0080802D 24030002 14430003 3C021000"
+        "10000021 0000102D 3C031000 34423040 34633050 8C440000 3C071000 34E73060"
+        "3C091000 AE040000 35293070 3C081000 3C0A1000 8C620000 35083020 354A3080"
+        "3C061000 AE020004 34C63090 3C051000 24020001 8CE40000 34A530A0 AE040008"
+        "8D230000 AE03000C 8D040000 AE040010 8D430000 AE030014 8CC40000 AE040018"
+        "8CA30000 AE03001C DFBF0010 DFB00000 03E00008 27BD0020"),
+    0x0018CAB0: (
+        "27BDFF60 3C020062 FFB70080 FFB60070 2457C500 FFB40050 00E0B02D FFB30040"
+        "0080A02D FFB20030 00A0982D FFB10020 00C0902D FFBF0090 FFB50060 FFB00010"
+        "8EE20024 14400003 0100882D 10000054 2402FF9C 3C150057 0C05E8CC 8EA46634"
+        "0440004F 2402FF38 12400004 00000000 82420000 14400005 3C020062 0C05E8C0"
+        "8EA46634 10000046 2402FF2E 32310007 2450C5B0 AC54C5B0 AE130004 3C020062"
+        "AE110008 2443C540 26040014 0240282D 2449C540 6AC60007 6EC60000 6AC7000F"
+        "6EC70008 6AC80017 6EC80010 B1260007 B5260000 B127000F B5270008 B1280017"
+        "B5280010 6AC6001F 6EC60018 6AC70027 6EC70020 6AC8002F 6EC80028 B126001F"
+        "B5260018 B1270027 B5270020 B128002F B5280028 6AC60037 6EC60030 6AC7003F"
+        "6EC70038 B1260037 B5260030 B127003F B5270038 AE030010 0C05B8F2 240603FF"
+        "A2000413 0C05E958 0000202D 3C090062 3C0B0019 0200382D 02E0202D 2529DAC0"
+        "256BBA10 AFA00000 2405000E 24060001 24080414 0C05F5AA 240A0004 0040802D"
+        "16000004 3C030057 2402000E 10000003 AC626630 0C05E8C0 8EA46634 0200102D"
+        "DFBF0090 DFB70080 DFB60070 DFB50060 DFB40050 DFB30040 DFB20030 DFB10020"
+        "DFB00010 03E00008 27BD00A0"),
+}
+for _b, _h in _AI_STOCK_HEX.items():
+    JS_STOCK.update(_stock_words(_b, _h))
+JS_STOCK[HOOK_RFC] = HOOK_RFC_STOCK
+JS_STOCK[HOOK_OK] = HOOK_OK_STOCK
+JS_STOCK[HOOK_IDX] = HOOK_IDX_STOCK
+JS_STOCK[HOOK_ARC] = HOOK_ARC_STOCK
+
+
+def assemble_ai(side: str = "all"):
+    """{cave base: words}, labels."""
+    if side not in _SIDE_SRC:
+        raise ValueError("smoke AI side %r" % side)
+    k = dict(CHANCE=hex(AI_CHANCE), FRAG=FRAG, SMOKE=SMOKE, SIDE=_SIDE_SRC[side], GAP=int(AI_GAP),
+             GAP_HI=hex(_hi(AI_GAP)), LIFE_HI=hex(_hi(float(DURATION))), MAXC=AI_MAX_CLOUDS,
+             INVALID=hex(_bits(INVALID)))
+    assert _bits(AI_GAP) & 0xFFFF == 0 and _bits(float(DURATION)) & 0xFFFF == 0
+    pieces = [(0, SRC_RFC.format(**k)), (1, SRC_RFC2.format(**k)), (2, SRC_GATE.format(**k))]
+    names = set().union(*(_labels_of(src) for _i, src in pieces))
+    labels = {n: CAVES_AI[0][0] for n in names}
+    for _ in range(3):
+        words, new = {}, {}
+        for i, src in pieces:
+            base = CAVES_AI[i][0]
+            local = _labels_of(src)
+            syms = dict(AI_SYMS, SMK_RING=assemble_all()[1]["smk_ring"])
+            w, l = assemble(src, base, dict(syms, **{a: b for a, b in labels.items() if a not in local}))
+            words[base] = w
+            new.update(l)
+        if new == labels:
+            break
+        labels = new
+    for i, (base, end) in enumerate(CAVES_AI):
+        if base + 4 * len(words[base]) > end:
+            raise ValueError("smoke AI routine outgrows cave %d at %#x (%d words, room %d)"
+                             % (i, base, len(words[base]), (end - base) // 4))
+    return words, labels
+
+
+def ai_edits(side: str = "all"):
+    """(va, value, stock, note) for the AI's smoke; [] when side is 'off'."""
+    if side == "off":
+        return []
+    words, l = assemble_ai(side)
+    out = []
+    for base, w in words.items():
+        out += [(base + 4 * i, x, JS_STOCK[base + 4 * i], "smoke grenades: the AI's smoke") for i, x in enumerate(w)]
+    j = lambda target, at: assemble("jal %#x" % target, at)[0][0]  # noqa: E731
+    out.append((HOOK_RFC, j(l["rfc_smoke"], HOOK_RFC), HOOK_RFC_STOCK,
+                "smoke grenades: running for cover may start with a smoke grenade toward the threat"))
+    out.append((HOOK_OK, j(l["smk_ok"], HOOK_OK), HOOK_OK_STOCK,
+                "smoke grenades: a smoke throw needs no clear blast area"))
+    out.append((HOOK_IDX, j(l["smk_idx"], HOOK_IDX), HOOK_IDX_STOCK,
+                "smoke grenades: a soldier throwing smoke releases smoke"))
+    out.append((HOOK_ARC, j(l["smk_arc"], HOOK_ARC), HOOK_ARC_STOCK,
+                "smoke grenades: a smoke throw needs no clear arc"))
+    return out
 
 
 # ---- data: the grenade and its name ----------------------------------------------------------
@@ -760,8 +1188,8 @@ def selftest(gr_elf: bytes, js_elf: bytes):
         off = va - 0x100000 + 0x100
         if int.from_bytes(js_elf[off:off + 4], "little") != w:
             bad.append("js %08X" % va)
-    for look in LOOKS:
-        e = edits(look)
+    for look, side in zip(LOOKS, ("squad", "enemies", "all")):
+        e = edits(look) + ai_edits(side)
         if len({va for va, *_ in e}) != len(e):
             bad.append("js duplicate VA")
         if any(va not in JS_STOCK for va, *_ in e):
