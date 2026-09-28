@@ -58,7 +58,7 @@ HIDDEN = [
     # dispatch functions, which a static scan does not follow.
     "tcps2.rsefov", "tcps2.rseviewmodel", "tcps2.rsedeadpath",
     "tcps2.rseteam", "tcps2.rserescue", "tcps2.rsemuzzle",
-    "tcps2.rsesquad", "tcps2.rsesplice", "tcps2.rsehudteam", "tcps2.rseswitch", "tcps2.rsefragwarn",
+    "tcps2.rsesquad", "tcps2.rsesplice", "tcps2.rsehudteam", "tcps2.rseclark", "tcps2.rsedebrief", "tcps2.rseorders", "tcps2.rsecallouts", "tcps2.rseflashlight", "tcps2.rsehands", "tcps2.rsecarry", "tcps2.rsedowncall", "tcps2.rsehostagerun", "tcps2.rseflashcost", "tcps2.rsecorpsehit", "tcps2.rsegunaudio", "tcps2.grsprint", "tcps2.rsethuntai", "tcps2.rsegadget", "tcps2.rseclaymore", "tcps2.rseff", "tcps2.rseswitch", "tcps2.rsefragwarn",
     "tcps2.rseaicover",
     "tcps2.rsehost", "tcps2.nimitz_mis", "tcps2.engine",
 
@@ -70,7 +70,7 @@ HIDDEN = [
 
     # Discord presence speaks the IPC protocol itself, so this pulls in no
     # third-party package -- but the modules still have to be named here.
-    "gui.presence", "gui.discorddialog", "webbrowser",
+    "gui.gamepresence", "gui.discorddialog", "webbrowser",
     "PIL.Image", "PIL.ImageTk", "PIL.ImageDraw", "PIL.ImageFont",
     "PIL.ImageEnhance", "PIL.ImageFilter",
 ]

@@ -64,7 +64,7 @@ The advance opens with an EE bit-extract, not an `andi`:
 ```
 0040A784  lbu    $v0, 0x6f($a0)     byte holding bits 24..31 of the Actor bool word at +108
 0040A788  dsll32 $v0, $v0, 27
-0040A78C  dsra32 $v0, $v0, 31       => bit 4 of that byte = 0x10000000 = bStasis
+0040A78C  dsrl32 $v0, $v0, 31       => bit 4 of that byte = 0x10000000 = bStasis
 0040A790  beqz   $v0, continue      set -> return immediately
 ```
 
@@ -107,9 +107,14 @@ HitHostage `0x800`, NotSurrender `0x1000`, AlreadyInitialized `0x8000`.
 `AR6DZoneWave::SpawnATerrorist` is wave vtable `0x00623380` slot `+0x188` →
 `0x0040AB60`. It walks `m_aSpawningPoint` (data `0x484` / count `0x488`),
 filters for eligibility, picks one at random, and calls that point's own spawn.
-The wave's release loop calls it `n` times, so `n` is **not** capped there —
-the cap is the number of eligible points, and every one of them sits beside its
-zone. Island's two waves have 2 and 3 points and released exactly 2 and 3.
+The wave's release loop calls it `n` times, so `n` is **not** capped there — and
+it is **not** capped by the eligible count either. When the filtered list comes
+back empty the picker falls through: `0040AC94 bnez $v0` takes the filtered
+array at `$sp+0x98` only when its count is non-zero, and `0040AC9C addiu $s0,
+$s5, 0x484` otherwise hands it the whole of `m_aSpawningPoint`. The release
+proceeds regardless. Island's two waves have 2 and 3 eligible points and
+released exactly 2 and 3, which is what the earlier reading was built on, but
+that is a coincidence of those waves rather than a cap.
 
 A 67-instruction cave at `0x005BA488` replaces the random pick with a scan of
 the level's whole actor list for `R6DZonePoint`:

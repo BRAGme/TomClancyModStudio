@@ -20,7 +20,14 @@ What this does, as six one-word hooks and six caves in the dead path:
   (`m_bIsPlayer`), sorted so slots do not swap when the AI re-sort
   themselves. The stock list is stale in split screen: the flag that
   refreshes it is set by nothing.
-* H5: skip the status text's single-player-only remainder, go to the names.
+* H5: flush the HUD's quad batch, then skip the status text's
+  single-player-only remainder and go to the names. The flush is single
+  player's own, at 0x003eb638, and it is what puts the panel box on screen
+  BEFORE the text. The first version skipped it with the remainder, so the
+  box's queued quads were drawn at the very end, over the status and the
+  names, and the text came out at about 40% of its brightness -- (43,45,48)
+  against the player box's (112,116,124), measured off a split-screen
+  capture, where single player draws both the same.
 * H9: flush, restore the counter, leave full-screen mode, and leave through
   the function's own tail, which frees the name strings.
 * HQ (inside the shared 2D quad routine): only while the marker is set,
@@ -50,7 +57,7 @@ HOOKS = (
      'SP preamble exit: lw a0,-0x66f8(gp) -> jal H2'),
     (0x003E9654, 0x92820520, 0x0C066D13,
      'm_bUpdateOperativeID test: lbu v0,0x520(s4) -> jal HS'),
-    (0x003EAF14, 0xAE82051C, 0x0C066CF7,
+    (0x003EAF14, 0xAE82051C, 0x0C066D39,
      'after team state: sw v0,0x51c(s4) -> jal H5'),
     (0x003EDEF4, 0x0C04ECE8, 0x0C066D01,
      'names exit: jal 0x13b3a0 -> jal H9'),
@@ -112,16 +119,19 @@ CAVES = {
         0x080FA57D,   # window: skip the SP player box -> colour reset + team fetch
         0x00000000,
     )),
-    'team_names': (160, (
+    'team_names': (226, (
         0x8F818F1C,   # full-screen push depth (0x0065460c)
         0x3821005A,   # == window marker?
         0x10200003,   # in the SS team window -> win
         0xAE82051C,   # (delay) the displaced sw (m_iMessageBoxPosY = 38)
         0x03E00008,   # SP: back to 0x3eaf1c
         0x00000000,
+        0x27A401E0,   # window: a0 = the HUD's quad batch (sp+0x1e0)
+        0x0C0D2948,   # flush it, as single player does at 0x3eb638, so the
+        0x00000000,   #   panel box is drawn BEFORE the text, not over it
         0x8E8204B4,   # m_hudTextColor
         0x8FA32F04,   # canvas
-        0x080FB566,   # window: -> names section
+        0x080FB566,   # -> names section
         0xAC62006C,   # (delay) Canvas.DrawColor = text colour
     )),
     'team_exit': (170, (
@@ -185,6 +195,82 @@ CAVES = {
         0x00000000,
     )),
 }
+
+
+#: The speaking flash, for both players.
+#:
+#: A teammate's name blinks while he speaks: single player's names code sets
+#: the alpha to `m_byBlinkTextAlpha` when `m_byMemberIsSpeaking[slot]`
+#: (HUD+0x503) and `m_bTeamSpeakBlink` are set. The flag is written by the
+#: script event `R6HUD.SetTeamMemberSpeaking(operativeID, bSpeaking)`, which
+#: the voice-queue natives (0x003D6E28 ...) fire on the HUD of the controller
+#: whose queue plays the line -- one controller, player 2's in split screen.
+#: So only player 2's panel ever flashed.
+#:
+#: The test's two words at 0x003ED8D0 become a call to SPEAK_CAVE. Outside the
+#: split-screen window it returns exactly what they computed (this HUD's
+#: flag). In the window it ORs the same slot of BOTH viewports' HUDs: the two
+#: panels list the same AI in the same slot order (the roster cave builds
+#: both), so a slot means the same teammate on either HUD. Every pointer on
+#: the way (viewport, controller, HUD) is checked for None.
+#:
+#: The cave sits in the 43 words of padding that end the code section
+#: (0x005B1C14-0x005B1CBF, before the data tables at 0x005B1CC0): after a
+#: `jr ra`, never executed, and no branch, jump or data word points into it.
+SPEAK_HOOKS = (
+    (0x003ED8D0, 0x02961021, 0x0C16C708,
+     'speaking test: addu v0,s4,s6 -> jal SPEAK'),
+    (0x003ED8D4, 0x90420503, 0x00000000,
+     'speaking test: lbu v0,0x503(v0) -> nop (the cave loads it)'),
+)
+SPEAK_CAVE = 0x005B1C20
+SPEAK_BODY = (
+    0x02961021,   # addu v0, s4, s6          this HUD + slot
+    0x8F818F1C,   # lw   at, push depth
+    0x3821005A,   # xori at, at, 0x5a        in the SS team window?
+    0x1420001A,   # bnez at, EXIT            no: stock semantics
+    0x90420503,   # (delay) lbu v0, 0x503(v0) this HUD's flag
+    0x8F9990BC,   # lw   t9, GameEngine (gp-0x6f44)
+    0x8F390044,   # lw   t9, 0x44(t9)        Client
+    0x8F390030,   # lw   t9, 0x30(t9)        Viewports.data
+    0x8F210000,   # lw   at, 0(t9)           Viewports[0]
+    0x10200009,   # beqz at, V1
+    0x00000000,
+    0x8C210034,   # lw   at, 0x34(at)        its controller
+    0x10200006,   # beqz at, V1
+    0x00000000,
+    0x8C21057C,   # lw   at, 0x57c(at)       its HUD
+    0x10200003,   # beqz at, V1
+    0x00360821,   # (delay) addu at, at, s6
+    0x90210503,   # lbu  at, 0x503(at)
+    0x00411025,   # or   v0, v0, at
+    0x8F210004,   # V1: lw at, 4(t9)         Viewports[1]
+    0x10200009,   # beqz at, EXIT
+    0x00000000,
+    0x8C210034,   # lw   at, 0x34(at)        its controller
+    0x10200006,   # beqz at, EXIT
+    0x00000000,
+    0x8C21057C,   # lw   at, 0x57c(at)       its HUD
+    0x10200003,   # beqz at, EXIT
+    0x00360821,   # (delay) addu at, at, s6
+    0x90210503,   # lbu  at, 0x503(at)
+    0x00411025,   # or   v0, v0, at
+    0x03E00008,   # EXIT: jr ra
+    0x00000000,
+)
+#: What the padding holds: zeros, and one ssnop at word 30.
+SPEAK_STOCK = tuple(0x00000040 if k == 30 else 0x00000000
+                    for k in range(len(SPEAK_BODY)))
+
+
+def speak_words():
+    """[(va, word, stockWord, note)] for the speaking flash."""
+    out = [(va, new, stock, "split screen team panel: " + note)
+           for va, stock, new, note in SPEAK_HOOKS]
+    for k, word in enumerate(SPEAK_BODY):
+        out.append((SPEAK_CAVE + 4 * k, word, SPEAK_STOCK[k],
+                    "split screen team panel: speaking flash cave"))
+    return out
 
 
 class TeamPanelError(Exception):

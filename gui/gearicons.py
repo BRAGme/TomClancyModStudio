@@ -1,28 +1,21 @@
 """Small drawn glyphs for the loadout choices.
 
-Drawn, because the game's own icons cannot honestly be shipped yet
-------------------------------------------------------------------
+The game's own icons, from the user's disc -- glyphs until then
+-----------------------------------------------------------------
 
-Two routes to the real artwork were opened and neither is finished.
+The **PS2 disc** carries all 43 icons in `MENU.LIN`, and they are now named by
+the disc's own package data, not by eye (`tcps2/rs3icons.py`: each record's
+lazy-array seek position equals its export's `SerialOffset + SerialSize - 10`).
+When a Rainbow Six 3 disc loads, `art.banner_image` extracts them from that
+disc into the cache, and `_real` shows them. Nothing is shipped: a public
+build has no artwork in it, and shows the real icons only for someone who
+loaded their own disc.
 
-The **PS2 disc** does carry them -- in `MENU.LIN`, as a chain of
-`[Texture 8279][Palette 1027]` records, stride 9306, found by scanning for
-`00 40 04` (a `None` terminator then `compactIndex(256)`). 43 icons decode
-cleanly: 30 guns then 13 gadgets, linear raster, no swizzle. What is missing is
-which icon is which. The chain order is not the export order and not the
-`WS[]` table order either: index 9 really is a P90, but the slot the `WS[]`
-order calls `ASSAULTM4` holds an AK with wooden furniture, and the one it calls
-`AssaultAK47` holds a black polymer rifle. Some entries agree by coincidence,
-which is exactly how a guessed mapping would slip through.
+The **Xbox build**'s uncooked `.utx` icons are a different game's pictures
+(correlation with the PS2 set peaks around 0.5), which is why a private
+build's bundled art comes second to the disc's own.
 
-The **Xbox build** ships the same *weapons* in uncooked `.utx` packages where
-names are certain (`tcps2/utexture.py` reads them). But the artwork is not the
-same -- correlating the two sets peaks around 0.5, far below what identical
-images score -- so those icons are a different game's pictures, and shipping
-them would be both wrong and a redistribution of someone else's art.
-
-So: glyphs. When the PS2 chain is named, `for_choice` can extract from the
-user's own loaded disc and cache, and nothing else in the GUI changes.
+Until a disc has been loaded, the rows use glyphs:
 
 Shape says what class of thing it is and colour says what it does.
 
@@ -214,15 +207,27 @@ def _fit(im, w, h):
 
 
 def _real(value, w, h):
-    """The game's own icon for this choice, trimmed and scaled, or None."""
+    """The game's own icon for this choice, trimmed and scaled, or None.
+
+    First the icon extracted from the user's own disc (cached when the disc
+    loaded, see `tcps2.rs3icons`), then a private build's bundled art.
+    """
     import os
+    from PIL import Image
+    try:
+        from tcps2 import rs3icons
+        from . import theme
+        path = rs3icons.cached_path(theme.cache_dir(), value)
+    except Exception:                       # noqa: BLE001
+        path = None
+    if path:
+        return _fit(Image.open(path).convert("RGBA"), w, h)
     cls = _class_of(value)
     if not cls:
         return None
     path = os.path.join(_asset_dir(), cls.split(".")[-1].lower() + ".png")
     if not os.path.exists(path):
         return None
-    from PIL import Image
     return _fit(Image.open(path).convert("RGBA"), w, h)
 
 

@@ -126,6 +126,7 @@ def main():
         run_enemy_flashlights(args)
         run_split_draw(args)
         run_split_wheel(args)
+        run_split_orders(args)
         run_zopfli_fallback()
         run_enemy_loadouts(args)
         run_loadout_units()
@@ -136,6 +137,7 @@ def main():
         run_chunks_fill_exactly(args)
         run_switch_off_restores(args, work)
         run_team_recordings(args)
+        run_recording_first(args)
         run_combination_warnings()
         run_applied_record(args, work)
     finally:
@@ -1141,6 +1143,110 @@ def run(args, work):
     check("and it is off unless asked for",
           not [e for e in PROFILE.build_edits(PROFILE.defaults()) if e.va == ab])
 
+    print("\n[Clark's voice in split screen]")
+    # The debriefing, and both briefing pages, find Clark's clip through one
+    # lookup that answers -1 unless the game mode is 1 or 2. Split-screen
+    # practice is 11. Run the lookup's opening test, stock and edited, for
+    # every value its mode byte can hold.
+    from tcps2 import rseclark as _ck
+    check("the four words are stock in the pristine overlay",
+          all(img.read_word(va) == st for va, st, _n, _x in _ck.EDITS),
+          str([hex(img.read_word(va)) for va, _s, _n, _x in _ck.EDITS]))
+    check("and so is every word the edit leans on",
+          all(img.read_word(va) == st for va, st in _ck.CONTEXT))
+    check("the debriefing indexes m_sndDebriefing at +0xD0",
+          img.read_word(0x00431A5C) == 0x244200D0)     # addiu $v0, $v0, 0xd0
+
+    def _lookup(mode, patched):
+        """Where the lookup's opening test sends a mode: ('search', s0) or
+        ('return', v0). Only the words in 0x48dc34..0x48dcd0 are run."""
+        words = {va: img.read_word(va) for va in range(0x0048DC34, 0x0048DCD4, 4)}
+        if patched:
+            words.update({va: new for va, _s, new, _n in _ck.EDITS})
+        reg = [0] * 32
+        reg[2], reg[16], reg[3] = 1, 0x1234, 0x5678   # v0 = 1 from 0x48dc14
+
+        def _s32(v):
+            v &= 0xFFFFFFFF
+            return v - (1 << 32) if v & 0x80000000 else v
+
+        def _step(pc):
+            wd = words[pc]
+            op, rs, rt = wd >> 26, (wd >> 21) & 31, (wd >> 16) & 31
+            imm = wd & 0xFFFF
+            simm = imm - 0x10000 if imm & 0x8000 else imm
+            if op == 0x24:                                  # lbu
+                reg[rt] = mode
+            elif op == 0x09:                                # addiu
+                reg[rt] = _s32(reg[rs] + simm)
+            elif op == 0 and wd & 0x3F == 0x2D:             # daddu
+                reg[(wd >> 11) & 31] = reg[rs] + reg[rt]
+            elif op in (4, 5):
+                return pc + 4 + (simm << 2), (reg[rs] == reg[rt]) == (op == 4)
+            else:
+                raise AssertionError("unexpected word %08x at %08x" % (wd, pc))
+            reg[0] = 0
+            return None
+
+        pc = 0x0048DC34
+        for _guard in range(40):
+            if pc == 0x0048DC50:
+                return ("search", reg[16])
+            if pc == 0x0048DCD4:
+                return ("return", reg[2])
+            br = _step(pc)
+            if br is None:
+                pc += 4
+                continue
+            target, taken = br
+            _step(pc + 4)                                   # the delay slot
+            pc = target if taken else pc + 8
+        raise AssertionError("no exit")
+
+    _stock_out = {m: _lookup(m, False) for m in range(256)}
+    _new_out = {m: _lookup(m, True) for m in range(256)}
+    check("stock searches for the campaign and practice only",
+          {m for m, o in _stock_out.items() if o[0] == "search"} == {1, 2})
+    check("edited, split-screen practice searches as well",
+          {m for m, o in _new_out.items() if o[0] == "search"} == {1, 2, 11})
+    check("every other mode byte ends exactly where it always did",
+          all(_new_out[m] == _stock_out[m] for m in range(256) if m != 11))
+    check("a search starts from index 0, a miss returns -1",
+          all(o == ("search", 0) or o == ("return", -1)
+              for o in list(_new_out.values()) + list(_stock_out.values())))
+
+    # Who else asks: every call through the game manager's vtable slot 0xA0.
+    def _gm_calls():
+        out = []
+        lw_t9 = 0x8F390000 | 0xA0                     # lw $t9, 0xa0($t9)
+        gm = 0x10000 - 0x66E4                         # lw $x, -0x66e4($gp)
+        for off in range(0, len(img.image) - 4, 4):
+            if struct.unpack_from("<I", img.image, off)[0] != lw_t9:
+                continue
+            va = base + off
+            back = [img.read_word(va - 4 * k) for k in range(1, 14)]
+            if any(b >> 26 == 0x23 and (b >> 21) & 31 == 28
+                   and b & 0xFFFF == gm for b in back):
+                out.append(va)
+        return out
+    check("three callers, all of them Clark: debriefing and two briefings",
+          _gm_calls() == [0x0040E3C0, 0x004319E4, 0x0046D1EC],
+          str([hex(x) for x in _gm_calls()]))
+    check("and nothing calls the lookup directly",
+          struct.pack("<I", 0x0C000000 | (_ck.LOOKUP >> 2)) not in bytes(img.image))
+
+    _cw = [e for e in PROFILE.build_edits(dict(PROFILE.defaults(), ss_clark=True))
+           if 0x0048DC34 <= e.va <= 0x0048DCD0]
+    check("ss_clark writes the four words, each declaring its stock",
+          sorted((e.va, e.value, e.stock) for e in _cw)
+          == sorted((va, new, st) for va, st, new, _n in _ck.EDITS))
+    check("and it is off unless asked for",
+          not [e for e in PROFILE.build_edits(PROFILE.defaults())
+               if 0x0048DC34 <= e.va <= 0x0048DCD0])
+    check("it is offered as measured, not yet heard in game",
+          PROFILE.setting("ss_clark").confidence == "applied"
+          and PROFILE.setting("ss_clark").group == "Split Screen")
+
     print("\n[apply]")
     vals = PROFILE.defaults()
     pl = engine.plan(iso_path, PROFILE, vals)
@@ -1341,8 +1447,23 @@ def run(args, work):
     print("\n[team status panel]")
     from tcps2 import rsedeadpath as _tdp, rsehudteam as _th
     _tw = _th.words(True)
-    check("six hooks and six caves, 119 words",
-          len(_th.HOOKS) == 6 and len(_tw) == 119)
+    check("six hooks and six caves, 122 words",
+          len(_th.HOOKS) == 6 and len(_tw) == 122)
+    # The names cave flushes the quad batch before the text, exactly as
+    # single player does, or the panel box is drawn over its own text. That
+    # dimmed every name and status to ~40% in the first version.
+    _nf, _nb = _th.CAVES["team_names"]
+    _flush = [_nb[k:k + 2] for k in range(len(_nb) - 1)]
+    check("single player flushes the batch before the names (0x3eb638)",
+          (img.read_word(0x003EB634), img.read_word(0x003EB638))
+          == (0x27A401E0, 0x0C0D2948))
+    check("and that is the same flush the panel's exit makes",
+          0x0C0D2948 in _th.CAVES["team_exit"][1])
+    check("the names cave does the same flush on the window path",
+          [0x27A401E0, 0x0C0D2948] in [list(p) for p in _flush])
+    check("and the hook reaches the moved cave",
+          [(n & 0x03FFFFFF) << 2 for va, _s, n, _x in _th.HOOKS
+           if va == 0x003EAF14] == [_tdp.CAVE + 4 * _nf])
     check("every cave sits in its own dead-path slot",
           all(_tdp.claim(slot, True) == _tdp.CAVE + 4 * first
               for slot, (first, _b) in _th.CAVES.items()))
@@ -1366,6 +1487,143 @@ def run(args, work):
     check("it is offered, and was watched working in game",
           PROFILE.setting("split_team_panel").confidence == "verified")
 
+    print("\n[team panel: the speaking flash, for both players]")
+    # The voice-queue natives fire SetTeamMemberSpeaking on ONE controller's
+    # HUD (player 2's), so only his panel flashed. The panel's speaking test
+    # now ORs the slot's flag on both viewports' HUDs, in the window only.
+    _sw = _th.speak_words()
+    check("the hook replaces the speaking test's two words, stock in the image",
+          all(img.read_word(va) == st for va, _w, st, _n in _sw))
+    _cave_lo, _cave_hi = 0x005B1C14, 0x005B1CC0
+    check("the cave is inside the padding that ends the code section",
+          all(_cave_lo <= va < _cave_hi for va, _w, _st, _n in _sw[2:])
+          and img.read_word(0x005B1C0C) == 0x03E00008          # jr ra before it
+          and img.read_word(_cave_hi) != 0)                    # data after it
+    _refd = []
+    for _off in range(0, len(img.image) - 4, 4):
+        _w = struct.unpack_from("<I", img.image, _off)[0]
+        _va = base + _off
+        _op = _w >> 26
+        if _op in (2, 3):
+            _t = ((_va + 4) & 0xF0000000) | ((_w & 0x03FFFFFF) << 2)
+        elif _op in (1, 4, 5, 6, 7, 0x14, 0x15, 0x16, 0x17):
+            _i = _w & 0xFFFF
+            _t = _va + 4 + ((_i - 0x10000 if _i & 0x8000 else _i) << 2)
+        else:
+            _t = _w
+        # The cave's own words. (A data table at 0x59fd98 happens to decode
+        # as a beql landing at 0x5b1cb4 -- padding, but past the cave.)
+        if _th.SPEAK_CAVE <= _t < _th.SPEAK_CAVE + 4 * len(_th.SPEAK_BODY):
+            _refd.append(_va)
+    check("and nothing in the stock overlay branches, jumps or points into it",
+          not _refd, str([hex(x) for x in _refd[:4]]))
+
+    def _speak(push, hud0, hud1, this, slot, flags, nulls=()):
+        """Run the hooked test: returns v0 as the beqz at 0x3ed8d8 sees it."""
+        code = {va: w for va, w, _s, _n in _sw}
+        gp = 0x0065B6F0
+        mem = {0x0065460C: push, 0x006547AC: 0x7000, 0x7000 + 0x44: 0x7100,
+               0x7100 + 0x30: 0x7200,
+               0x7200: 0 if "vp0" in nulls else 0x7300,
+               0x7204: 0 if "vp1" in nulls else 0x7400,
+               0x7300 + 0x34: 0 if "pc0" in nulls else 0x7500,
+               0x7400 + 0x34: 0x7600,
+               0x7500 + 0x57C: 0 if "hud0" in nulls else hud0,
+               0x7600 + 0x57C: hud1}
+        r = [0] * 32
+        r[28], r[20], r[22] = gp, this, slot
+
+        def rd(a):
+            return mem.get(a & 0xFFFFFFFF, 0)
+
+        def s16(i):
+            return i - 0x10000 if i & 0x8000 else i
+
+        def step(pc):
+            w = code[pc]
+            op, rs, rt, rd_ = w >> 26, (w >> 21) & 31, (w >> 16) & 31, (w >> 11) & 31
+            imm = w & 0xFFFF
+            br = None
+            if w == 0:
+                pass
+            elif op == 0 and w & 0x3F == 0x21:
+                r[rd_] = (r[rs] + r[rt]) & 0xFFFFFFFF
+            elif op == 0 and w & 0x3F == 0x25:
+                r[rd_] = r[rs] | r[rt]
+            elif op == 0 and w & 0x3F == 0x08:
+                br = r[rs]
+            elif op == 0x23:
+                r[rt] = rd(r[rs] + s16(imm))
+            elif op == 0x24:
+                r[rt] = flags.get((r[rs] + s16(imm)) & 0xFFFFFFFF, 0)
+            elif op == 0x0E:
+                r[rt] = r[rs] ^ imm
+            elif op in (4, 5):
+                if (r[rs] == r[rt]) == (op == 4):
+                    br = pc + 4 + (s16(imm) << 2)
+            elif op == 3:
+                r[31] = pc + 8
+                br = (w & 0x03FFFFFF) << 2
+            else:
+                raise AssertionError("unexpected %08x at %08x" % (w, pc))
+            r[0] = 0
+            return br
+
+        pc, ret = 0x003ED8D0, 0x003ED8D8
+        for _g in range(80):
+            if pc == ret:
+                return r[2]
+            br = step(pc)
+            if br is None:
+                pc += 4
+                continue
+            step(pc + 4)
+            pc = br
+        raise AssertionError("no return")
+
+    H0, H1 = 0x10000, 0x20000
+    both = {H0 + 0x503 + 1: 0, H1 + 0x503 + 1: 1}
+    check("single player: the test reads this HUD's own flag, as stock",
+          _speak(1, H0, H1, H0, 1, {H0 + 0x504: 1}) == 1
+          and _speak(1, H0, H1, H0, 1, {H1 + 0x504: 1}) == 0)
+    check("split screen: player 1's panel flashes on player 2's HUD flag",
+          _speak(0x5A, H0, H1, H0, 1, both) == 1)
+    check("and player 2's own panel still flashes",
+          _speak(0x5A, H0, H1, H1, 1, both) == 1)
+    check("a slot nobody is speaking in stays still",
+          _speak(0x5A, H0, H1, H0, 0, both) == 0)
+    check("a missing viewport, controller or HUD is skipped, not followed",
+          all(_speak(0x5A, H0, H1, H0, 1, both, (n,)) == 1
+              for n in ("vp0", "pc0", "hud0"))
+          and _speak(0x5A, H0, H1, H0, 1, both, ("vp1",)) == 0)
+    _on = PROFILE.effective(dict(PROFILE.defaults(), split_squad=True,
+                                 split_team_panel=True))
+    _vas = {e.va for e in PROFILE.build_edits(_on)}
+    check("it ships with the team panel",
+          {va for va, _w, _s, _n in _sw} <= _vas)
+    check("and not without it",
+          not ({va for va, _w, _s, _n in _sw}
+               & {e.va for e in PROFILE.build_edits(PROFILE.defaults())}))
+
+    print("\n[debriefing: every operative's statistics]")
+    from tcps2 import rsedebrief as _db
+    check("the two words are stock, and so is what they rely on",
+          all(img.read_word(va) == st for va, st, _n, _x in _db.EDITS)
+          and all(img.read_word(va) == st for va, st in _db.CONTEXT))
+    _rows, _copy = _db.EDITS
+    check("split screen's rows become count + lost + 1 (addiu s7, a3, 1)",
+          _rows[2] == 0x24F70001 and (_rows[2] >> 21) & 31 == 7
+          and (_rows[2] >> 16) & 31 == 23 and _rows[2] & 0xFFFF == 1)
+    check("the copy loop is skipped outright, to the same target",
+          (_copy[2] & 0xFFFF) == (_copy[1] & 0xFFFF)
+          and _copy[2] >> 16 == 0x1000)
+    _sq = PROFILE.build_edits(PROFILE.effective(
+        dict(PROFILE.defaults(), split_squad=True)))
+    check("it ships with the AI teammates, and only with them",
+          {va for va, _s, _n, _x in _db.EDITS} <= {e.va for e in _sq}
+          and not ({va for va, _s, _n, _x in _db.EDITS}
+                   & {e.va for e in PROFILE.build_edits(PROFILE.defaults())}))
+
     print("\n[dead-path cave]")
     # Restored 2026-09-22. This whole block was deleted by accident that
     # afternoon, when a test edit replaced a span of this file that happened
@@ -1374,7 +1632,7 @@ def run(args, work):
     # lives in, so it is not optional. Counts updated for the scope merge
     # (three cards -> one) and the wheel marker's left/right slot.
     from tcps2 import rsedeadpath, rsescope, rsewheel, rseviewmodel
-    check("the slots do not overlap", rsedeadpath.check_layout() == 216)
+    check("the slots do not overlap", rsedeadpath.check_layout() == 219)
     check("a cave slot is refused while the entry branch is live",
           _raises(lambda: rsedeadpath.claim("scope_height", False),
                   rsedeadpath.DeadPathError))
@@ -1384,7 +1642,7 @@ def run(args, work):
            + rseviewmodel.words(True) + rsehudteam.words(True))
     addrs = [x[0] for x in hud]
     check("no two HUD words fight over an address",
-          len(set(addrs)) == len(addrs) == 287,
+          len(set(addrs)) == len(addrs) == 290,
           "%d words, %d distinct" % (len(addrs), len(set(addrs))))
     check("every HUD word is inside the overlay",
           all(0x00100000 <= a < 0x00653980 for a in addrs))
@@ -1583,6 +1841,8 @@ def run(args, work):
     LC = SK + len(rsesquad.SKINS_SIG) + 48
     LB = LC + len(rsesquad.LAYOUT_CALL) + 48
     OA = LB + len(rsesquad.LAYOUT_CODE) + 48
+    DG = OA + len(rsesquad.ORDER_AIM) + 48
+    WT = DG + len(rsesquad.DEAD_GATE) + 48
     pad = (bytes(48) + rsesquad.RESCUE_SIG + bytes(48) + rsesquad.EXIT_SIG
            + bytes(48) + rsesquad.COUNT_SIG + bytes(48)
            + rsesquad.ROSTER_SIGS["L"] + bytes(48)
@@ -1590,14 +1850,16 @@ def run(args, work):
            + rsesquad.SKINS_SIG + bytes(48)
            + rsesquad.LAYOUT_CALL + bytes(48)
            + rsesquad.LAYOUT_CODE + bytes(48)
-           + rsesquad.ORDER_AIM + bytes(48))
+           + rsesquad.ORDER_AIM + bytes(48)
+           + rsesquad.DEAD_GATE + bytes(48)
+           + rsesquad.WIPED_TEST + bytes(48))
     check("the stock rescue test leaves the arm when the map is no rescue",
           rsesquad.reads(pad) == rsesquad.SKIP_TARGET == 0x0354)
     check("and stock split screen pins the member count",
           not rsesquad.counts(pad)
           and pad[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_STOCK == 0x77)
     got, n = rsesquad.apply(pad, True)
-    check("the fix makes all seven edits, never some", n == 7)
+    check("the fix makes all nine edits, never some", n == 9)
     check("a miss now falls into the single-player AI arm",
           rsesquad.reads(got) == rsesquad.ARM_TARGET == 0x0420)
     check("and the count increments instead of resetting",
@@ -1605,10 +1867,12 @@ def run(args, work):
           and got[C + rsesquad.COUNT_OPERAND] == rsesquad.COUNT_FIXED == 0x72)
     rewritten = (set(range(LC, LC + len(rsesquad.LAYOUT_CALL)))
                  | set(range(LB, LB + len(rsesquad.LAYOUT_CODE)))
-                 | set(range(OA, OA + len(rsesquad.ORDER_AIM))))
+                 | set(range(OA, OA + len(rsesquad.ORDER_AIM)))
+                 | set(range(DG, DG + len(rsesquad.DEAD_GATE)))
+                 | set(range(WT, WT + len(rsesquad.WIPED_TEST))))
     moved = [i for i in range(len(pad))
              if pad[i] != got[i] and i not in rewritten]
-    check("outside the three rewritten regions, exactly five bytes move",
+    check("outside the five rewritten regions, exactly five bytes move",
           len(moved) == 5)
     check("the jump operand, the comparison, Trieste's count reset and the "
           "skin loop's jump",
@@ -1631,9 +1895,35 @@ def run(args, work):
           len(rsesquad.LAYOUT_CALL_NEW) == len(rsesquad.LAYOUT_CALL)
           and len(rsesquad.LAYOUT_CODE_NEW) == len(rsesquad.LAYOUT_CODE) == 137
           and len(rsesquad.ORDER_AIM_NEW) == len(rsesquad.ORDER_AIM))
+    # A B level's carry-over (SetSavedData) reads team slots 0 and 1 in split
+    # screen as player or AI records, the way part A's GetSavedData wrote
+    # them. Restoring before player 2 left slot 1 gave him an AI's record:
+    # Alpine Village B started him with an empty rifle and no sidearm.
+    _ssd = bytes.fromhex("19004a03030000683216")      # PC.SetSavedData()
+    _mte = bytes.fromhex("1b66102616")                # SendMemberToEnd(1)
+    check("the moved block never reads as the stock call site",
+          rsesquad.LAYOUT_CALL not in rsesquad.LAYOUT_CODE_NEW)
+    check("a B level restores gear only after player 2 has left slot 1",
+          rsesquad.LAYOUT_CODE_NEW.count(_ssd) == 1
+          and rsesquad.LAYOUT_CODE_NEW.index(_ssd)
+          > rsesquad.LAYOUT_CODE_NEW.index(_mte))
+    check("the first version restored before the move",
+          rsesquad.LAYOUT_CODE_V1.index(_ssd)
+          < rsesquad.LAYOUT_CODE_V1.index(_mte))
     check("each player's move order uses that player's own aim",
           rsesquad.orders_from_requester(got)
           and not rsesquad.orders_from_requester(pad))
+    check("a dead AI leaves the counted squad; a dead player still returns",
+          rsesquad.buries_dead_ai(got) and not rsesquad.buries_dead_ai(pad)
+          and got[DG:DG + len(rsesquad.DEAD_GATE)] == rsesquad.DEAD_GATE_NEW)
+    check("the mission fails once both players are down, whoever is in "
+          "team slot 1",
+          rsesquad.fails_on_both_players(got)
+          and not rsesquad.fails_on_both_players(pad)
+          and got[WT:WT + len(rsesquad.WIPED_TEST)] == rsesquad.WIPED_TEST_NEW)
+    check("both death regions keep their width",
+          len(rsesquad.DEAD_GATE_NEW) == len(rsesquad.DEAD_GATE) == 133
+          and len(rsesquad.WIPED_TEST_NEW) == len(rsesquad.WIPED_TEST) == 160)
     check("split screen now skins, heads and caps the whole team",
           rsesquad.skins_everyone(got) and not rsesquad.skins_everyone(pad)
           and got[SK + rsesquad.SKINS_OPERAND] == rsesquad.SKINS_FIXED == 0x30)
@@ -1643,6 +1933,15 @@ def run(args, work):
           rsesquad.ARM_TARGET > 0x03FB)
     check("running it twice changes nothing",
           rsesquad.apply(got, True) == (got, 0))
+    # A disc edited by the first version carries LAYOUT_CODE_V1 (gear
+    # restored before player 2 moved). It must upgrade, not be refused.
+    v1 = bytearray(got)
+    v1[LB:LB + len(rsesquad.LAYOUT_CODE)] = rsesquad.LAYOUT_CODE_V1
+    check("a file carrying the first layout version is upgraded to this one",
+          rsesquad.apply(bytes(v1), True) == (got, 1)
+          and not rsesquad.keeps_player2_out(bytes(v1)))
+    check("and reverting it gives stock back",
+          rsesquad.apply(bytes(v1), False)[0] == pad)
     check("it can be put back whole", rsesquad.apply(got, False)[0] == pad)
     check("a build with the jump but no clamp is refused, not half-applied",
           _raises(lambda: rsesquad.apply(bytes(16) + rsesquad.RESCUE_SIG
@@ -3419,6 +3718,162 @@ def run_split_wheel(args):
     check("the edit still applies cleanly if it is ever re-enabled",
           len([e for e in profile.build_data({"split_wheel": True})
                if e.op == "split_wheel"]) == 1)
+
+
+def run_split_orders(args):
+    """The team order icon and wheel in split screen.
+
+    What can be proved without playing: that the two edits land where they
+    were measured, in the split-screen package only; that the rewritten
+    PostRender still loads the same way -- same sizes, same objects and names
+    referenced; and that every way through it in split screen pops the full-
+    screen mode exactly as often as it pushes it.
+    """
+    import re
+    from tcps2 import dataedit, lin, rseorders, uscode
+    from tcps2.games import BY_ID
+    from tcps2.iso import Iso
+    from tcps2.vokes import open_archives
+
+    if not args.rs3data:
+        return
+    print("\n[Rainbow Six 3 -- team orders in split screen]")
+
+    def refs(script):
+        objs, names = set(), set()
+        for t in script.statements():
+            n = 0
+            for kind, val in t.parts:
+                if kind == "ref":
+                    v = uscode.compact_decode(val, 0)[0]
+                    by_name = (t.op in (0x0E, 0x1B, 0x21, 0x38)
+                               or (t.op == 0x40 and n == 1))
+                    (names if by_name else objs).add(v)
+                    n += 1
+        return objs, names
+
+    push = bytes.fromhex("19003e03000069ce16")
+    pop = bytes.fromhex("19003e03000069cf16")
+    split_true = bytes.fromhex("0600042d01ed012716")
+
+    def unbalanced(plain, at):
+        """Statements where a split-screen path is pushed out of step."""
+        script = uscode.Script.at(plain, at)
+        rows, d = [], at + 4
+        for t in script.toks:
+            rows.append((t, plain[d:d + t.dlen]))
+            d += t.dlen
+        index = {t.mstart: i for i, (t, _b) in enumerate(rows)}
+        depth, todo, bad = {0: 0}, [0], []
+        while todo:
+            i = todo.pop()
+            t, raw = rows[i]
+            dd = depth[i] + (raw == push) - (raw == pop)
+            if not 0 <= dd <= 1 or (t.op == 0x04 and dd):
+                bad.append(t.mstart)
+            nxt = [] if t.op in (0x04, 0x06) else [i + 1]
+            if t.op in (0x06, 0x07) and t.parts[0][1] is not uscode.END:
+                jump = index[t.parts[0][1].mstart]
+                if t.op == 0x07 and t.mstart == 0x02A0:
+                    nxt = [jump]        # NetMode != 0 || !m_bIsSplitScreen
+                elif not (t.op == 0x07 and split_true in raw):
+                    nxt.append(jump)    # m_bIsSplitScreen == True never jumps
+            for j in nxt:
+                if j not in depth:
+                    depth[j] = dd
+                    todo.append(j)
+                elif depth[j] != dd:
+                    bad.append(rows[j][0].mstart)
+        return bad
+
+    seen = set()
+    with Iso(args.rs3data) as iso:
+        for arc in open_archives(iso, r"/VOKES\d\.IMG$"):
+            for path in sorted(arc.files):
+                if not re.search(r"/COMMON(OFF|_SS)?\.LIN$", path) or path in seen:
+                    continue
+                seen.add(path)
+                raw = _stock_bytes(args.rs3data, arc, path)
+                kind, plain = dataedit._unpack(raw, path)
+                at = rseorders.find_block(plain)
+                const = rseorders._find_tick(plain)
+                check("%s: the icon code is where it was measured" % path[1:],
+                      at == rseorders.KNOWN_OFFSET and const
+                      == rseorders.KNOWN_TICK_OFFSET,
+                      "%#x, %#x" % (at, const))
+                check("%s: and is the code this disc shipped" % path[1:],
+                      rseorders._block_sha1(plain, at) == rseorders.STOCK_SHA1
+                      and plain[const] == rseorders.EX_FALSE)
+                if path != "/COMMON_SS.LIN":
+                    continue
+
+                on, n = rseorders.apply(plain, True)
+                check("turning it on changes the two functions",
+                      n == 2 and len(on) == len(plain) and rseorders.reads(on)
+                      and not rseorders.reads(plain))
+                check("and asking twice is a no-op",
+                      rseorders.apply(on, True) == (on, 0))
+                tick = uscode.Script.at(plain, 0x12E11A)
+                span = [(at, at + 4 + rseorders.DISK_LEN),
+                        (0x12E11A, 0x12E11A + 4 + tick.disk_len)]
+                moved = [i for i in range(len(plain)) if plain[i] != on[i]]
+                check("nothing outside the two functions moves",
+                      moved and all(any(a <= i < b for a, b in span)
+                                    for i in moved), "%d bytes" % len(moved))
+                check("the wheel's test is one byte: False -> True",
+                      [i for i in moved if i < at] == [const]
+                      and on[const] == rseorders.EX_TRUE)
+                old = uscode.Script.at(plain, at)
+                new = uscode.Script.at(on, at)
+                check("PostRender keeps its ScriptSize and disk length",
+                      (new.mem_len, new.disk_len) == (old.mem_len, old.disk_len)
+                      == (rseorders.SCRIPT_SIZE, rseorders.DISK_LEN))
+                check("and names exactly the objects and names it shipped with",
+                      refs(new) == refs(old))
+                check("every split-screen path pops full screen as it pushes",
+                      not unbalanced(on, at), str(unbalanced(on, at)))
+                check("as every path through the shipped function does",
+                      not unbalanced(plain, at))
+                jump = new.statement_at(rseorders.ICON_DRAW)
+                check("the split arm's icon now goes by way of the brackets",
+                      jump.op == 0x06 and jump.parts[0][1].op == 0x07
+                      and (rseorders.BRACKET_LEFT + rseorders.BRACKET_RIGHT)
+                      in on[at:at + 4 + rseorders.DISK_LEN])
+                packed = dataedit._repack(kind, raw, on)
+                check("the container keeps its length",
+                      len(packed) == len(raw), "%d -> %d" % (len(raw), len(packed)))
+                check("and still decompresses to the edited bytes",
+                      lin.decompress(packed) == on)
+                bent = bytearray(plain)
+                bent[at + 0x40] ^= 1
+                check("a PostRender that is not the shipped one is refused",
+                      _raises(lambda: rseorders.apply(bytes(bent)),
+                              rseorders.OrdersError))
+
+    check("all three COMMON containers were read", len(seen) == 3,
+          "%d" % len(seen))
+    profile = BY_ID["r6_3_slus20883"]
+    s = profile.setting("split_team_orders")
+    check("the option reaches the profile, marked unplayed",
+          s is not None and s.confidence == "experimental" and s.enabled)
+    check("and needs the AI and the wheel's per-viewport drawing",
+          s.requires == {"split_squad": [True], "split_wheel_labels": [True]})
+    need = {"split_squad": True, "split_wheel": True,
+            "split_wheel_labels": True}
+    got = [e for e in profile.build_data(profile.effective(
+        dict(need, split_team_orders=True))) if e.op == "split_team_orders"]
+    check("it writes the split-screen package and nothing else",
+          len(got) == 1 and got[0].matches("/COMMON_SS.LIN")
+          and not got[0].matches("/COMMONOFF.LIN")
+          and not got[0].matches("/COMMON.LIN"))
+    check("leaving it off writes nothing",
+          not any(e.op == "split_team_orders"
+                  for e in profile.build_data(profile.effective(need))))
+    check("and without the AI it is not written at all",
+          not any(e.op == "split_team_orders"
+                  for e in profile.build_data(profile.effective(
+                      {"split_team_orders": True, "split_wheel": True,
+                       "split_wheel_labels": True}))))
 
 
 def run_zopfli_fallback():
@@ -5264,6 +5719,67 @@ def run_switch_off_restores(args, work):
             dataedit._archives = real
 
 
+def run_recording_first(args):
+    """AI teammates plus a changed enemy count, applied together.
+
+    The per-mission enemy counts edit a map's split-screen recording as well
+    as its single-player one. When that edit ran before `team_recording`, the
+    splice was handed an edited recording and refused it -- in the GUI, an
+    apply with Parade's enemy count changed failed outright with "the
+    split-screen record at 0x14f160 is not the one every map carries".
+    `apply_data` now runs recording ops first on every file. Read-only: the
+    chain is run in memory on the shipped files from the backup store.
+    """
+    print("\n[a replaced recording runs before the edits on top of it]")
+    if not args.rs3data:
+        print("  SKIP  needs --rs3data")
+        return
+    import inspect
+    from tcps2 import dataedit, lin, rsesplice, vokes
+    src = inspect.getsource(dataedit.apply_data)
+    check("apply_data sorts recording ops first, keeping the rest in order",
+          "sorted(edits, key=lambda e: e.op not in _RECORDING_OPS)" in src)
+    vals = dict(PROFILE.defaults(), split_squad=True, mission_parade=150)
+    eds = PROFILE.build_data(PROFILE.effective(vals))
+    path = "/PARADE_A_SS.LIN"
+    mine = [e for e in eds if re.search(e.select, path, re.I)]
+    check("Parade A's split-screen file gets both edits",
+          sorted(e.op for e in mine) == ["team_recording", "zone_counts"],
+          str([e.op for e in mine]))
+    store = dataedit.Store(engine.backup_dir_for(args.rs3data))
+    keys = [k for k in store.index if k.endswith(path)]
+    if not keys:
+        print("  SKIP  the backup store holds no original of %s" % path)
+        return
+    arc_name = store.index[keys[0]]["archive"]
+    with Iso(args.rs3data) as iso:
+        arc = [a for a in vokes.open_archives(iso) if path in a.files][0]
+        stock = lin.decompress(store.original(arc_name, path)[0])
+        sib = dataedit._sibling_plain(arc, arc_name, path, store,
+                                      "team_recording")
+
+        def run(order):
+            plain = stock
+            for e in order:
+                fn = dataedit.OPS[e.op]
+                if e.op in dataedit._WANTS_SIBLING:
+                    plain, _n = fn(plain, e.params, sib)
+                else:
+                    plain, _n = fn(plain, e.params)
+            return plain
+
+        check("the old order, enemy counts first, is what the GUI hit",
+              _raises(lambda: run(sorted(mine, key=lambda e:
+                                         e.op == "team_recording")),
+                      rsesplice.SpliceError))
+        got = run(sorted(mine, key=lambda e: e.op not in
+                         dataedit._RECORDING_OPS))
+        check("recording first: the file is spliced",
+              rsesplice.reads(got) and len(got) == len(stock) + 2631)
+        check("and the enemy counts land on top of the splice",
+              got != rsesplice.splice(stock, sib))
+
+
 def run_team_recordings(args):
     """AI teammates in split screen, through the real apply path on the disc.
 
@@ -5400,10 +5916,91 @@ def run_team_recordings(args):
                       and rsesquad.keeps_player2_out(lin.decompress(
                           a.read_file("/COMMON_SS.LIN")))
                       and rsesquad.orders_from_requester(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      and rsesquad.buries_dead_ai(lin.decompress(
+                          a.read_file("/COMMON_SS.LIN")))
+                      and rsesquad.fails_on_both_players(lin.decompress(
                           a.read_file("/COMMON_SS.LIN")))]
             check("the team code and the whole-team skins land in every copy "
                   "of the split-screen package",
                   sorted(landed) == sorted(commons))
+            # The rebuilt layout block, parsed in the real package: the
+            # function keeps its size and every statement is where the
+            # jumps expect it.
+            from tcps2 import uscode as _usc
+            from tcps2.rsecanon import _block as _cblock
+            _cp = lin.decompress(
+                shadows[sorted(commons)[0]].read_file("/COMMON_SS.LIN"))
+            _at, _sc = _cblock(_cp, b"2# RescureTeamStartingPoint\x00", "CPT")
+            _st = {t.mstart: t for t in _sc.toks}
+            check("CreatePlayerTeam keeps its size with the reordered block",
+                  _sc.mem_len == 1775 and _sc.disk_len == 1346,
+                  "%d / %d" % (_sc.mem_len, _sc.disk_len))
+            check("move first (0x0460), then restore (0x046e), then return",
+                  all(k in _st for k in (0x0423, 0x043f, 0x0460, 0x046e,
+                                         0x047b))
+                  and _st[0x0460].op == 0x1B and _st[0x046e].op == 0x19
+                  and _st[0x047b].op == 0x04)
+
+            from tcps2.uscode import END, Script, compact_decode
+
+            def _fn(plain, region, mem):
+                """The script block holding `region`, by its ScriptSize."""
+                at = plain.find(region)
+                for s in range(at - 4, at - 2048, -1):
+                    if struct.unpack_from("<I", plain, s)[0] != mem:
+                        continue
+                    try:
+                        sc = Script.at(plain, s)
+                    except Exception:                 # noqa: BLE001
+                        continue
+                    if at + len(region) <= s + 4 + sc.disk_len:
+                        return sc
+
+            def _refs(sc):
+                return {(t.op in (0x0E, 0x1B, 0x21, 0x38),
+                         compact_decode(v, 0)[0])
+                        for s in sc.toks for t in s.walk()
+                        for k, v in t.parts if k == "ref"}
+
+            def _goes(sc, mstart):
+                t = [s for s in sc.toks if s.mstart == mstart][0]
+                return t.op, [v.mstart for k, v in t.parts
+                              if k == "jump" and v is not END]
+
+            same = sane = flow = 0
+            for n, raw in commons.items():
+                was = lin.decompress(raw)
+                now = lin.decompress(shadows[n].read_file("/COMMON_SS.LIN"))
+                for old, new, mem, keep in (
+                        (rsesquad.DEAD_GATE, rsesquad.DEAD_GATE_NEW, 1062,
+                         0x00A7),
+                        (rsesquad.WIPED_TEST, rsesquad.WIPED_TEST_NEW, 1727,
+                         0x050A)):
+                    a, b = _fn(was, old, mem), _fn(now, new, mem)
+                    if b is None:
+                        continue
+                    same += (b.mem_len == a.mem_len
+                             and b.disk_len == a.disk_len
+                             and [(t.mstart, t.mlen) for t in b.toks
+                                  if t.mstart >= keep]
+                             == [(t.mstart, t.mlen) for t in a.toks
+                                 if t.mstart >= keep])
+                    sane += _refs(b) == _refs(a)
+                b = _fn(now, rsesquad.DEAD_GATE_NEW, 1062)
+                w = _fn(now, rsesquad.WIPED_TEST_NEW, 1727)
+                flow += (b is not None and w is not None
+                         and _goes(b, 0x0000) == (0x07, [0x0031])
+                         and _goes(b, 0x006C) == (0x06, [0x00A7])
+                         and _goes(w, 0x0434) == (0x07, [0x0528])
+                         and _goes(w, 0x04A2) == (0x06, [0x050A]))
+            check("TeamMemberDead and PawnKilled still parse at their shipped "
+                  "size, every later statement where it was",
+                  same == 2 * len(commons), "%d of %d" % (same, 2 * len(commons)))
+            check("and each still references exactly the objects and names it "
+                  "did, so the recording reads the same", sane == 2 * len(commons))
+            check("the new jumps land past the player gate, on 'has been "
+                  "incapacitated' and on 'wiped out'", flow == len(commons))
             check("and the offline and online packages are untouched",
                   all(shadows[n].read_file(k) == b
                       for (n, k), b in others.items()))
@@ -5468,6 +6065,29 @@ def run_team_recordings(args):
                       and rsesquad.reads(c) == rsesquad.SKIP_TARGET
                       and not rsesquad.roster_reads_price(c)
                       for c in packages()))
+            # AI teammates together with a changed enemy count. Both edit
+            # Parade's split-screen files; the recording has to be replaced
+            # first and the count applied on top, or the GUI's apply dies
+            # in the splice (it did, 2026-09-23).
+            dataedit.apply_data(iso, profile, edits_for(split_squad=True),
+                                store)
+            solo = plain_at("/PARADE_A_SS.LIN")
+            mixed = [e for e in profile.build_data(profile.effective(
+                dict(profile.defaults(), split_squad=True,
+                     mission_parade=150)))
+                if e.op in ("squad", "team_recording", "zone_counts")]
+            try:
+                dataedit.apply_data(iso, profile, mixed, store)
+                failed = None
+            except Exception as exc:                         # noqa: BLE001
+                failed = "%s: %s" % (type(exc).__name__, exc)
+            check("AI teammates and a changed enemy count apply together",
+                  failed is None, str(failed))
+            mix = plain_at("/PARADE_A_SS.LIN")
+            check("Parade's split-screen level is spliced AND carries the "
+                  "new count",
+                  rsesplice.reads(mix) and len(mix) == len(solo)
+                  and mix != solo)
             dataedit.apply_data(iso, profile, [], store)
             check("switching both off puts every file back byte for byte",
                   all(where(q)[1].read_entry(where(q)[2]) == before[q][1]

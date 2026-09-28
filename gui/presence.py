@@ -1,4 +1,19 @@
-r"""Discord Rich Presence -- "Playing Tom Clancy PS2 Mod Studio", with the disc.
+r"""RETIRED 2026-09-28. Nothing imports this; see gui/gamepresence.py.
+
+It is kept because the Discord IPC handshake below is the only written
+record of that protocol in this project, and because the reason it was
+retired is worth not re-discovering: presence for THIS WINDOW is live at
+exactly the wrong moment. Nobody has a disc patcher open while they are
+playing. It also required the user to register a Discord application of
+their own before it showed anything, so it sat silently dead for almost
+everyone who switched it on.
+
+The replacement drives drp.exe, which keeps running after this window
+closes and reads the game out of the emulator.
+
+THE ORIGINAL NOTES FOLLOW.
+
+Discord Rich Presence -- "Playing Tom Clancy PS2 Mod Studio", with the disc.
 
 Discord's local IPC is a named pipe on Windows (`\\.\pipe\discord-ipc-N`) and a
 unix socket everywhere else, carrying length-prefixed JSON. That is small enough

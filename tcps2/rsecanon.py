@@ -52,9 +52,13 @@ instead::
 
 **Only `COMMON_SS.LIN` is edited**, and that is the whole reason there is no
 split-screen test in the inserted code: `_SS` IS the split-screen package, so
-the campaign and Terrorist Hunt copies are untouched by construction. That also
-keeps single player exactly as it shipped, where member 1 must stay Price or the
-mission-flag removals further down would leave the same operative twice.
+the campaign and online copies are untouched by construction. Split-screen
+Terrorist Hunt is NOT: it runs this same package and the same level files, so
+it gets the mission's operative too. "Terrorist Hunt keeps Price" below tried
+to put Price back there and was withdrawn: the level files are recordings of
+one team's load. Keeping this edit to `COMMON_SS.LIN` also keeps single player
+exactly as it shipped, where member 1 must stay Price or the mission-flag
+removals further down would leave the same operative twice.
 
 Everything downstream follows from the class, which is the point of doing it
 here rather than in four places: `m_iOperativeID` and `m_CharacterName` are
@@ -370,6 +374,118 @@ def apply(plain: bytes, enable: bool = True):
     return bytes(out), 1
 
 
+# ---------------------------------------------------------------------------
+# Terrorist Hunt keeps Price (2026-09-24) -- WITHDRAWN THE SAME DAY
+# ---------------------------------------------------------------------------
+#
+# Not called. Played on a disc that also carried split_callouts, Terrorist Hunt
+# on the Garage hung its load ("Bad name index -70/109", a voice package), and
+# both were withdrawn. The voice package points at split_callouts alone: the
+# reason first given here -- that a different team loads different skins and
+# heads -- is WRONG (2026-09-24): LoadMissionRainbowSkins loads the body skin
+# and all four heads and caps unconditionally, and every operative bank is
+# queued natively on every map. What a split-screen Terrorist Hunt team must
+# match is the ORDER of first class loads, which `rsethuntai` keeps by adding
+# its AI after the practice team is built -- the route taken instead, keeping
+# the mission's player 2. Kept, with its detector, as the record of what was
+# tried.
+#
+# Split-screen Terrorist Hunt runs this same package and loads the same
+# `<MAP>_A_SS.LIN` recordings as practice -- native LoadMap spawns both
+# split-screen game classes on every split-screen load and keeps the one the
+# mode byte names -- so the canon choice above applied there too (reported:
+# Terrorist Hunt on Garage made player 2 Loiselle). Stock single-player Terrorist
+# Hunt keeps all four operatives, and stock split screen makes player 2 Price.
+#
+# The recordings forbid simply skipping the canon arm in Terrorist Hunt: the
+# canon class's load is a read the recording holds. So the arm still runs, and
+# its exit -- the canon arms' common exit, mem 0x0301 -- becomes
+#     if (iMember == 1 && Level.Game.IsA('R6TerroristHuntGame')) goto 0x017d
+# (the Price arm, whose class player 1 already loaded, so it reads nothing),
+# with the Price arm's own exit jumping past the test. Paid for by the dead
+# `if (bShowLog) Log(...)` at 0x0301 and at 0x0632, padded with EX_Nothing so
+# every memory offset outside those two regions is unchanged -- which is what
+# keeps rsesquad's member-count site where it expects it. Both tests are lifted
+# from bytecode already in this function; the IsA test is imports and names
+# only, so the package's own objects are created in the shipped order (a
+# version testing the `bTerroHunt` parameter instead is caught by the
+# creation-order check: it creates bTerroHunt before vStart).
+
+#: `iMember == 1`, lifted from mem 0x00b0
+_THUNT_MEMBER = bytes.fromhex("9a" "004219" "26" "16")
+#: `Level.Game.IsA('R6TerroristHuntGame')`, lifted from mem 0x0cda / 0x0dc9
+_THUNT_ISA = bytes.fromhex("1919018f05000401a6080004612f214a0416")
+
+
+def _thunt_present(plain: bytes) -> bool:
+    """The Terrorist Hunt test is the member test ANDed with the IsA -- the
+    IsA alone occurs in the shipped function."""
+    try:
+        size_at, script = _block(plain, TEAM_MEMBER_SIG, "CreateTeamMember")
+    except Exception:
+        return False
+    body = plain[size_at + 4:size_at + 4 + script.disk_len]
+    head = b"\x82" + _THUNT_MEMBER + b"\x18"
+    at = body.find(head)
+    while at >= 0:
+        if body[at + len(head) + 2:at + len(head) + 2 + len(_THUNT_ISA)] == _THUNT_ISA:
+            return True
+        at = body.find(head, at + 1)
+    return False
+
+
+def _thunt(plain: bytes) -> bytes:
+    """Terrorist Hunt spawns player 2 as Price, on a canon CreateTeamMember."""
+    if _thunt_present(plain):
+        return plain
+    size_at, sc = _block(plain, TEAM_MEMBER_SIG, "CreateTeamMember")
+    by = {t.mstart: t for t in sc.toks}
+    try:
+        exit_, log1, spawn = by[0x0301], by[0x030A], by[0x034C]
+        price_arm, price_exit = by[0x017D], by[0x01F5]
+        guard2, log2, after2 = by[0x0632], by[0x063B], by[0x066B]
+    except KeyError as exc:
+        raise CanonError("CreateTeamMember is not laid out as the canon edit "
+                         "leaves it (no statement at %s)" % exc) from exc
+    if not (exit_.name == "JumpIfNot" and exit_.parts[0][1] is spawn
+            and price_exit.name == "Jump" and price_exit.parts[0][1] is exit_
+            and guard2.name == "JumpIfNot" and guard2.parts[0][1] is after2
+            and log1.op == 0xE7 and log2.op == 0xE7):
+        raise CanonError("CreateTeamMember is not laid out as the canon edit "
+                         "leaves it")
+    cond = parse_expr(b"\x82" + _THUNT_MEMBER + b"\x18\x00\x00" + _THUNT_ISA + b"\x16")
+    for t in cond.walk():
+        t.skip_base = None                      # let the assembler measure
+    test = Tok(EX_JUMP_IF_NOT)
+    test.parts = [("jump", spawn), ("expr", cond)]
+    to_price = Tok(EX_JUMP)
+    to_price.parts = [("jump", price_arm)]
+    over = Tok(EX_JUMP)
+    over.parts = [("jump", after2)]
+    for st in sc.statements():
+        for i, (kind, val) in enumerate(st.parts):
+            if kind == "jump" and val is exit_:
+                st.parts[i] = (kind, spawn if st is price_exit else test)
+            elif kind == "case" and val[0] is exit_:
+                st.parts[i] = (kind, (test, val[1]))
+    toks = sc.toks
+    i = toks.index(exit_)
+    toks[i:i + 2] = [test, to_price] + [Tok(0x0B) for _ in range(30)]
+    j = toks.index(guard2)
+    toks[j:j + 2] = [over] + [Tok(0x0B) for _ in range(54)]
+    out = bytearray(plain)
+    before = [(t.mstart, t.mlen) for t in Script.at(plain, size_at).toks]
+    sc.write_into(out, size_at)
+    after = {t.mstart for t in Script.at(bytes(out), size_at).toks}
+    moved = [m for m, _l in before
+             if not (0x0301 <= m < 0x034C or 0x0632 <= m < 0x066B)
+             and m not in after]
+    if moved or len(out) != len(plain):
+        raise CanonError("the Terrorist Hunt test moved statements it must "
+                         "not: %s" % [hex(m) for m in moved])
+    return bytes(out)
+
+
 def _equals_one(member):
     eq = Tok(EX_EQUAL_INT)
     one = Tok(EX_INT_ONE)
@@ -436,6 +552,11 @@ def card(prefix, group):
                 "only) keeps AI Loiselle and Weber, because no one-byte test "
                 "can tell its roster apart from the levels that keep them.\n\n"
                 "Not traced: the weapon-select portrait may still show Price. "
-                "Terrorist Hunt in split screen reads the same files and has "
-                "never been tried with this. If a level stops loading, turn "
-                "this off first; RESTORE DISC puts everything back.")
+                "Terrorist Hunt uses the mission's operative too: split-screen "
+                "Terrorist Hunt reads the same script and level files as "
+                "practice, and a level file is a recording of one load, so "
+                "its operatives' classes must load in the same order. The "
+                "Terrorist Hunt option on the Split Screen page adds the "
+                "other two operatives as AI on these maps. If a level stops "
+                "loading, turn this off first; RESTORE DISC puts everything "
+                "back.")

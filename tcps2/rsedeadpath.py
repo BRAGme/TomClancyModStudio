@@ -192,9 +192,12 @@ SLOTS = {
     "team_quad": (113, 19),
     "team_entry": (132, 20),
     "team_skipbox": (152, 8),
-    "team_names": (160, 10),
+    # Words 160-169 held the first version of the names cave, which skipped
+    # single player's batch flush and drew the text under the panel box. It
+    # grew by the flush and moved to the free words at the end.
     "team_exit": (170, 18),
     "team_roster": (188, 38),
+    "team_names": (226, 13),
     # Stop one player's wheel drawing into the other's half. The
     # engine dispatcher renders EVERY viewport's interaction list into
     # EACH viewport's canvas, so the per-player gate is honoured and

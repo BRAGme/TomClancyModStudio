@@ -512,6 +512,14 @@ def banner_image(detection, cache_dir=None):
     profile = detection.profile
     if profile is None:
         return None
+    if cache_dir and profile.id.startswith("r6_3"):
+        # The loadout icons come off the same disc and land in the same cache;
+        # gui/gearicons reads them from there. Never fatal to the banner.
+        try:
+            from . import rs3icons
+            rs3icons.cached_icons(detection, cache_dir)
+        except Exception:
+            pass
     cached = os.path.join(cache_dir, profile.id + ".png") if cache_dir else None
     if cached and os.path.exists(cached):
         try:

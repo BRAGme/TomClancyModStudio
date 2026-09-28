@@ -169,7 +169,8 @@ def card(prefix, group):
              "first-person weapon. Restoring that weapon brought the other "
              "path back without restoring its guard. This makes the guard "
              "apply in split screen too, exactly as it does in single player.",
-        caution="Not play-tested. It only ever ADDS an early return that "
+        caution="Played in split screen across several sessions as part of "
+                "the HUD set. It only ever ADDS an early return that "
                 "single player already takes, and everything the notify does "
                 "for the third-person model happens before that point, so it "
                 "should not change how anyone else sees you. A cheap check "

@@ -298,7 +298,21 @@ def walk_properties(data, pos, names, limit=200):
         else:
             size = struct.unpack_from("<I", data, pos)[0]; pos += 4
         if ptype == T_BOOL:
-            # a bool carries its value in the info byte's top bit, no payload
+            # A bool has no PAYLOAD, but it does have the size byte: this
+            # game encodes one as four bytes -- compact(name), info, 0x00 --
+            # with info 0x53 for False and 0xD3 for True. Size code 5 says
+            # "a byte follows giving the size", and that byte is literally
+            # zero. The generic dispatch above has already consumed it, so
+            # nothing more is read here; measured on Engine.GameInfo's own
+            # defaults, where nine consecutive bools step exactly 4 bytes
+            # each and the list terminates where the package says it should.
+            #
+            # What this branch is FOR is skipping the array-index read
+            # below. On every other type bit 7 of `info` means "an array
+            # element index follows"; on a bool it is the VALUE, so reading
+            # an index here would consume a byte that is not there. That is
+            # the off-by-one this avoids, and it is why the branch cannot
+            # simply fall through with size == 0.
             out.append((names[name_i], info, pos))
             continue
         if info & 0x80:                       # array element index precedes it

@@ -27,8 +27,8 @@ _root = None
 #: options that re-assemble script -- was the one reading quietest of all.
 BADGE = {
     "verified": ("good", "verified in game"),
-    "applied": ("warn", "measured, not play-tested"),
-    "measured": ("warn", "measured, not play-tested"),
+    "applied": ("warn", "not play-tested"),
+    "measured": ("warn", "not play-tested"),
     "experimental": ("warn", "untested"),
     "untested": ("warn", "untested"),
     "broken": ("bad", "not working"),

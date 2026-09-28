@@ -94,6 +94,21 @@ SHADOW_GATE_STOCK = 0x30420001
 #: and the same test forced true: `ori $v0, $v0, 1`
 SHADOW_GATE_FORCED = 0x34420001
 
+#: THE REAL GATE (2026-09-24). The level render (0x0034F250) sets a stack flag
+#: from `GEngine.mSplitScreenMode` (+0x4E4) and, at 0x00351E7C, skips the whole
+#: "DynamicLightProjector" block when it is set -- the shadow-buffer pass AND
+#: the additive pass that paints projected light onto walls (the Garage
+#: screen's image, the blinds on the yellow wall). Measured in savestates: the
+#: block's timer runs in split screen but RenderShadowBuffer / AdditivePass
+#: count 0, against thousands in single player. The andi above was never the
+#: gate: 0x00447440 sets that bit right before the only call, so in split
+#: screen the function is simply never called. Twin of the weather skip at
+#: 0x003531D0, which `fx_weather` already clears; this word leaves the flag
+#: alone, so weather stays on its own card.
+PROJECTOR_BRANCH = 0x00351E7C
+PROJECTOR_BRANCH_STOCK = 0x14400424     # bnez $v0, 0x00352f10 (delay slot: nop)
+PROJECTOR_BRANCH_OPEN = 0x00000000      # nop
+
 #: the read the gate acts on, and the branch it feeds -- recorded so a later
 #: investigation does not have to find them again
 SHADOW_FLAG_READ = 0x00446EA4      # lbu $v0, 0x94($a0)
@@ -130,37 +145,22 @@ def card(prefix, group):
     from .model import BOOL, Setting
 
     return Setting(
-        prefix + "split_shadows", "Draw projected shadows in split screen",
-        BOOL, False, group, confidence="broken", touches="words",
-        enabled=False,
-        disabled_reason=(
-            "Play-tested 2026-09-15 and it does nothing. Watched in split "
-            "screen on Crespo Foundation, the Parking Garage (at the "
-            "projection screen, which is the clearest shadow in the game) and "
-            "Alcatraz -- three of the maps this card itself nominates -- with "
-            "no projected shadow on any of them. The disc was otherwise clean: "
-            "no script edits at all, and the word verified present at "
-            "0x00446ea8 reading 34420001 against a stock 30420001.\n\n"
-            "So the branch is not the only gate, which is exactly what the "
-            "caution allowed for: the pass was located from the renderer's own "
-            "profiler timers and the branch itself is certain, but what CLEARS "
-            "the flag in split screen was never pinned down. Forcing this one "
-            "test true is not enough. Finding the real writer of that flag is "
-            "the next step, not another guess at a branch."),
-        help="Nine missions and all three training maps place shadow-casting "
-             "light projectors, and none of them draws in split screen. The "
-             "shadows are not missing from the maps: the split-screen build of "
-             "every level is identical to the offline one apart from the two "
-             "teammates it does not spawn, and the projectors are present and "
-             "attached in a split-screen savestate. One branch at the very top "
-             "of the shadow pass returns before drawing anything. This forces "
-             "that test true. Best tested on Parade, Garage or Alcatraz -- see "
-             "the notes for the full map list.",
-        caution="Was: EXPERIMENT. The pass was located from the renderer's own "
-                "profiler timers and the branch is certain, but what clears "
-                "the flag in split screen is not yet pinned down, so this may "
-                "do nothing. It is one word on the disc, not a cheat cave, so "
-                "it reverts exactly and cannot outlive a level load. Expect a "
-                "frame-rate cost if it works: the shadow pass renders the "
-                "scene again from each light, and split screen would pay that "
-                "twice. Not play-tested.")
+        prefix + "split_shadows",
+        "Draw projectors in split screen (shadows, projected light)",
+        BOOL, False, group, confidence="experimental", touches="words",
+        help="Nine missions and all three training maps place light "
+             "projectors -- the Garage's projection screen, window-blind "
+             "shadows, shadow-casting lights -- and none of them draws in "
+             "split screen. The level render skips the whole projector block "
+             "whenever split screen is on (one branch, at 0x00351E7C). This "
+             "removes that branch, so each half draws its projectors as "
+             "single player does. Best tested at the Garage's projection "
+             "screen, or on Parade or Alcatraz.",
+        caution="Not yet played. Watch the frame rate: every projector in "
+                "view is drawn once per half, and each half also pays a small "
+                "fixed cost to enter and leave the projector block, even with "
+                "no projector in sight. If a map slows down, turn this off. "
+                "An earlier version of this card forced a different test "
+                "(0x00446EA8) and did nothing in play on 2026-09-15; that test "
+                "was never the gate, because in split screen the function it "
+                "guards is simply never called.")

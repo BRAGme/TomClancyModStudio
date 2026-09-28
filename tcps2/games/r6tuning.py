@@ -145,6 +145,11 @@ def ini_updates(p: str, v: dict) -> dict:
     """
     out = {}
 
+    # The key is `<prefix>skill` -- `gr2_skill` and `graw_skill`, which is
+    # what those two profiles call the card. Rainbow Six 3 names its card
+    # `terro_skill` and does NOT call this function; it writes the same
+    # three multipliers itself in `r6_3.build_data`. So if R6 3 is ever
+    # wired up here, this line would silently do nothing for it.
     skill = v.get(p + "skill", "stock")
     if skill != "stock":
         rec, vet, eli = SKILL_SETS[skill]

@@ -495,7 +495,7 @@ def cards(pid, prefix, group):
                         "rifles. Every mode may add marksmen; none removes the "
                         "ones the disc already has."),
         Setting(prefix + "enemy_aim", "How well they shoot", INT, 0, group,
-                minimum=0, maximum=100, unit="/100",
+                minimum=0, maximum=99, unit="/100",
                 confidence="measured", touches="data",
                 help="Each archetype carries its own marksmanship, spread over "
                      "Assault, SSniper and Observation, plus a RndVariation "
@@ -503,7 +503,15 @@ def cards(pid, prefix, group):
                      "and tightens the scatter as it rises. Leave it at 0 to "
                      "keep each archetype's own numbers -- the stock spread "
                      "runs from a rookie who cannot shoot at all up to 100.",
-                caution="One template on each disc writes these fields one "
+                caution="The scale stops at 99 on purpose. Almost every "
+                        "enemy writes this field two characters wide and a "
+                        "three-character number does not fit, so asking for "
+                        "100 left the aim itself untouched while still "
+                        "tightening the scatter -- which made them WORSE "
+                        "shots than 99. Measured on Rainbow Six 3, "
+                        "2026-09-25: at 99, 117 of 118 enemy types move; at "
+                        "100, none of them did.\n\n"
+                        "One template on each disc writes these fields one "
                         "character wide. It is the deliberate cannot-shoot "
                         "rookie, and it is left alone rather than being given "
                         "a single-digit fraction of what you asked for."),

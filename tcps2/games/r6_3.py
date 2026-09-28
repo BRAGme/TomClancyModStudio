@@ -30,13 +30,13 @@ import struct
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile,
                      Overlay, Setting, WordEdit, li, S0, V0, V1)
 from . import r6tuning, xboxbuild
-from .. import (rseaicover, rsecanon, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
+from .. import (rseaicover, rsecanon, rseclark, rsedebrief, rsefragwarn, rsechatter, rsedraw, rsekits, rseloadout,
                 rsedeadpath, rsefov, rsehudteam, rsemandown, rsemuzzle,
                 rsesplice, rsesquad, rseswitch,
                 rserescue, rseteam,
                 rseviewmodel, rserpg, rseshadow, rsesidearm,
                 rsescope,
-                rsewheel)
+                rseorders, rsewheel)
 
 BASE = 0x00100000
 NOP = 0x00000000
@@ -269,14 +269,25 @@ HUD_STOCK[rsewheel.LABEL_TEXT_HOOK] = rsewheel.LABEL_TEXT_STOCK
 HUD_STOCK[rsewheel.LABEL_UNARM_HOOK] = rsewheel.LABEL_UNARM_STOCK
 for _i in range(96, 113):
     HUD_STOCK[rsedeadpath.CAVE + 4 * _i] = rsedeadpath.STOCK_WORDS[_i]
-# ...and the split-screen team panel's: six hooks, dead-path words 113-225.
+# ...and the split-screen team panel's: six hooks, dead-path words 113-238
+# (160-169 held the first names cave and are stock again).
 for _va, _stock, _new, _note in rsehudteam.HOOKS:
     HUD_STOCK[_va] = _stock
-for _i in range(113, 226):
+for _i in range(113, 239):
     HUD_STOCK[rsedeadpath.CAVE + 4 * _i] = rsedeadpath.STOCK_WORDS[_i]
 STOCK.update(HUD_STOCK)
 # The third-person flash test split_muzzle corrects -- see rsemuzzle.
 STOCK[rsemuzzle.THIRD_PERSON_TEST] = rsemuzzle.TP_STOCK
+# The game-mode test in the lookup Clark's voice lines go through -- see
+# rseclark.
+for _va, _stock, _new, _note in rseclark.EDITS:
+    STOCK[_va] = _stock
+# The debriefing's operative rows (rsedebrief) and the team panel's speaking
+# flash, whose cave sits in the padding that ends the code section.
+for _va, _stock, _new, _note in rsedebrief.EDITS:
+    STOCK[_va] = _stock
+for _va, _word, _stock, _note in rsehudteam.speak_words():
+    STOCK[_va] = _stock
 # The split-screen aim branch ss_accuracy removes: beqz $v0 on the flag at
 # 0x006546F4, which is 1 in split screen and 0 in single player.
 SS_AIM_BRANCH = 0x003F3D90
@@ -905,6 +916,7 @@ def _build_settings():
         rsewheel.card("", "Split Screen"),
         rsewheel.cycle_card("", "Split Screen"),
         rsewheel.label_card("", "Split Screen"),
+        rseorders.card("", "Split Screen"),
         rsescope.card("", "Split Screen"),
         rsedraw.card("", "Split Screen"),
         rseviewmodel.card("", "Split Screen"),
@@ -914,6 +926,7 @@ def _build_settings():
         rseswitch.card("", "Weapons"),
         rsesquad.card("", "Split Screen"),
         rsehudteam.card("", "Split Screen"),
+        rseclark.card("", "Split Screen"),
         rseteam.card("", "Split Screen"),
         rserescue.card("", "Split Screen"),
         rseshadow.card("", "Split Screen"),
@@ -1088,6 +1101,9 @@ def build_edits(v: dict) -> list:
     if v.get("ss_accuracy"):
         w(SS_AIM_BRANCH, SS_AIM_ALWAYS,
           "split screen: enemies aim at their target, not along their head")
+    if v.get("ss_clark"):
+        for va, value, _stock, note in rseclark.words():
+            w(va, value, note)
     if v.get("split_muzzle"):
         # The overlay half of the muzzle fix: without it player 2 gets the
         # third-person flash as well as the first-person one, on his own
@@ -1130,6 +1146,11 @@ def build_edits(v: dict) -> list:
             w(va, value, note)
     if team:
         for va, value, _stock, note in rsehudteam.words(freed=True):
+            w(va, value, note)
+        for va, value, _stock, note in rsehudteam.speak_words():
+            w(va, value, note)
+    if v.get("split_squad"):
+        for va, value, _stock, note in rsedebrief.words():
             w(va, value, note)
     if labels:
         for va, value, _stock, note in rsewheel.label_words(freed=True):
@@ -1451,6 +1472,12 @@ def build_data(v: dict) -> list:
         out.append(FileEdit("split_cycle", r"/COMMON(OFF|_SS)?\.LIN$", "",
                             {"enable": True},
                             "split screen: a tap of L1 toggles two weapons"))
+    if v.get("split_team_orders"):
+        # COMMON_SS.LIN only: it rewrites a single-player arm that this copy
+        # never reaches, which the other two copies do.
+        out.append(FileEdit("split_team_orders", r"/COMMON_SS\.LIN$", "",
+                            {"enable": True},
+                            "split screen: the team order icon and wheel"))
     return out
 
 

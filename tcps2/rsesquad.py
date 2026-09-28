@@ -92,6 +92,46 @@ Both edits keep their token widths, so `ScriptSize` cannot move. They are
 written to `COMMON_SS.LIN` only -- the package split screen loads -- and both
 sit where only split screen reaches anyway.
 
+When someone dies
+-----------------
+
+Two split-screen branches were written for a team of exactly two humans.
+
+`R6MObjAcceptableRainbowLosses.PawnKilled` (block `0x1d699b`, mem 1727)
+fails the mission when a player dies. Single player fails at once (`0x0574`).
+Split screen instead asks, at `0x0434`, whether `m_Team[0]` and `m_Team[1]`
+are both dead or None, and otherwise announces "has been incapacitated"
+(`0x0528`) and returns. Retail's `m_Team[1]` is player 2. Here it is an AI,
+so while the AI lives the mission never fails. The test now reads each
+player's own pawn: `R6PlayerController(Killed.Level.m_playerList[k]).m_pawn`
+for k = 0 and 1, the list and cast the function's multiplayer loop already
+uses (`0x05e8`).
+
+`R6RainbowTeam.TeamMemberDead` (block `0x1409b8`, mem 1062) opens with
+`if (Level.Game.m_bIsSplitScreen) return;`. In split screen a dead AI therefore
+stays in the counted squad. The ladder code waits for it for good:
+`AllMembersAreOnTheSameSideOfTheLadder` and `VerifyTeamLadderClimbing` count
+it, and the next AI's pace member is still the corpse. `m_bTeamIsClimbingLadder`
+never clears, and `R6PlayerController.CanIssueTeamOrder` refuses both players
+while it is set. The gate now also asks `DeadPawn.m_bIsPlayer`. A player's
+death still returns: single player's leader path would make an AI the leader,
+and its tail would write player 2 over an AI's slot. An AI's death gets single
+player's bookkeeping, which clears the ladder flag once no living AI is on the
+ladder and moves the dead member out of the count. Its writes stop below
+`m_iMemberCount + m_iMembersLost`, which is where player 2 sits, so he is never
+moved. That is also why the failure test finds the players through their
+controllers: after an AI dies, `m_Team[m_iMemberCount]` is no longer player 2,
+and `R6Game` has no import for `m_iMembersLost`.
+
+Both are region rewrites of exactly the stock disk and memory length. Every
+statement outside them keeps its offset. Each function still references
+exactly the objects and names it did, so its load asks for nothing new: the
+new tests use only references the function already holds, and the dead bytes
+after `PawnKilled`'s new jump keep `m_Team`, which only the old test used.
+`TeamMemberDead` gives up its first `bShowLog` debug print to make room.
+Everything that print referenced is used again later in the function, and
+`bShowLog` reads False on the team in every savestate.
+
 What is NOT established
 -----------------------
 
@@ -203,11 +243,22 @@ EX_NOTHING = 0x0B
 #: jumps straight past it to 0x04d1 exactly as the flag test did). The call to
 #: SetSavedData() at 0x06e1 jumps into it::
 #:
-#:     SetSavedData()
-#:     if (m_bRescureRainbow) { m_iMemberCount = 1; return; }   // Trieste as shipped
-#:     if (m_iMemberCount > 1 && m_Team[1].m_bIsPlayer)
+#:     if (m_bRescureRainbow) m_iMemberCount = 1;               // Trieste as shipped
+#:     else if (m_iMemberCount > 1 && m_Team[1].m_bIsPlayer)
 #:         { SendMemberToEnd(1); m_iMemberCount--; }
+#:     PC.SetSavedData()
 #:     return
+#:
+#: SetSavedData goes LAST, after player 2 has moved. It is the native
+#: (0x003B6160) that carries each member's health, stats and ammunition from
+#: an A level into its B level, and in split screen it looks at team slots 0
+#: and 1 only, reading each as a player or an AI record by who sits there --
+#: as does its twin GetSavedData, which wrote them at the end of part A. Part
+#: A ends as [P1, AI..., P2], so slot 1 was saved as an AI; restoring BEFORE
+#: the move put player 2 in slot 1 and read that AI record as his inventory.
+#: He started Alpine Village B with an empty AK-47 and an EMPTY sidearm slot.
+#: After the move both sides see the same layout: player 1 and the first AI
+#: carry over, and player 2 starts a B level with his normal loadout.
 #:
 #: Every token is lifted from this package; the balance is dead filler, so
 #: both regions keep their disk and memory lengths and ScriptSize is 1775.
@@ -216,6 +267,24 @@ LAYOUT_CALL_NEW = bytes.fromhex("06230400710c0b0b0b0b040b")
 LAYOUT_CODE = bytes.fromhex(
     "07d104821900710c0600042d01cb04181d00811919018f05000401a6080004612f214a04161616e7701f322320526573637572655465616d5374617274696e67506f696e7400395600631416161b40031900631405000c018c1607d104771a2501282a160f1a2601281a25191a25012805000801e1030f1a2c0201281a26191a25012805000801e103")
 LAYOUT_CODE_NEW = bytes.fromhex(
+    "06d104"                                             # 0x0420 Jump -> 0x04d1
+    "073f041900710c0600042d01cb04"                       # 0x0423 if (m_bRescureRainbow)
+    "0f011626"                                           # 0x0435   m_iMemberCount = 1
+    "066e04"                                             # 0x043c   goto 0x046e
+    "076e04829701162616181200191a26010a0600042d01b716"   # 0x043f if (count > 1 && m_Team[1].m_bIsPlayer)
+    "1b66102616"                                         # 0x0460   SendMemberToEnd(1)
+    "a6011616"                                           # 0x0467   m_iMemberCount--
+    "19004a03030000683216"                               # 0x046e PC.SetSavedData()
+    "0b"                                                 # 0x047a (nothing: see below)
+    "040b"                                               # 0x047b return
+    "0016" + "00710c" * 7 + "0b" * 44)
+#: The EX_Nothing between the call and the return is there so this block
+#: never contains LAYOUT_CALL's twelve bytes (`SetSavedData(); return`),
+#: which is how the call site at 0x06e1 is found -- two matches and the edit
+#: rightly refuses to guess.
+#: The previous version of LAYOUT_CODE_NEW, which restored before the move.
+#: Never written again; kept so a test can prove the order changed.
+LAYOUT_CODE_V1 = bytes.fromhex(
     "06d10419004a03030000683216074a041900710c0600042d01cb040f011626040b077904829701162616181200191a26010a0600042d01b7161b66102616a6011616040b"
     "0016" + "00710c" * 7 + "0b" * 46)
 KNOWN_LAYOUT_OFFSETS = (0x1475DD, 0x1473BF)
@@ -227,6 +296,52 @@ KNOWN_LAYOUT_OFFSETS = (0x1475DD, 0x1473BF)
 ORDER_AIM = bytes.fromhex("1b7901192e0519014f01050004019405000c017a0e16")
 ORDER_AIM_NEW = bytes.fromhex("1b7901192e051900580205000401b305000c017a0e16")
 KNOWN_ORDER_OFFSET = 0x145CBF
+
+#: `TeamMemberDead` mem 0x0000-0x00a7, see "When someone dies". The four
+#: statements after the gate move down whole. The debug print's bytes become
+#: a jump and dead filler.
+_DEAD_BODY = bytes.fromhex(
+    "1b7a1116"                                  # UpdateEscortList()
+    "1b540f16"                                  # UpdateTeamGadgetStatus()
+    "0f004f0f393a19004a0a050001012c"            # iMemberId = DeadPawn.m_iID
+    "0f1919004a0a050004019405000401a52a")       # DeadPawn.Controller.Enemy = None
+DEAD_GATE = (
+    bytes.fromhex("071d00" "1919018f05000401a60600042d01ed01" "040b")
+    + _DEAD_BODY
+    + bytes.fromhex(
+        "07a7002d0192e7707070703956171f20205465616d4d656d62657244656164282920"
+        "646561645061776e3d00163956004a0a161f20694d656d62657249643d0016395300"
+        "4f0f1616"))
+DEAD_GATE_NEW = (
+    bytes.fromhex("073100" "82"                 # if (Level.Game.m_bIsSplitScreen
+                  "1919018f05000401a60600042d01ed01"
+                  "181000" "19004a0a0600042d01b7" "16"  # && DeadPawn.m_bIsPlayer)
+                  "040b")                       #     return;
+    + _DEAD_BODY
+    + bytes.fromhex("06a700" "004a0a" + "0b" * 51))
+KNOWN_DEAD_GATE_OFFSET = 0x1409BC
+
+#: `R6MObjAcceptableRainbowLosses.PawnKilled` mem 0x0434-0x050a: the jump to
+#: "has been incapacitated" (0x0528) unless both players are down.
+WIPED_TEST = bytes.fromhex(
+    "0728058284721a251919001d05000401d70105001001b62a1618470082771a251919001d"
+    "05000401d70105001001b62a1618260081191a251919001d05000401d70105001001b606"
+    "00041b091616161618680084721a261919001d05000401d70105001001b62a1618470082"
+    "771a261919001d05000401d70105001001b62a1618260081191a261919001d05000401d7"
+    "0105001001b60600041b091616161616")
+WIPED_TEST_NEW = bytes.fromhex(
+    "072805" "82"
+    # !R6PlayerController(Killed.Level.m_playerList[0]).m_pawn.IsAlive()
+    "8119192e8810" "25" "1919000b050004018f05000001a0" "05000401e901"
+    "0600041b091616"
+    "183400"
+    # && !R6PlayerController(Killed.Level.m_playerList[1]).m_pawn.IsAlive()
+    "8119192e8810" "26" "1919000b050004018f05000001a0" "05000401e901"
+    "0600041b091616"
+    "16"
+    "060a05"                                    # -> 0x050a, over the dead bytes
+    + "001d" * 5 + "01d701" "01b6" + "0b" * 66)
+KNOWN_WIPED_OFFSET = 0x1D6CE2
 
 #: `CreateTeamMember`'s count maintenance, see the notes above.
 COUNT_SIG = bytes([
@@ -366,22 +481,41 @@ def _skins_site(plain: bytes) -> int:
     return found[0] + SKINS_OPERAND
 
 
-def _pair_site(plain: bytes, stock: bytes, new: bytes, what: str):
-    """(offset, isNew) of one of two same-length forms, unique in the file."""
+def _pair_site(plain: bytes, stock: bytes, new: bytes, what: str,
+               older=()):
+    """(offset, isNew) of one of two same-length forms, unique in the file.
+
+    `older` are earlier versions of `new`. They are found like the other two
+    and reported as not new, so an apply rewrites them to the current form
+    and a revert puts back stock -- a file edited by a previous version of
+    this option is upgraded, never refused and never half-understood."""
     a, b = _find_all(plain, stock), _find_all(plain, new)
-    if len(a) + len(b) != 1:
-        raise SquadError("expected exactly 1 %s, found %d" % (what, len(a) + len(b)))
-    return (a or b)[0], bool(b)
+    c = [x for form in older for x in _find_all(plain, form)]
+    if len(a) + len(b) + len(c) != 1:
+        raise SquadError("expected exactly 1 %s, found %d"
+                         % (what, len(a) + len(b) + len(c)))
+    return (a or b or c)[0], bool(b)
 
 
 def keeps_player2_out(plain: bytes) -> bool:
     """True if split screen moves player 2 out of the AI squad after skins."""
     return (_pair_site(plain, LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call")[1]
-            and _pair_site(plain, LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block")[1])
+            and _pair_site(plain, LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block",
+                           (LAYOUT_CODE_V1,))[1])
 
 
 def orders_from_requester(plain: bytes) -> bool:
     return _pair_site(plain, ORDER_AIM, ORDER_AIM_NEW, "order aim")[1]
+
+
+def buries_dead_ai(plain: bytes) -> bool:
+    """True if a dead AI leaves the counted squad in split screen."""
+    return _pair_site(plain, DEAD_GATE, DEAD_GATE_NEW, "TeamMemberDead gate")[1]
+
+
+def fails_on_both_players(plain: bytes) -> bool:
+    """True if split screen fails the mission when both players are down."""
+    return _pair_site(plain, WIPED_TEST, WIPED_TEST_NEW, "wiped-out test")[1]
 
 
 def skins_everyone(plain: bytes) -> bool:
@@ -463,12 +597,18 @@ def apply(plain: bytes, enable: bool = True, canon: bool = False):
         out[lat] = lwant
         changed += 1
 
-    for stock, new, what in ((LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call"),
-                             (LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block"),
-                             (ORDER_AIM, ORDER_AIM_NEW, "order aim")):
-        at_pair, is_new = _pair_site(plain, stock, new, what)
-        if is_new != enable:
-            out[at_pair:at_pair + len(stock)] = new if enable else stock
+    for stock, new, what, older in (
+            (LAYOUT_CALL, LAYOUT_CALL_NEW, "SetSavedData call", ()),
+            (LAYOUT_CODE, LAYOUT_CODE_NEW, "cover-spot block", (LAYOUT_CODE_V1,)),
+            (ORDER_AIM, ORDER_AIM_NEW, "order aim", ()),
+            (DEAD_GATE, DEAD_GATE_NEW, "TeamMemberDead gate", ()),
+            (WIPED_TEST, WIPED_TEST_NEW, "wiped-out test", ())):
+        at_pair, _is_new = _pair_site(plain, stock, new, what, older)
+        # Compared with the form wanted, not with "is it new": an older
+        # version is neither stock nor new and has to be rewritten either way.
+        want_bytes = new if enable else stock
+        if plain[at_pair:at_pair + len(stock)] != want_bytes:
+            out[at_pair:at_pair + len(stock)] = want_bytes
             changed += 1
 
     for who in "LW":
@@ -505,9 +645,13 @@ CAUTION = (
     "waited for him. He is now kept outside it, as retail split screen does, "
     "so the AI follow player 1 in single file; and player 2's own 'move "
     "here' uses his own aim.\n\n"
-    "Known limits: if both players die while an AI lives, the mission may "
-    "not end (a mission rule checks team slot 1 for the other player), and "
-    "if player 1 dies the AI keep following his position.\n\n"
+    "Deaths (not yet watched in game): the mission fails once both players "
+    "are down, whether or not an AI still lives -- the split-screen rule "
+    "looked at team slot 1, which is now an AI. A dead AI now leaves the "
+    "squad as in single player; before, it stayed counted, and a death on a "
+    "ladder left the team 'CLIMBING LADDER' and refusing orders from both "
+    "players. Known limit: if player 1 dies the AI keep following his "
+    "position.\n\n"
     "Why it works where six earlier attempts did not:\n\n"
     "Every one of them wedged the load for the same reason, whatever code it "
     "patched: a split-screen level file is a RECORDING of what one boot read, "

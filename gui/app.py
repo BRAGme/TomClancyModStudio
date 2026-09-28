@@ -25,14 +25,14 @@ from tcps2.detect import identify, look, preview_detection  # noqa: E402
 from tcps2.games import PROFILES  # noqa: E402
 from tcps2.model import BOOL, INT  # noqa: E402
 
-from . import dialog, discorddialog, presence, skins, theme  # noqa: E402
+from . import dialog, discorddialog, skins, theme  # noqa: E402
 from .presets import PRESETS  # noqa: E402
 from .widgets import (ActionButton, Chrome, NavItem, ProgressBar,
                       ScrollArea, SettingCard, nav_style)  # noqa: E402
 
 APP_NAME = "Tom Clancy PS2 Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "5.9"
+VERSION = "1.0"
 NOTES_TAB = "About this disc"
 
 # A square mark -- Jungle Storm's reticle ring, Lockdown's stacked logo -- is
@@ -94,8 +94,6 @@ class App(tk.Tk):
         self._pumping = False
         self._recent = []
         self._last_size = (0, 0)
-        #: None until Discord presence is switched on; see gui/presence.py
-        self.presence = None
         #: A folder of loose archives the game reads instead of the disc's,
         #: or None for the ordinary in-place mode. Remembered per disc: the
         #: two can hold different edits at once and must not be confused.
@@ -104,7 +102,6 @@ class App(tk.Tk):
         self._build()
         self._load_prefs()
         self.protocol("WM_DELETE_WINDOW", self._quit)
-        self._start_presence()
         self.after(120, self._pump)
 
     # -- construction ------------------------------------------------------
@@ -658,8 +655,15 @@ class App(tk.Tk):
         if getattr(self.detection, "preview", False):
             on = False
         has = bool(self.profile and self.profile.settings)
-        crc_ok = bool(self.detection and self.detection.crc_matches)
-        self.apply_btn.set_enabled(on and has and crc_ok)
+        # Not gated on the CRC any more. It used to be, and on a different
+        # pressing that switched off the data edits too -- which never needed
+        # protecting, because they find their bytes by searching the game's own
+        # packages rather than by address. What needs gating is the code half,
+        # and that is now done per option in `_changed`, which can say WHICH
+        # option and why. A disc with nothing left to offer still cannot write:
+        # every code option is disabled and the engine refuses the rest.
+        self.apply_btn.set_enabled(on and has and bool(self.detection
+                                                       and self.detection.ok))
         self.cheat_btn.set_enabled(on and has)
         from tcps2 import hostroot
         self.root_btn.set_enabled(on and has and hostroot.supported(self.profile))
@@ -720,7 +724,6 @@ class App(tk.Tk):
 
     def _show_group(self, name):
         self.active_group = name
-        self._publish()
         for n, item in self.nav_items.items():
             item.select(n == name)
         where = (os.path.basename(self.detection.path)
@@ -744,13 +747,15 @@ class App(tk.Tk):
             return
 
         self.cards = {}
-        for s in self.profile.settings:
-            if s.group != name:
-                continue
-            card = SettingCard(body, s, self.vars[s.key], self._changed,
-                               images=self._mission_art(s))
-            card.pack(fill="x", padx=theme.px(4), pady=theme.px(6))
-            self.cards[s.key] = card
+        order, depths = self._nesting(name)
+        by_key = {s.key: s for s in self.profile.settings}
+        for key in order:
+            s = by_key[key]
+            card = SettingCard(body, s, self.vars[key], self._changed,
+                               images=self._mission_art(s),
+                               depth=depths.get(key, 0))
+            card.nest_pack()
+            self.cards[key] = card
         if not self.cards:
             tk.Label(body, text="Nothing to configure here yet.", bg=theme.P.bg,
                      fg=theme.P.faint, font=theme.F("body", 9)
@@ -770,11 +775,31 @@ class App(tk.Tk):
                     ("Cheat file", det.profile.pcsx2_crc + ".pnach"),
                     ("Backup", "—")]
         else:
+            rev = getattr(det, "rev", None)
             rows = [("File", det.path), ("Boot", det.boot),
                     ("Serial", det.profile.serial), ("Volume id", det.volume),
                     ("Disc CRC", det.crc + ("" if det.crc_matches else "  (unexpected)")),
                     ("Cheat file", det.profile.pcsx2_crc + ".pnach"),
                     ("Backup", "yes" if det.has_backup else "not taken yet")]
+            if rev is not None and det.profile.overlays:
+                name = det.profile.overlays[0].name
+                if rev.known:
+                    rows.insert(5, (name, "the image this profile was built for"))
+                elif rev.relocation is not None:
+                    r, c = rev.relocation, rev.capability
+                    d = r.uniform_delta
+                    rows.insert(5, (name, "a different build \u2014 %d of %d "
+                                          "addresses located%s"
+                                          % (len(r.map), r.total,
+                                             (", all %+d bytes" % d) if d else
+                                             ", by %d different offsets"
+                                             % len(r.deltas))))
+                    rows.insert(6, ("Options", "%d work, %d switched off, %d "
+                                              "unaffected (game data only)"
+                                              % (len(c.code_ok), len(c.disabled),
+                                                 len(c.data_only))))
+                else:
+                    rows.insert(5, (name, "not a build this tool can patch"))
         for k, v in rows:
             r = tk.Frame(card.body, bg=theme.P.panel)
             r.pack(fill="x", pady=theme.px(2))
@@ -800,19 +825,99 @@ class App(tk.Tk):
                 out.append(img)
         return out
 
+    def _nesting(self, group):
+        """([key, ...] in render order, {key: depth}) for one group.
+
+        A card nests under another when it needs that one and nothing else
+        and the two live in the same group. Anything with two prerequisites
+        stays flat, because it has no single owner to sit under, and so does
+        anything pointing outside its own group.
+
+        The order is a walk of that tree rather than the declaration order,
+        so a child follows its parent even when it happens to be declared
+        first -- otherwise the pair the nesting exists to join would still
+        be rendered apart. Roots keep their declared order, and so do the
+        children of any one parent, so nothing jumps further than it must.
+        """
+        # Options shipped disabled are hidden outright as of 1.0: a card
+        # nobody can switch on is noise in a release build. The reason
+        # each one is off is kept in the source, where it stops the next
+        # person re-deriving the same dead end.
+        keys = [s.key for s in self.profile.settings
+                if s.group == group and s.enabled]
+        here = set(keys)
+        parent = {}
+        for s in self.profile.settings:
+            if s.group != group:
+                continue
+            # A card's owner is the ONE prerequisite it needs switched ON.
+            # Requirements that something be OFF are exclusions, not owners:
+            # `blast_puffs` needs `impact_puffs` off, and drawing it as a
+            # child of the thing that switches it off would read as the
+            # opposite of the truth. `ff_trigger` needs `ff_retaliate` on AND
+            # `ff_fail_mission` off, so it belongs under the first and is
+            # merely barred by the second.
+            owners = []
+            for key, want in (s.requires or {}).items():
+                if key not in here or key == s.key:
+                    continue
+                if not isinstance(want, (list, tuple, set, frozenset)):
+                    want = [want]
+                if any(w not in (False, None, 0, "", "off", "stock")
+                       for w in want):
+                    owners.append(key)
+            if len(owners) == 1:
+                parent[s.key] = owners[0]
+        # A cycle would hang the walk; drop the whole chain if one exists.
+        for key in list(parent):
+            seen, cur = {key}, parent.get(key)
+            while cur is not None:
+                if cur in seen:
+                    parent.pop(key, None)
+                    break
+                seen.add(cur)
+                cur = parent.get(cur)
+        kids = {}
+        for key in keys:
+            if key in parent:
+                kids.setdefault(parent[key], []).append(key)
+        order, depth = [], {}
+
+        def emit(key, n):
+            order.append(key)
+            depth[key] = n
+            for child in kids.get(key, ()):
+                emit(child, n + 1)
+
+        for key in keys:
+            if key not in parent:
+                emit(key, 0)
+        # Anything the walk missed -- there should be none -- still renders.
+        for key in keys:
+            if key not in depth:
+                order.append(key)
+                depth[key] = 0
+        return order, depth
+
     def _values(self):
         return {k: v.get() for k, v in self.vars.items()}
 
     def _changed(self):
         if not self.profile:
             return
-        self._publish()
         vals = self._values()
+        rev = getattr(self.detection, "rev", None)
         for key, card in self.cards.items():
             s = self.profile.setting(key)
             missing = self.profile.unmet(key, vals)
             if not s.enabled:
                 card.set_enabled(False)
+            elif rev is not None and not rev.allows(key):
+                # Named, not generic. "Options that patch code are unsafe here"
+                # told the user nothing they could act on; the address that could
+                # not be found is the fact that explains it.
+                card.set_enabled(False, "not on this pressing of the disc \u2014 "
+                                        + rev.why(key))
             elif missing:
                 card.set_enabled(False, "needs " + " and ".join(missing))
             else:
@@ -837,65 +942,25 @@ class App(tk.Tk):
     # -- actions -----------------------------------------------------------
     # -- Discord -----------------------------------------------------------
 
-    def _start_presence(self):
-        """Bring the presence up if it is switched on. Failure is silent.
-
-        There is deliberately no message when this does not work: Discord not
-        being installed is the common case, not a fault, and a modal about it
-        on every launch would be worse than the feature is good.
-        """
-        prefs = presence.load()
-        if not prefs["enabled"] or not prefs["app_id"]:
-            return
-        try:
-            self.presence = presence.Presence(prefs["app_id"])
-            self.presence.start()
-            self._publish()
-        except Exception:                         # noqa: BLE001
-            self.presence = None
-
     def discord_setup(self):
-        chosen = discorddialog.configure(self, self.presence)
-        if chosen is None:
-            return
-        enabled, app_id = chosen
-        # Restart rather than mutate: the application id is fixed at handshake,
-        # so changing it means a new connection either way.
-        if self.presence is not None:
-            self.presence.close()
-            self.presence = None
-        if enabled and app_id:
-            self.presence = presence.Presence(app_id)
-            self.presence.start()
-            self._publish()
-            self._say("Discord presence on. It connects when Discord is running.")
-        else:
-            self._say("Discord presence off.")
+        """Switch on presence for the GAME, not for this window.
 
-    def _publish(self):
-        """Say what is on screen, in the two lines Discord gives us."""
-        if self.presence is None:
-            return
-        if self.profile is None:
-            self.presence.update(details="No disc loaded", state="Idle",
-                                 image="idle", image_text=APP_NAME)
-            return
-        # Count controls moved off stock rather than edits built. This runs on
-        # every widget change, a slider drag included, so it has to stay cheap.
-        defaults = dict(self.profile.defaults())
-        changed = sum(1 for k, v in self._values().items()
-                      if k in defaults and v != defaults[k])
-        state = self.active_group or "Browsing"
-        if changed:
-            state += "  -  %d change%s" % (changed, "" if changed == 1 else "s")
-        self.presence.update(details="Modding " + self.profile.title,
-                             state=state, image=self.profile.id,
-                             image_text="%s  (%s)" % (self.profile.title,
-                                                      self.profile.serial))
+        What used to live here published what you were editing, and it
+        needed a Discord application id of the user's own before it showed
+        anything at all. Both halves were wrong: nobody has the patcher
+        open while they are playing, which is the only time a presence is
+        worth having, and the registration step left the feature silently
+        dead for almost everyone who tried it.
+
+        The sheet now starts `drp.exe`, which keeps running after this
+        window closes and reports the mission, the operative and the
+        objectives out of the running emulator. See gui/gamepresence.py.
+        """
+        note = discorddialog.configure(self)
+        if note:
+            self._say(note)
 
     def _quit(self):
-        if self.presence is not None:
-            self.presence.close()
         self.destroy()
 
     def _guard(self):

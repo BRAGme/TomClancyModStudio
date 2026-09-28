@@ -13,3 +13,9 @@ research/ui_textures/
 
 # Game artwork for a private build only -- never published
 private-art/
+
+# Point-in-time copies made before a risky edit. They are working
+# notes, not source, and one of them nearly went into the 1.0 commit.
+*.before-*
+*.bak-*
+*.stale-*

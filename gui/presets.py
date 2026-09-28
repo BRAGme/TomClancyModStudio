@@ -62,9 +62,14 @@ FX_OFF = {k: False for k in FX_ON}
 HUD_OFF = {k: False for k in HUD_ON}
 
 
-def _wave(enable, gate, total, size, trigger, hunt=True, mapwide=True):
+def _wave(enable, gate, total, size, trigger, hunt=None, mapwide=True):
+    # `hunt` is vestigial: wave_hunt was withdrawn on 2026-09-26 as measured
+    # inert -- it set the hunt flag on the wave actor and the only code that
+    # reads that flag reads it off the spawn POINT. The parameter stays so
+    # the call sites below still read as they did, and is not emitted; a
+    # preset carrying a withdrawn option is refused by the suite.
     return {"wave_enable": enable, "wave_gate": gate, "wave_total": total,
-            "wave_size": size, "wave_trigger": trigger, "wave_hunt": hunt,
+            "wave_size": size, "wave_trigger": trigger,
             "wave_mapwide": mapwide}
 
 

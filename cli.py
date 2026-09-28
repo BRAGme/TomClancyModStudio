@@ -96,6 +96,16 @@ def cmd_info(args):
     print("  disc CRC    %s%s" % (det.crc, "" if det.crc_matches else "   (UNEXPECTED)"))
     print("  cheat file  %s.pnach" % det.profile.pcsx2_crc)
     print("  backup      %s" % ("present" if det.has_backup else "not taken yet"))
+    rev = getattr(det, "rev", None)
+    if rev is not None and not rev.known and det.profile.overlays:
+        c = rev.capability
+        print("  %-10s  %s" % (det.profile.overlays[0].name,
+                               "a different build than this profile was made for"))
+        if c is not None:
+            print("  options     %d work, %d switched off, %d unaffected"
+                  % (len(c.code_ok), len(c.disabled), len(c.data_only)))
+            for key in sorted(c.disabled):
+                print("     off: %-26s %s" % (key, c.disabled[key]))
     if det.message:
         print("  note        %s" % det.message)
     if det.profile.notes:
@@ -207,6 +217,26 @@ def cmd_apply(args):
     det = _need(args.iso)
     vals = _values(det.profile, args)
     root = getattr(args, "data_root", None)
+    rev = getattr(det, "rev", None)
+    if rev is not None and not rev.known:
+        # The window greys these out; the command line never saw them at all and
+        # went straight to engine.apply. The engine still refuses to write a plan
+        # it cannot place, but being told which options were dropped, before
+        # anything is written, is the difference between a warning and a mystery.
+        print("this is not the pressing this profile was built for:")
+        print("  %s" % rev.note())
+        asked = det.profile.effective(vals)
+        blocked = [s.label for s in det.profile.settings
+                   if not rev.allows(s.key)
+                   and asked.get(s.key) not in (None, False, 0, "stock",
+                                                s.default)]
+        if blocked:
+            print("  these were asked for and cannot run here: %s"
+                  % ", ".join(sorted(blocked)))
+            return 2
+        for s in det.profile.settings:
+            if not rev.allows(s.key):
+                vals[s.key] = s.default
     r = engine.apply(args.iso, det.profile, vals, data_root=root,
                      progress=lambda m: print("  " + m))
     print("%d of %d words verified by reading the disc back"
@@ -240,6 +270,9 @@ def cmd_cheat(args):
     det = _need(args.iso)
     vals = _values(det.profile, args)
     words = det.profile.build_pnach(vals) if det.profile.build_pnach else []
+    words, refused = engine.relocated_pnach(args.iso, det.profile, words)
+    for why in refused:
+        print("  skipped: %s" % why)
     if not words:
         print("nothing selected needs a cheat file")
         return 0

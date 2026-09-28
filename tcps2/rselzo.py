@@ -302,6 +302,220 @@ def lzo1x_compress(src: bytes, chain_depth=512) -> bytes:
     return bytes(out)
 
 
+def _lit_token_cost(run):
+    """Token bytes for a literal run of `run` (>= 4) that follows a match."""
+    if run <= 18:
+        return 1
+    return 2 + (run - 19) // 255
+
+
+def lzo1x_compress_optimal(src: bytes, chain_depth=256, max_len=1024) -> bytes:
+    """An LZO1X stream from an optimal parse, for fitting a retail slot.
+
+    The retail files were packed by a stronger encoder than the greedy one
+    above (Ghost Recon's guns come out 17-23 bytes bigger through it). This
+    one prices every choice in the format exactly and takes the cheapest path
+    through the whole chunk -- a dynamic program over byte positions whose
+    states are what the decoder expects next:
+
+      M     right after a match (its two low bits still free);
+      T1-3  after a match and 1-3 literals, which ride in those low bits for
+            free -- a match must follow;
+      L     a literal run of 4 or more after a match (its own token);
+      F     the stream's first literal run.
+
+    Matches are M2 (3-8 bytes within 0x800, 2 bytes), M3 (3 bytes, longer
+    runs pay a length extension) and M1 -- 3 bytes 0x801-0xC00 back for 2
+    bytes, legal only straight after a literal run of 4 or more.
+    """
+    n = len(src)
+    if n == 0:
+        raise LzoError("nothing to compress")
+    INF = float("inf")
+    # ---- matches: per position, the longest M2 (<= 8 within 0x800), an M1
+    #      distance if any, and the longest match at all ----
+    heads: dict[bytes, list] = {}
+    m2 = [(0, 0)] * (n + 1)
+    m1 = [0] * (n + 1)
+    far = [(0, 0)] * (n + 1)
+    for i in range(n):
+        if i + MIN_MATCH <= n:
+            key = src[i:i + MIN_MATCH]
+            chain = heads.get(key)
+            if chain:
+                limit = min(n - i, max_len)
+                best = (0, 0)
+                b2 = (0, 0)
+                d1 = 0
+                for c in reversed(chain):
+                    dist = i - c
+                    if dist > MAX_DIST:
+                        break
+                    ln = MIN_MATCH
+                    while ln < limit and src[c + ln] == src[i + ln]:
+                        ln += 1
+                    if ln > best[0]:
+                        best = (ln, dist)
+                    if dist <= 0x0800 and ln > b2[0]:
+                        b2 = (min(ln, 8), dist)
+                    if not d1 and 0x0801 <= dist <= 0x0C00:
+                        d1 = dist
+                m2[i], m1[i], far[i] = b2, d1, best
+            heads.setdefault(key, []).append(i)
+            if len(heads[key]) > chain_depth:
+                del heads[key][0]
+
+    # ---- the parse ----
+    M = [INF] * (n + 1); T = [[INF] * (n + 1) for _ in range(4)]
+    Lc = [INF] * (n + 1); Lrun = [0] * (n + 1)
+    back = {}                      # (state, pos) -> (prev state, prev pos, op)
+
+    def relax(arr, st, pos, cost, prev, op):
+        if cost < arr[pos]:
+            arr[pos] = cost
+            back[(st, pos)] = prev + (op,)
+
+    def f_cost(run):
+        return 1 + run if run <= 238 else run + 2 + (run - 19) // 255
+
+    def matches_from(i, base, prev, m1_ok):
+        ln2, d2 = m2[i]
+        for ln in range(MIN_MATCH, ln2 + 1):
+            relax(M, "M", i + ln, base + 2, prev, ("m", ln, d2))
+        if m1_ok and m1[i]:
+            relax(M, "M", i + 3, base + 2, prev, ("m1", 3, m1[i]))
+        lnf, df = far[i]
+        for ln in range(max(MIN_MATCH, ln2 + 1), lnf + 1):
+            cost = 3 if ln <= 33 else 4 + (ln - 34) // 255
+            relax(M, "M", i + ln, base + cost, prev, ("m", ln, df))
+
+    for i in range(1, n + 1):
+        # the first literal run reaching i, then (if not at the end) a match
+        fc = f_cost(i)
+        if i < n:
+            matches_from(i, fc, ("F", i), i >= 4)
+        # states at i, all final by now (every edge goes forward)
+        if M[i] < INF:
+            if i < n:
+                relax(T[1], "T1", i + 1, M[i] + 1, ("M", i), ("lit",))
+                matches_from(i, M[i], ("M", i), False)
+        for k in (1, 2, 3):
+            c = T[k][i]
+            if c < INF and i < n:
+                if k < 3:
+                    relax(T[k + 1], "T%d" % (k + 1), i + 1, c + 1, ("T%d" % k, i), ("lit",))
+                else:
+                    if c + 2 < Lc[i + 1]:
+                        Lc[i + 1] = c + 2; Lrun[i + 1] = 4
+                        back[("L", i + 1)] = ("T3", i, ("lit",))
+                matches_from(i, c, ("T%d" % k, i), False)
+        if Lc[i] < INF and i < n:
+            run = Lrun[i] + 1
+            step = _lit_token_cost(run) - _lit_token_cost(run - 1)
+            if Lc[i] + 1 + step < Lc[i + 1]:
+                Lc[i + 1] = Lc[i] + 1 + step; Lrun[i + 1] = run
+                back[("L", i + 1)] = ("L", i, ("lit",))
+            matches_from(i, Lc[i], ("L", i), True)
+
+    ends = [(f_cost(n), "F"), (M[n], "M"), (Lc[n], "L")] + [(T[k][n], "T%d" % k) for k in (1, 2, 3)]
+    _cost, st = min(ends, key=lambda x: x[0])
+
+    # ---- walk back to a list of ops ----
+    ops = []
+    pos = n
+    while st != "F":
+        pst, ppos, op = back[(st, pos)]
+        ops.append(op)
+        st, pos = pst, ppos
+    first_run = pos
+    ops.reverse()
+
+    # ---- emit ----
+    out = bytearray()
+    ip = 0
+    if first_run <= 238:
+        out.append(17 + first_run)
+    else:
+        tt = first_run - 18
+        out.append(0)
+        while tt > 255:
+            tt -= 255
+            out.append(0)
+        out.append(tt)
+    out += src[0:first_run]
+    ip = first_run
+    last_tok = -1
+    run = 0
+    j = 0
+
+    def flush_run(r, start):
+        nonlocal last_tok
+        if r == 0:
+            return
+        if r <= 3:
+            out[last_tok] |= r
+        else:
+            if r <= 18:
+                out.append(r - 3)
+            else:
+                tt = r - 18
+                out.append(0)
+                while tt > 255:
+                    tt -= 255
+                    out.append(0)
+                out.append(tt)
+        out.extend(src[start:start + r])
+
+    run_start = ip
+    for op in ops:
+        if op[0] == "lit":
+            run += 1
+            continue
+        flush_run(run, run_start)
+        ip = run_start + run
+        kind, ln, dist = op
+        if kind == "m1":
+            off = dist - 0x0801
+            out.append((off & 3) << 2)
+            last_tok = len(out) - 1
+            out.append(off >> 2)
+        elif ln <= 8 and dist <= 0x0800:
+            off = dist - 1
+            out.append(((ln - 1) << 5) | ((off & 7) << 2))
+            last_tok = len(out) - 1
+            out.append(off >> 3)
+        else:
+            off = dist - 1
+            if ln <= 33:
+                out.append(0x20 | (ln - 2))
+            else:
+                rest = ln - 33
+                out.append(0x20)
+                while rest > 255:
+                    rest -= 255
+                    out.append(0)
+                out.append(rest)
+            out.append((off << 2) & 0xFF)
+            last_tok = len(out) - 1
+            out.append(off >> 6)
+        ip += ln
+        run = 0
+        run_start = ip
+    flush_run(run, run_start)
+    out += EOF_MARKER
+    return bytes(out)
+
+
+def _best_chunk(raw: bytes) -> bytes:
+    """The smaller of the two encoders' streams for one chunk."""
+    a = lzo1x_compress(raw)
+    try:
+        b = lzo1x_compress_optimal(raw)
+    except (LzoError, KeyError, IndexError):
+        return a
+    return b if len(b) < len(a) and lzo1x_decompress(b) == raw else a
+
+
 # ---------------------------------------------------------------------------
 # container
 # ---------------------------------------------------------------------------
@@ -355,7 +569,7 @@ def compress(plain: bytes, chunk=CHUNK) -> bytes:
     out = bytearray()
     for o in range(0, len(plain), chunk):
         raw = plain[o:o + chunk]
-        packed = lzo1x_compress(raw)
+        packed = _best_chunk(raw)
         if len(packed) >= len(raw):
             out += struct.pack("<II", len(raw), len(raw)) + raw
         else:
@@ -366,9 +580,10 @@ def compress(plain: bytes, chunk=CHUNK) -> bytes:
 def repack(original: bytes, new_plain: bytes) -> bytes:
     """Re-emit a container, re-compressing only what actually changed.
 
-    Our encoder is a couple of percent looser than whatever Red Storm shipped
-    with, so re-compressing a whole untouched file makes it too big for its own
-    archive slot. Keeping every chunk whose plain bytes are unchanged -- byte
+    The greedy encoder is a couple of percent looser than whatever Red Storm
+    shipped with, so re-compressing a whole untouched file made it too big for
+    its own archive slot; each re-compressed chunk now takes the smaller of it
+    and the optimal parse, which lands at or under the retail size. Keeping every chunk whose plain bytes are unchanged -- byte
     for byte, in its original compressed form -- means an edit only pays for the
     chunks it actually touches. Chunk boundaries are fixed at 0x4000 of plain
     data, so this works whenever the edit preserves the total length.
@@ -385,7 +600,7 @@ def repack(original: bytes, new_plain: bytes) -> bytes:
         if len(want) == raw and want == old_plain[pos:pos + raw]:
             out += struct.pack("<II", comp, raw) + original[off:off + comp]
         else:
-            packed = lzo1x_compress(want)
+            packed = _best_chunk(want)
             if len(packed) >= len(want):
                 out += struct.pack("<II", len(want), len(want)) + want
             else:
@@ -397,7 +612,7 @@ def repack(original: bytes, new_plain: bytes) -> bytes:
     # the edit made the file longer than the original: append fresh chunks
     while pos < len(new_plain):
         want = new_plain[pos:pos + CHUNK]
-        packed = lzo1x_compress(want)
+        packed = _best_chunk(want)
         if len(packed) >= len(want):
             out += struct.pack("<II", len(want), len(want)) + want
         else:

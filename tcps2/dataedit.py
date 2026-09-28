@@ -124,6 +124,11 @@ def _op_split_cycle(plain, params):
     return rsewheel.cycle_restore(plain, bool(params.get("enable", True)))
 
 
+def _op_split_team_orders(plain, params):
+    from . import rseorders
+    return rseorders.apply(plain, bool(params.get("enable", True)))
+
+
 def _op_canon_team(plain, params):
     from . import rsecanon
     return rsecanon.apply(plain, bool(params.get("enable", True)))
@@ -287,6 +292,7 @@ OPS = {
     "ss_chatter": _op_ss_chatter,
     "canon_team": _op_canon_team,
     "split_cycle": _op_split_cycle,
+    "split_team_orders": _op_split_team_orders,
     "split_draw": _op_split_draw,
     "rpg_speed": _op_rpg_speed,
     "scale_ballistics": _op_scale_ballistics,
@@ -610,6 +616,17 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
     def beat(done, total=None):
         if tick:
             tick(done, total)
+
+    # An op that supplies a DIFFERENT recording (`team_recording`) replaces the
+    # whole file with one it builds, and proves, from the SHIPPED split-screen
+    # and single-player recordings. Every other edit of that file has to run
+    # on top of the replacement, never underneath it: the per-mission enemy
+    # counts edit `<MAP>_SS.LIN` too, and when they ran first the splice was
+    # handed an edited recording and refused it ("the split-screen record at
+    # 0x... is not the one every map carries") -- the whole apply failed as
+    # soon as a mission's enemy count and AI teammates were both on. A stable
+    # sort keeps every other edit in the order the profile gave.
+    edits = sorted(edits, key=lambda e: e.op not in _RECORDING_OPS)
 
     for edit in edits:
         op = OPS.get(edit.op)

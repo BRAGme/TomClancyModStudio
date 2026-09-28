@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from . import revision
 from .engine import backup_dir_for, iso_crc, own_crc_shift
 from .games import BY_BOOT, BY_ID, PROFILES
 from .iso import Iso, IsoError
@@ -23,6 +24,10 @@ class Detection:
     crc_matches: bool = True
     #: True when the CRC differs from stock only because of our own code patches
     crc_is_ours: bool = False
+    #: `revision.Assessment` for this disc's overlay: whether it is the image
+    #: the profile was built against, and if not, which options survive being
+    #: relocated onto it. None when nothing was read (preview, or `crc=False`).
+    rev: object = None
     has_backup: bool = False
     #: True for a profile opened without a disc, to look at the options only.
     #: Nothing is readable and nothing is writable in this state.
@@ -90,6 +95,11 @@ def identify(path, crc=True) -> Detection:
             shift = own_crc_shift(iso, profile) if crc else 0
             missing = [o.name for o in profile.overlays
                        if iso.find(o.iso_pattern) is None]
+            # Read here, inside the one `with`, because it has to decompress the
+            # overlay and that is the expensive part of opening a disc. Skipped
+            # along with the CRC when a caller only wants to fill a list.
+            rev = (revision.assess(iso, profile, backup_dir_for(path))
+                   if crc else None)
     except IsoError as exc:
         return Detection(path, False, message=str(exc))
     except PermissionError:
@@ -102,8 +112,7 @@ def identify(path, crc=True) -> Detection:
     # That is not a different revision, and refusing to patch it again would
     # strand anyone who used a code option once -- so undo our own words first
     # and compare against that.
-    crc_ok = (not crc) or (not profile.pcsx2_crc) or \
-        crc.upper() == profile.pcsx2_crc.upper()
+    crc_ok = (not crc) or profile.knows_crc(crc)
     ours = False
     if not crc_ok and shift:
         stock_crc = "%08X" % (int(crc, 16) ^ shift)
@@ -117,9 +126,28 @@ def identify(path, crc=True) -> Detection:
                     "file is named for the CRC the emulator sees, %s."
                     % (crc, profile.pcsx2_crc, crc))
     elif not crc_ok:
-        msgs.append("This is a different revision or region than the profile "
-                    "was built for (disc CRC %s, expected %s). Options that "
-                    "patch code are unsafe here." % (crc, profile.pcsx2_crc))
+        # A different CRC is not by itself a verdict. What decides whether code
+        # can be patched is the OVERLAY: if that is the image the profile was
+        # built against then every address is still right and only the boot file
+        # changed. So say which of the two this is, and never say "unsafe" about
+        # a disc whose addresses have actually been proved.
+        name = profile.overlays[0].name if profile.overlays else "overlay"
+        if rev is not None and rev.known:
+            msgs.append("This is a different pressing than the profile was "
+                        "built for (disc CRC %s, expected %s), but its %s is "
+                        "byte-for-byte the one this tool knows, so every "
+                        "option works normally."
+                        % (crc, profile.pcsx2_crc, name))
+        elif rev is not None and rev.usable:
+            msgs.append("This is a different revision than the profile was "
+                        "built for (disc CRC %s, expected %s). %s"
+                        % (crc, profile.pcsx2_crc, rev.note()))
+        else:
+            msgs.append("This is a different revision or region than the "
+                        "profile was built for (disc CRC %s, expected %s). %s"
+                        % (crc, profile.pcsx2_crc,
+                           rev.note() if rev is not None else
+                           "Options that patch code are unsafe here."))
     if missing:
         msgs.append("Missing from the disc: %s." % ", ".join(missing))
 
@@ -130,7 +158,8 @@ def identify(path, crc=True) -> Detection:
                   for o in profile.overlays))
     return Detection(path, True, profile=profile, boot=profile.boot, crc=crc,
                      volume=volume, message=" ".join(msgs),
-                     crc_matches=crc_ok, crc_is_ours=ours, has_backup=bak)
+                     crc_matches=crc_ok, crc_is_ours=ours, has_backup=bak,
+                     rev=rev)
 
 
 def scan_folder(folder, limit=200) -> list:

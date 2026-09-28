@@ -378,8 +378,17 @@ def badge(master, kind):
 class SettingCard(Chrome):
     """One option: a control, its help, and whatever caveats apply to it."""
 
-    def __init__(self, master, setting, var, on_change, images=()):
-        super().__init__(master, kind="panel", pad=theme.px(16))
+    #: How far each nesting level indents a child card, and how much of the
+    #: card's own padding it gives up. A child is a detail of its parent, so
+    #: it reads as subordinate rather than as the next thing in the list.
+    NEST_INDENT = 22
+    NEST_PAD = 11
+
+    def __init__(self, master, setting, var, on_change, images=(), depth=0):
+        self.depth = int(depth)
+        super().__init__(master, kind="panel",
+                         pad=theme.px(self.NEST_PAD if self.depth
+                                      else 16))
         self.setting = setting
         self.var = var
         self.on_change = on_change
@@ -417,6 +426,15 @@ class SettingCard(Chrome):
             tk.Label(strip, image=photo, bg=p.panel, bd=0).pack(
                 side="left", padx=(0, theme.px(8)))
 
+    def nest_pack(self, **kw):
+        """Pack this card under its parent rather than beside it."""
+        pad = theme.px(4) + theme.px(self.NEST_INDENT) * self.depth
+        kw.setdefault("fill", "x")
+        kw.setdefault("padx", (pad, theme.px(4)))
+        kw.setdefault("pady", (0, theme.px(6)) if self.depth
+                      else theme.px(6))
+        self.pack(**kw)
+
     def _text(self, text, colour, size=8, wrap=560, pady=(8, 0)):
         lbl = tk.Label(self.body, text=text, bg=theme.P.panel, fg=colour,
                        font=theme.F("body", size), wraplength=theme.px(wrap),
@@ -449,7 +467,8 @@ class SettingCard(Chrome):
             tk.Label(head, text=s.label.upper() if sharp else s.label,
                      bg=p.panel, fg=p.title, anchor="w",
                      font=theme.F("title" if sharp else "bold",
-                                  13 if sharp else 12)
+                                  (13 if sharp else 12)
+                                  - min(self.depth, 2))
                      ).pack(side="left")
         if full:
             hint = tooltip.Hint(head, full)

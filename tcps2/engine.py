@@ -22,9 +22,10 @@ import os
 import re
 import struct
 import time
+import dataclasses
 from dataclasses import dataclass, field
 
-from . import applied, dataedit, hostroot
+from . import applied, dataedit, hostroot, revision
 from .iso import Iso
 from .overlay import OverlayError, open_overlay
 from .soz import SozImage
@@ -166,8 +167,20 @@ def own_crc_shift(iso: Iso, profile) -> int:
 # recovering the pristine overlay
 # ---------------------------------------------------------------------------
 
-def load_pristine(iso, iso_path, profile, spec, store=None):
-    """(overlay, how) with every word this tool owns back at its stock value."""
+def load_pristine(iso, iso_path, profile, spec, store=None, asm=None):
+    """(overlay, how) with every word this tool owns back at its stock value.
+
+    `asm` is a `revision.Assessment`. When it reports that the overlay is not the
+    image the profile was built against, `spec.image_sha1` is not this disc's
+    pristine hash and comparing against it could only ever fail -- so the anchor
+    becomes the disc's own first-seen container instead.
+
+    That is sound because of what getting this far means. `revision.relocate`
+    keeps an address only when the word the profile calls stock is actually
+    present at it, so an overlay that relocated is one where every site this tool
+    might write still carries what the game shipped. The word-by-word assertion
+    in `apply` then re-checks each one immediately before writing it.
+    """
     ov = open_overlay(iso, spec)
     stock = profile.stock_words or {}
 
@@ -191,6 +204,23 @@ def load_pristine(iso, iso_path, profile, spec, store=None):
 
     bak = _overlay_backup(iso_path, spec.name)
     ent = iso.find(spec.iso_pattern)
+
+    if asm is not None and not asm.known:
+        if os.path.exists(bak):
+            with open(bak, "rb") as fh:
+                container = fh.read()
+            if len(container) == ent.size:
+                ov.img = SozImage.unpack(container, spec.base_va)
+                return ov, "backup"
+        if not asm.usable:
+            raise EngineError(
+                "%s is not the image this profile was built for and its "
+                "addresses could not be placed on it, so there is nothing "
+                "here it would be safe to write. %s" % (spec.name, asm.reason)) 
+
+        _save_backup(bak, iso.read(ent.lba, ent.size))
+        return ov, "relocated"
+
     if os.path.exists(bak):
         with open(bak, "rb") as fh:
             container = fh.read()
@@ -224,6 +254,48 @@ def _save_backup(path, container):
     if not os.path.exists(path):
         with open(path, "wb") as fh:
             fh.write(container)
+
+
+# ---------------------------------------------------------------------------
+# carrying a plan onto another pressing
+# ---------------------------------------------------------------------------
+
+def _relocate(edits, pn, asm, spec, ov) -> tuple:
+    """(disc edits, cheat words, refusals) moved onto this disc's own overlay.
+
+    The two lists are paired up before either is moved, because a `lui` cannot be
+    relocated without the instruction carrying the other half of its address and
+    the two are not always in the same list.
+
+    Each moved word gets the stock value actually present at its new address
+    rather than the one the profile recorded. They differ whenever the shipped
+    word is itself a `jal`: its encoded target moved, so carrying the old value
+    across would fail the engine's own pre-write check on a perfectly good site.
+    `revision.relocate` has already compared the two under the mask.
+
+    A no-op on the disc the profile was built for, which is the point -- the
+    ordinary path must not change shape because this feature exists.
+    """
+    if asm is None or asm.known:
+        return edits, pn, []
+    if asm.reason or asm.relocation is None:
+        return [], [], ([asm.reason] if (edits or pn) else [])
+    img = revision.Image(bytes(ov.img.image), spec.base_va)
+    both = {w.va: w.value for w in list(edits) + list(pn)}
+    plans = revision.retarget_all(both, asm.relocation, img.lo, img.hi)
+    out_e, out_p, why = [], [], []
+    for src, dst in ((edits, out_e), (pn, out_p)):
+        for w in src:
+            rt = plans.get(w.va)
+            if rt is None:
+                why.append("0x%08x could not be placed on this overlay" % w.va)
+            elif not rt.ok:
+                why.append(rt.reason)
+            else:
+                dst.append(dataclasses.replace(
+                    w, va=rt.va, value=rt.value,
+                    stock=(img.word(rt.va) if img.holds(rt.va) else w.stock)))
+    return out_e, out_p, why
 
 
 # ---------------------------------------------------------------------------
@@ -262,12 +334,17 @@ def plan(iso_path, profile, values) -> Plan:
         spec = profile.overlays[0]
         store = WordStore(backup_dir_for(iso_path))
         with Iso(iso_path) as iso:
+            asm = revision.assess(iso, profile,
+                                  backup_dir_for(iso_path))
             try:
-                ov, how = load_pristine(iso, iso_path, profile, spec, store)
+                ov, how = load_pristine(iso, iso_path, profile, spec, store,
+                                        asm=asm)
             except (EngineError, OverlayError) as exc:
                 warnings.append(str(exc))
                 ov = None
             if ov is not None:
+                edits, pn, refused = _relocate(edits, pn, asm, spec, ov)
+                warnings.extend(refused)
                 for e in edits:
                     cur = ov.read_word(e.va)
                     if cur != e.stock:
@@ -318,9 +395,25 @@ def apply(iso_path, profile, values, progress=None, data_root=None,
     with Iso(iso_path, writable=True) as iso:
         if profile.overlays:
             spec = profile.overlays[0]
+            asm = revision.assess(iso, profile, folder)
             say("Recovering the untouched %s" % spec.name)
-            ov, how = load_pristine(iso, iso_path, profile, spec, store)
+            ov, how = load_pristine(iso, iso_path, profile, spec, store, asm=asm)
             report["pristine_source"] = how
+            if asm is not None and not asm.known:
+                pnow = profile.build_pnach(values) if profile.build_pnach else []
+                edits, _pn, refused = _relocate(edits, pnow, asm, spec, ov)
+                if refused:
+                    # All or nothing. A half-applied option is worse than a
+                    # refused one, and the window has already switched off
+                    # everything on this list -- so getting here means the
+                    # command line asked for something this pressing cannot do.
+                    raise EngineError(
+                        "%d word(s) of this plan cannot be placed on this "
+                        "pressing of the disc, so nothing was written. First: %s"
+                        % (len(refused), refused[0]))
+                say("Moved %d word(s) onto this pressing's own addresses"
+                    % len(edits))
+                report["relocated"] = len(edits)
             for e in edits:
                 cur = ov.read_word(e.va)
                 if cur != e.stock:
@@ -356,6 +449,9 @@ def apply(iso_path, profile, values, progress=None, data_root=None,
     say("Verifying against the disc")
     with Iso(iso_path) as iso:
         if profile.overlays:
+            # `edits` here is the RELOCATED list, so this reads back the
+            # addresses that were written rather than the ones the profile
+            # declares. On the disc the profile was built for they are the same.
             ov = open_overlay(iso, profile.overlays[0])
             ok = sum(1 for e in edits if ov.read_word(e.va) == e.value)
             report["verified"] = ok
@@ -470,6 +566,30 @@ def revert(iso_path, profile, progress=None, data_root=None) -> dict:
 
 BEGIN = "// >>> Tom Clancy PS2 Mod Studio -- managed block, do not edit by hand"
 END = "// <<< end managed block"
+
+
+def relocated_pnach(iso_path, profile, words) -> tuple:
+    """(words, refusals) for the cheat file on the disc in hand.
+
+    The cheat file is the other half of the same problem. Most of its payload
+    sits in a code cave at a fixed RAM address and never moves, but the hook
+    words that redirect the game into that cave are overlay addresses like any
+    other -- 17 of them on Rainbow Six 3 -- and a hook written to a stale address
+    corrupts an instruction just as thoroughly as a disc edit would.
+    """
+    if not profile.overlays or profile.overlays[0].kind != "soz":
+        return words, []
+    spec = profile.overlays[0]
+    try:
+        with Iso(iso_path) as iso:
+            asm = revision.assess(iso, profile, backup_dir_for(iso_path))
+            if asm.known:
+                return words, []
+            ov = open_overlay(iso, spec)
+            _e, moved, why = _relocate([], words, asm, spec, ov)
+    except (OverlayError, OSError) as exc:
+        return [], [str(exc)]
+    return moved, why
 
 
 def pnach_text(profile, words, crc) -> str:
