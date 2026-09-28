@@ -1,0 +1,1444 @@
+"""The checks worth running before a release.
+
+    python tests\\run_tests.py ["E:\\XBOX Classic Games"]
+
+Everything here runs against the real extracted discs, because the formats are
+the point and a synthetic glob would only prove that this tool agrees with
+itself. Nothing retail is ever opened for writing: the apply/revert cycle copies
+the handful of files it needs into the system temp folder first and works there,
+so a failed run cannot leave a game folder half-modded.
+
+What each group is actually asserting:
+
+  containers   every glob, bundle and executable on the shelf parses, and a
+               round trip through the writer is byte-identical to the original.
+  images       every disc image's filesystem walks, and the same game read as
+               an `.iso` and as an extracted folder gives identical bytes --
+               which is the only real proof that the two paths agree.
+  xiso write   growing, shrinking and overwriting a file inside a disc image,
+               against a small image built for the purpose rather than a 4 GB
+               retail one.
+  transforms   each edit does what it says AND keeps the file's length, which
+               is the invariant the packed formats depend on.
+  census       the two sides of the war are separable on the games that
+               author the data for it, and empty on the games that do not --
+               a silent empty census is how a weapons dial reaches nothing.
+  cycle        plan, apply, verify, revert, and the folder is byte-identical
+               to how it started.
+  mission art  every mission card's pictures are actually on the disc -- a
+               missing one draws nothing and says nothing.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import shutil
+import sys
+import tempfile
+import traceback
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tcxbox import (coopteam, dataedit, engine, globfile,  # noqa: E402
+                    hunt, lin, model, rsb, showlog, transforms, umd,
+                    xbe, xboxhdd, xiso, xpr)
+from tcxbox.detect import identify, scan                          # noqa: E402
+from tcxbox.model import FileEdit                                  # noqa: E402
+from tcxbox.gamedir import Root                                   # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import make_xiso                                                  # noqa: E402
+from gui import tooltip                                           # noqa: E402
+
+PASS, FAIL = [], []
+
+
+def check(name, fn):
+    try:
+        detail = fn()
+        PASS.append(name)
+        print("  ok    %-58s %s" % (name, detail or ""))
+    except Exception as exc:                      # noqa: BLE001
+        FAIL.append((name, exc, traceback.format_exc()))
+        print("  FAIL  %-58s %s" % (name, exc))
+
+
+def must(cond, message):
+    if not cond:
+        raise AssertionError(message)
+
+
+# ---------------------------------------------------------------------------
+# containers
+# ---------------------------------------------------------------------------
+
+def test_globs(games):
+    total = entries = 0
+    for det in games:
+        with Root(det.path) as root:
+            for relpath, size in root.source.iter_files():
+                if not relpath.lower().endswith(".glb"):
+                    continue
+                read = root._reader(relpath)
+                ents = globfile.parse_stream(read, size)
+                total += 1
+                entries += len(ents)
+                for ent in ents[:4]:
+                    blob = read(ent.offset, ent.size)
+                    must(len(blob) == ent.size,
+                         "%s: short read of %s" % (relpath, ent.name))
+    must(total > 0, "no globs found")
+    return "%d globs, %d entries" % (total, entries)
+
+
+def test_umds(games):
+    total = files = 0
+    for det in games:
+        with Root(det.path) as root:
+            for relpath, size in root.source.iter_files():
+                if not relpath.lower().endswith(".umd"):
+                    continue
+                read = root._reader(relpath)
+                ents = umd.parse_stream(read, size)
+                total += 1
+                files += len(ents)
+                mid = ents[len(ents) // 2]
+                must(len(read(mid.offset, mid.size)) == mid.size,
+                     "%s: short read of %s" % (relpath, mid.name))
+    return "%d bundles, %d files inside them" % (total, files)
+
+
+def test_xbes(games):
+    for det in games:
+        with Root(det.path) as root:
+            rel = (root.source.resolve("default.xbe")
+                   or root.source.resolve("RainbowSix3_Release.xbe"))
+            must(rel, "%s: no executable" % det.profile.short)
+            image = xbe.parse(root.source.read(rel))
+        must(image.title_id_hex.upper() == det.profile.title_id.upper(),
+             "%s: title id %s does not match the profile"
+             % (det.profile.short, image.title_id_hex))
+        must(image.sections, "%s: no sections" % det.profile.short)
+    return "%d executables, title ids match their profiles" % len(games)
+
+
+def test_art(games):
+    from tcxbox import art
+
+    shot = 0
+    for det in games:
+        banner = art.banner_image(det)
+        emblem = art.emblem_image(det)
+        must(banner is not None,
+             "%s: no backdrop could be read" % det.profile.short)
+        must(emblem is not None,
+             "%s: no wordmark could be read" % det.profile.short)
+        must(emblem.width >= 200,
+             "%s: the wordmark came out %d wide, which means it fell back to a "
+             "dashboard icon rather than the splash screen"
+             % (det.profile.short, emblem.width))
+        must(emblem.getchannel("A").getextrema()[0] == 0,
+             "%s: the wordmark has no transparent pixel, so its plate was not "
+             "keyed out" % det.profile.short)
+        shot += 2
+    return "%d bitmaps decoded, every wordmark at least 200px wide" % shot
+
+
+def test_mission_art(games):
+    """Every mission card has the pictures its profile promised it.
+
+    Worth a check rather than a glance, because the failure is silent: a card
+    whose art cannot be found just draws without it, and nobody notices that
+    one mission in fifteen lost its briefing map.
+    """
+    from tcxbox import art
+
+    lines = []
+    for det in games:
+        spec = getattr(det.profile, "mission_art_for", None)
+        if spec is None:
+            continue
+        cards = [s for s in det.profile.settings if s.group == "Missions"]
+        must(cards, "%s has mission_art_for and no mission cards"
+             % det.profile.short)
+        found = 0
+        for card in cards:
+            names = list(spec(card.key))
+            must(names, "%s: %s asks for no art" % (det.profile.short, card.key))
+            for name in names:
+                image = art.mission_art(det, name)
+                must(image is not None,
+                     "%s: %s is not on the disc" % (det.profile.short, name))
+                must(image.width >= 100 and image.height >= 80,
+                     "%s: %s came out %dx%d"
+                     % (det.profile.short, name, image.width, image.height))
+                found += 1
+        lines.append("%s %d/%d" % (det.profile.short.split()[0], found,
+                                   len(cards)))
+    must(lines, "no game on this shelf offers mission art")
+    return "pictures per game (found/cards): " + ", ".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# transforms
+# ---------------------------------------------------------------------------
+
+def test_script_edit(games):
+    """The one edit that rewrites compiled UnrealScript rather than text.
+
+    Every place these discs keep `R6RainbowAI.RainbowReloadWeapon` must parse,
+    round-trip unchanged, and take the edit without changing length -- a `.umd`
+    slot and a `.lin` container can survive nothing else. Retail Rainbow Six 3
+    holds it twice and both copies are written.
+    """
+    from tcxbox import dataedit, lin, rsesidearm, uscode
+    from tcxbox.games.r6engine import SCRIPT_FILES
+    seen = 0
+    discs = 0
+    for det in games:
+        root = Root(det.path)
+        keys = root.match(SCRIPT_FILES)
+        if not keys:
+            continue
+        before = seen
+        for key in keys:
+            raw = root.read(key)
+            plain = lin.decompress(raw) if lin.is_lin(raw) else raw
+            if rsesidearm.SIGNATURE not in plain:
+                # Another game's package of the same name. Only Rainbow Six 3
+                # and Black Arrow carry this function, and a profile's selector
+                # only ever runs against its own disc -- this loop is the one
+                # place every disc is tried at once.
+                continue
+            at = rsesidearm.find_block(plain)
+            blk = uscode.Script.at(plain, at)
+            disk, mem = blk.assemble(blk.disk_len)
+            must(disk == plain[at + 4:at + 4 + blk.disk_len] and mem == blk.mem_len,
+                 "%s: the function does not round-trip" % key)
+            must(rsesidearm.reads(plain) == (0, False),
+                 "%s: does not read as stock" % key)
+            for params in ({"chance": 40, "in_contact": True},
+                           {"chance": 40, "in_contact": False},
+                           {"chance": 0, "say_chance": 25},
+                           {"chance": 40, "say_chance": 25}):
+                out, n = dataedit.OPS["ai_sidearm"](raw, params)
+                must(len(out) == len(raw),
+                     "%s: %r changed the file length" % (key, params))
+                must(n == 1, "%s: %r changed nothing" % (key, params))
+                back = lin.decompress(out) if lin.is_lin(out) else out
+                # `in_contact` defaults to True when the caller omits it
+                want = (params["chance"],
+                        bool(params.get("in_contact", True))
+                        if params["chance"] else False)
+                must(rsesidearm.reads(back) == want,
+                     "%s: %r read back as %r" % (key, params,
+                                                 rsesidearm.reads(back)))
+            must(dataedit.OPS["ai_sidearm"](raw, {"chance": 0})[1] == 0,
+                 "%s: a zero chance wrote something" % key)
+            seen += 1
+        if seen > before:
+            discs += 1
+    must(discs >= 2, "fewer than two discs carried the function")
+    return "%d cop%s across %d disc(s), every one parsed, edited and kept its length" % (
+        seen, "y" if seen == 1 else "ies", discs)
+
+
+def test_length_preserved(games):
+    checked = 0
+    for det in games:
+        root = Root(det.path)
+        for key in root.match(r"\.MIS$")[:6]:
+            plain = root.read(key)
+            for out, _n in (transforms.strip_difficulty(plain),
+                            transforms.reveal_hidden(plain),
+                            transforms.bump_enemy_tier(plain, 1)):
+                must(len(out) == len(plain), "%s changed length" % key)
+                checked += 1
+        for key in root.match(r"R6GAMESETTINGS\.INI$")[:1]:
+            plain = root.read(key)
+            out, _n = transforms.scale_ini_values(
+                plain, {"m_fSightRadius": 1.5, "m_iTerroristMaximumWounds": 2.0})
+            must(len(out) == len(plain), "%s changed length" % key)
+            must(transforms.read_ini_values(out, ["m_fSightRadius"])
+                 ["m_fSightRadius"] == "7500.0", "sight radius did not scale")
+            checked += 1
+        for key in root.match(r"\.TPT$")[:3]:
+            plain = root.read(key)
+            out, _n = transforms.set_tpt_values(plain, {}, scale=1.4)
+            must(len(out) == len(plain), "%s changed length" % key)
+            checked += 1
+    must(checked > 0, "nothing was checked")
+    return "%d edits, every one the same length as the file it changed" % checked
+
+
+def test_no_option_is_a_noop(games):
+    """Every option, set away from its default, must change a byte.
+
+    This exists because one did not. The Rainbow Six 3 "Aiming response" card
+    offered the PS2 disc's turn curve, and the PS2 disc ships the same eleven
+    control points the Xbox disc does -- so the option wrote the numbers that
+    were already there, reported success, verified clean, and did nothing. Six
+    tests passed over it: the values were well-formed, length-preserving,
+    idempotent and revertible. None of them asked whether anything moved.
+
+    So: run every choice of every option through the real edit pipeline and
+    require the resulting bytes to differ from the shipped bytes somewhere.
+    """
+    checked = inert = 0
+    for det in games:
+        profile = det.profile
+        if not profile.build_data:
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            for setting in profile.settings:
+                if not setting.enabled:
+                    continue
+                tried = [v for v in _other_values(setting)]
+                if not tried:
+                    continue
+                moved = 0
+                for value in tried:
+                    # An option with a gate is only itself once the gate is
+                    # open, and gates chain: "only when in contact" needs the
+                    # sidearm draw, which needs teammate magazines to be
+                    # finite. Judging any of them with a gate shut reports it
+                    # broken when it is not, so open the whole chain.
+                    values = profile.normalise(
+                        _with_gates_open(profile, {setting.key: value}))
+                    edits = profile.build_data(values)
+                    if edits and _edits_change_anything(root, edits, store):
+                        moved += 1
+                if not moved:
+                    raise AssertionError(
+                        "%s: %r rewrites nothing at any of its values (%s) -- "
+                        "everything it writes is already on the disc"
+                        % (profile.short, setting.key,
+                           ", ".join(repr(v) for v in tried)))
+                checked += 1
+                inert += len(tried) - moved
+    must(checked > 0, "nothing was checked")
+    return ("%d option(s) each move at least one byte; %d value(s) restate "
+            "what the disc already says" % (checked, inert))
+
+
+
+def _with_gates_open(profile, asked):
+    """`asked`, plus a value for every setting it transitively depends on."""
+    by_key = {st.key: st for st in profile.settings}
+    pending = list(asked)
+    while pending:
+        st = by_key.get(pending.pop())
+        if st is None:
+            continue
+        for gate, allowed in st.requires.items():
+            if gate in asked or not allowed:
+                continue
+            asked[gate] = allowed[0]
+            pending.append(gate)
+    return asked
+
+def _other_values(setting):
+    """Up to two values for a setting that are not its default."""
+    if setting.kind == model.BOOL:
+        return [not setting.default]
+    if setting.kind == model.CHOICE:
+        return [c.value for c in setting.choices
+                if c.value != setting.default]
+    if setting.kind == model.INT:
+        out = [v for v in (setting.maximum, setting.minimum)
+               if v != setting.default]
+        return out[:1]
+    return []
+
+
+def _edits_change_anything(root, edits, store=None):
+    """True if running these edits over the game's own files moves a byte.
+
+    The op functions are the same ones `apply_data` dispatches through, so a
+    pass here is a statement about the real pipeline and not about a model of
+    it. Files are read and thrown away; nothing is written.
+    """
+    for key, edit in dataedit.plan_data(root, edits):
+        op = dataedit.OPS.get(edit.op)
+        if op is None:
+            continue
+        try:
+            # Through the backup where there is one. Black Arrow's disc is
+            # carrying the very PS2 aim values this option writes, so reading
+            # the disc would report the option as doing nothing -- which is
+            # exactly how the tool once talked itself out of a feature that
+            # worked. The question is always "does this change the SHIPPED
+            # bytes", never "does it change what happens to be there now".
+            plain = (store.original(key) if store else None) or root.read(key)
+            out, _n = op(plain, edit.params)
+        except Exception:                        # noqa: BLE001
+            continue
+        if out != plain:
+            return True
+    return False
+
+
+def test_campaign_lists(games):
+    """Every campaign choice parses, fits the disc, and is idempotent.
+
+    The campaign list is the one edit here that is ALLOWED to change a file's
+    length, so it is the one that can overflow. A disc image grows a file only
+    into its own sector padding -- `Xiso.replace` refuses the rest rather than
+    relocating -- so every choice this tool offers has to fit that budget, and
+    the two that did not were reshaped from "add these missions" into "play
+    these missions instead" once the arithmetic said so.
+    """
+    import xml.etree.ElementTree as ET
+    checked = 0
+    for det in games:
+        profile = det.profile
+        card = [st for st in profile.settings
+                if st.key.endswith("_campaign") and st.enabled]
+        if not card:
+            continue
+        with Root(det.path) as root:
+            for choice in card[0].choices:
+                if choice.value == "stock":
+                    continue
+                edits = [e for e in profile.build_data(
+                    profile.normalise({card[0].key: choice.value}))
+                    if e.op == "campaign"]
+                must(edits, "%s: %r built no campaign edit"
+                     % (profile.short, choice.value))
+                for key, edit in dataedit.plan_data(root, edits):
+                    plain = root.read(key)
+                    out, n = dataedit.OPS[edit.op](plain, edit.params)
+                    must(n > 0, "%s/%s rewrote nothing"
+                         % (profile.short, choice.value))
+                    budget = transforms.campaign_budget(plain)
+                    must(len(out) <= budget,
+                         "%s/%s: %d bytes will not fit the %d the disc "
+                         "allocated" % (profile.short, choice.value,
+                                        len(out), budget))
+                    root_el = ET.fromstring(out.decode("latin1"))
+                    names = [e.findtext("Filename") for e in root_el]
+                    must(names and all(names),
+                         "%s/%s produced a mission with no filename"
+                         % (profile.short, choice.value))
+                    have = {q.rsplit("/", 1)[-1].upper()
+                            for q in root.match(r"/MISSION/[^/]+\.MIS$")}
+                    missing = [n2 for n2 in names if n2.upper() not in have]
+                    must(not missing,
+                         "%s/%s names %d mission(s) not on the disc: %s"
+                         % (profile.short, choice.value, len(missing),
+                            ", ".join(missing[:4])))
+                    again, n2 = dataedit.OPS[edit.op](out, edit.params)
+                    must(again == out and n2 == 0,
+                         "%s/%s is not idempotent"
+                         % (profile.short, choice.value))
+                    checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d campaign variant(s) parse, fit their sector and are "
+            "idempotent" % checked)
+
+
+def test_hunt_counts(games):
+    """The hunt spawn counts read, scale and re-pack without moving a byte.
+
+    This is the only edit in the tool that goes inside a cooked level package,
+    so it is the only one where "the file is the same length" is not obviously
+    true. A `.LIN` is chunked deflate: changing an int changes how well its
+    chunk compresses, and the chunk has a fixed slot. `lin.substitute` fits the
+    stream back into that slot or refuses, and this checks it fits -- on every
+    level of both discs, not on a sample.
+
+    The identity case matters as much as the scaling one. A factor of 1.0 has
+    to give back the original container byte for byte, because that is what
+    makes clearing the option a real undo rather than a re-pack that happens to
+    decode the same.
+    """
+    checked = sites = 0
+    for det in games:
+        if not any(st.key.endswith("_hunt_count") for st in det.profile.settings):
+            continue
+        # Read through the backup where there is one. A disc this tool has
+        # already edited is not stock, and on one that was scaled past the
+        # current ceiling a factor of 1.0 legitimately clamps DOWN -- correct
+        # behaviour, but not the identity this check is about. Testing the
+        # shipped bytes keeps the check meaningful on a modded machine.
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            for key in root.match(r"/SYSTEM/(?!.*_SKINS)[^/]+\.LIN$"):
+                raw = store.original(key) or root.read(key)
+                n, total = hunt.census(raw)
+                if not n:
+                    continue
+                sites += n
+                same, moved = hunt.scale(raw, 1.0)
+                must(same == raw and moved == 0,
+                     "%s/%s: a factor of 1.0 changed the container"
+                     % (det.profile.short, key))
+                out, moved = hunt.scale(raw, 2.0)
+                must(len(out) == len(raw),
+                     "%s/%s: doubling moved the container length %d -> %d"
+                     % (det.profile.short, key, len(raw), len(out)))
+                if moved:
+                    n2, total2 = hunt.census(out)
+                    must(n2 == n, "%s/%s: doubling changed the site count "
+                                  "%d -> %d" % (det.profile.short, key, n, n2))
+                    must(total2 > total,
+                         "%s/%s: doubling did not raise the total (%d -> %d)"
+                         % (det.profile.short, key, total, total2))
+                    # and the edit survives a round trip through the container
+                    again, _m = hunt.scale(out, 1.0)
+                    must(again == out, "%s/%s: re-packing an edited container "
+                                       "is not stable" % (det.profile.short, key))
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d level package(s) carrying %d spawn count(s) scale and re-pack "
+            "into the same bytes" % (checked, sites))
+
+
+def test_disc_revert_is_bit_exact(games, where):
+    """Applying and reverting leaves a disc image bit for bit as it was.
+
+    Not merely file for file. `Xiso.replace` used to zero a file's whole sector
+    padding, so reverting 21 level packages left 26,929 bytes of zeros where
+    Rainbow Six 3's own `ff` inter-file fill had been -- every file correct,
+    every checksum of the image wrong. Only the bytes the old file actually
+    occupied are cleared now, and this is the check that says so.
+    """
+    picked = [d for d in games
+              if str(d.path).lower().endswith((".iso",))
+              and any(st.key.endswith("_hunt_count") for st in d.profile.settings)]
+    must(picked, "no disc image with a level-package option to test")
+    det = picked[0]
+    copy = os.path.join(where, "revert-" + os.path.basename(str(det.path)))
+    shutil.copy2(str(det.path), copy)
+    before = hashlib.sha256(open(copy, "rb").read()).hexdigest()
+    prof = identify(copy).profile
+    key = [st.key for st in prof.settings if st.key.endswith("_hunt_count")][0]
+    engine.apply(copy, prof, prof.normalise({key: "double"}))
+    mid = hashlib.sha256(open(copy, "rb").read()).hexdigest()
+    must(mid != before, "applying changed nothing in the image")
+    engine.revert(copy, prof)
+    after = hashlib.sha256(open(copy, "rb").read()).hexdigest()
+    must(after == before,
+         "%s: reverting did not restore the image bit for bit" % prof.short)
+    os.remove(copy)
+    return "%s: applied, reverted, image identical to the byte" % prof.short
+
+
+def test_card_summaries(games):
+    """Every card's help shortens to a sentence that still says something.
+
+    The cards moved their prose into a `?` bubble and kept the help text's own
+    first sentence on the card. That only works while the first sentence is a
+    sentence: an option whose help opens with "This is the same as the one
+    above, except..." now reads as nonsense on its own, and nothing else in
+    the tool would notice.
+
+    So: the summary has to exist, has to be shorter than what it summarises,
+    and has to be long enough to be a statement rather than a fragment.
+    """
+    short = bad = 0
+    for det in games:
+        for st in det.profile.settings:
+            for field in ("help", "caution"):
+                text = getattr(st, field)
+                if not text:
+                    continue
+                line = tooltip.first_sentence(text)
+                must(line, "%s/%s: %s shortens to nothing"
+                           % (det.profile.short, st.key, field))
+                must(len(line) <= len(" ".join(text.split())),
+                     "%s/%s: the %s summary is longer than the %s"
+                     % (det.profile.short, st.key, field, field))
+                # A summary that hides nothing cannot be a bad summary --
+                # several render toggles have help that IS "Ships on." -- so
+                # the length rule applies only where text was dropped.
+                if len(line) < 25 and line != " ".join(text.split()):
+                    short += 1
+                    bad += 1
+                    if bad <= 5:
+                        print("       thin summary: %s/%s %s -> %r"
+                              % (det.profile.short, st.key, field, line))
+    must(short == 0,
+         "%d help/caution opening(s) drop text and still shorten to under 25 "
+         "characters, which is a label rather than a summary" % short)
+    return "every help and caution opens with a usable one-line summary"
+
+
+class _MemoryRoot:
+    """Just enough of `gamedir.Root` to drive `apply_data` in memory."""
+
+    def __init__(self, files):
+        self.files = dict(files)
+
+    def match(self, rx):
+        pat = re.compile(rx, re.I)
+        return [k for k in sorted(self.files) if pat.search(k)]
+
+    def read(self, key):
+        return self.files[key]
+
+    def write(self, key, data):
+        self.files[key] = data
+
+    def packed(self, _key):
+        return False
+
+    def flush(self):
+        pass
+
+
+def test_every_written_file_is_backed_up(_games):
+    """Whatever an apply rewrites, it must first have remembered.
+
+    This is a regression test with a specific history. Backing a file up when
+    an edit SELECTED it copied 300 MB of level packages to protect files no
+    edit touched. Moving it to "after the op, if the op changed something"
+    fixed the waste and opened a hole: a key matched by TWO edits takes the
+    already-pending branch on the second, so a file the first edit left alone
+    and the second changed was written with no backup. `ini_values` and
+    `scale_ini` both select R6GameSettings.ini, so that pairing ships.
+
+    Nothing in the suite noticed, because every other check applies and
+    reverts through the same store and a file that was never remembered is
+    also never restored -- it just silently stays modified.
+    """
+    saved = dict(dataedit.OPS)
+    dataedit.OPS["_test_noop"] = lambda plain, _p: (plain, 0)
+    dataedit.OPS["_test_bump"] = lambda plain, _p: (plain.replace(b"A", b"B"), 1)
+    try:
+        cases = [
+            ("one edit that changes it", ["_test_bump"]),
+            ("a no-op edit, then one that changes it",
+             ["_test_noop", "_test_bump"]),
+            ("a changing edit, then a no-op", ["_test_bump", "_test_noop"]),
+        ]
+        for label, ops in cases:
+            where = tempfile.mkdtemp(prefix="tcxms-backup-")
+            try:
+                store = dataedit.Store(where)
+                root = _MemoryRoot({"/A.INI": b"AAAA", "/B.INI": b"AAAA"})
+                edits = [FileEdit(op, r"/A\.INI$", {}, "") for op in ops]
+                dataedit.apply_data(root, edits, store)
+                must(root.files["/A.INI"] == b"BBBB",
+                     "%s: the file was not rewritten" % label)
+                must(store.original("/A.INI") == b"AAAA",
+                     "%s: the file was rewritten with no backup of its "
+                     "original bytes" % label)
+                must(store.original("/B.INI") is None,
+                     "%s: a file no edit selected was backed up anyway"
+                     % label)
+            finally:
+                shutil.rmtree(where, ignore_errors=True)
+        # and a selected-but-unchanged file must cost nothing
+        where = tempfile.mkdtemp(prefix="tcxms-backup-")
+        try:
+            store = dataedit.Store(where)
+            root = _MemoryRoot({"/A.INI": b"ZZZZ"})
+            dataedit.apply_data(root, [FileEdit("_test_bump", r"\.INI$", {}, "")],
+                                store)
+            must(store.keys() == [],
+                 "a file an edit selected but did not change was backed up")
+        finally:
+            shutil.rmtree(where, ignore_errors=True)
+    finally:
+        dataedit.OPS.clear()
+        dataedit.OPS.update(saved)
+    return ("a rewritten file is always remembered first, and an unchanged "
+            "one never is")
+
+
+def test_aim_records_match_the_discs(games):
+    """`Aim.stock` has to be what the disc ships, read through the backup.
+
+    Black Arrow is why. Its Aim record claimed Rainbow Six 3's eleven control
+    points for four commits, because the census that decided it read a disc
+    that had the old aiming option applied -- an option whose whole job was to
+    write Rainbow Six 3's points over Black Arrow's. The measurement found
+    what the tool had put there and called it the shipped value.
+
+    So this reads through `Store.original` wherever a backup exists, which is
+    the disc as it was before this tool first touched it, and falls back to
+    the disc only when it has never been edited.
+    """
+    from tcxbox.games import r6engine
+    checked = 0
+    for det in games:
+        card = [st for st in det.profile.settings
+                if st.key.endswith("_aim_curve")]
+        if not card:
+            continue
+        aim = None
+        for name in ("R63_AIM", "BA_AIM", "GRAW_AIM"):
+            rec = getattr(r6engine, name)
+            if [st for st in det.profile.settings
+                    if st.key.endswith("_aim_curve") and st.table == rec.table]:
+                aim = rec
+                break
+        must(aim is not None,
+             "%s has an aiming card but no Aim record matches its table"
+             % det.profile.short)
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            key = root.match(r"R6GAMESETTINGS\.INI$")[0]
+            plain = store.original(key) or root.read(key)
+        names = ["m_afRotationControlPoints[%d]" % n for n in range(11)]
+        have = transforms.read_ini_values(plain, names)
+        disc = [have[n] for n in names]
+        want = [str(v) for v in aim.stock]
+        must(disc == want,
+             "%s: the Aim record says the disc ships %s but it ships %s%s"
+             % (det.profile.short, ", ".join(want[:4]) + ", ...",
+                ", ".join(disc[:4]) + ", ...",
+                "" if not engine.has_backup(det.path)
+                else " (compared through the backup, so this is the shipped "
+                     "value and not something the tool wrote)"))
+        checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d aiming record(s) match the control points their disc actually "
+            "ships" % checked)
+
+
+def test_coop_team_gate(games):
+    """The System Link squad edit opens both gates and touches nothing else.
+
+    This is the only edit in the tool that rewrites compiled UnrealScript, so
+    "the file is the same length" is nowhere near enough. What has to hold is
+    that the FUNCTION still parses to the same shape: `ScriptSize` is a memory
+    length, jumps inside the function are memory offsets, and an edit that
+    changed either would leave a package that loads and then misbehaves.
+
+    So: locate the gate structurally, apply, and require the rewritten script
+    to parse to the identical disk AND memory length as the shipped one.
+    """
+    checked = 0
+    for det in games:
+        if not any(st.key.endswith("_coop_squad") for st in det.profile.settings):
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            for key in root.match(coopteam.PACKAGE):
+                shipped = store.original(key) or root.read(key)
+                gates = coopteam._gates(shipped)
+                must(len(gates) == len(coopteam.CALLS),
+                     "%s: found %d gate(s), expected one per call in %s"
+                     % (det.profile.short, len(gates), coopteam.CALLS))
+                named = [g[0] for g in gates]
+                must(named == list(coopteam.CALLS),
+                     "%s: the gates guard %s, expected %s"
+                     % (det.profile.short, named, list(coopteam.CALLS)))
+                for _nm, op_at, const_at in gates:
+                    must(shipped[op_at] == coopteam.EQ_INT
+                         and shipped[const_at] == coopteam.NM_STANDALONE,
+                         "%s: a gate is not in its shipped form"
+                         % det.profile.short)
+
+                must(len(gates) == 1,
+                     "%s: expected exactly one gate, found %d"
+                     % (det.profile.short, len(gates)))
+
+                out, n = coopteam.open_to_system_link(shipped)
+                must(n == len(gates),
+                     "%s: opened %d gate(s) of %d"
+                     % (det.profile.short, n, len(gates)))
+                must(len(out) == len(shipped),
+                     "%s: the package length moved %d -> %d"
+                     % (det.profile.short, len(shipped), len(out)))
+                want = sorted(x for g in gates for x in g[1:])
+                moved = [i for i in range(len(shipped)) if shipped[i] != out[i]]
+                must(moved == want,
+                     "%s: %d byte(s) changed, expected exactly %s"
+                     % (det.profile.short, len(moved), want))
+                for _nm, op_at, const_at in gates:
+                    must(out[op_at] == coopteam.NE_INT
+                         and out[const_at] == coopteam.NM_CLIENT,
+                         "%s: a gate is not != NM_Client" % det.profile.short)
+
+                # the rewritten function must parse to the same shape
+                before, after = _coop_script(shipped), _coop_script(out)
+                must(before == after,
+                     "%s: the script shape moved, %s -> %s"
+                     % (det.profile.short, before, after))
+
+                # idempotent, and the census can tell the two states apart
+                again, n2 = coopteam.open_to_system_link(out)
+                must(again == out and n2 == 0,
+                     "%s: applying twice is not the same as once"
+                     % det.profile.short)
+                must(coopteam.census(shipped) == (len(gates), 0),
+                     "%s: a shipped package does not read as shipped"
+                     % det.profile.short)
+                must(coopteam.census(out) == (0, len(gates)),
+                     "%s: an edited package does not read as edited"
+                     % det.profile.short)
+                # The SpawnAIandInitGoInGame gate must STAY SHUT. It was
+                # opened once and that was a mistake: BetweenRound.BeginState
+                # already calls that function and a multiplayer game reaches
+                # BetweenRound moments later, so opening it only made every
+                # deployment zone on the map first-initialise twice. Pinned
+                # here because the cost of rediscovering it is a play-test.
+                second = _other_gate(shipped, "SpawnAIandInitGoInGame")
+                must(second is not None,
+                     "%s: the second gate was not located at all"
+                     % det.profile.short)
+                op_at, const_at = second
+                must(out[op_at] == coopteam.EQ_INT
+                     and out[const_at] == coopteam.NM_STANDALONE,
+                     "%s: the SpawnAIandInitGoInGame gate was opened; it is "
+                     "redundant and must stay shut" % det.profile.short)
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d package(s): one gate opened, two bytes changed, the "
+            "SpawnAI gate left shut, script shape unmoved" % checked)
+
+
+def _other_gate(data, call_name):
+    """Locate a gate coopteam does NOT open, so a test can prove it shut."""
+    was = coopteam.CALLS
+    try:
+        coopteam.CALLS = (call_name,)
+        found = coopteam._gates(data)
+    finally:
+        coopteam.CALLS = was
+    return (found[0][1], found[0][2]) if found else None
+
+
+def _coop_script(data):
+    """(diskLen, memLen) of NotifyAfterLevelChange, for comparing before/after."""
+    from tcxbox import uscode
+    (_v, _l, _f, nc, no, ec, eo, ic, io) = coopteam._summary(data)
+    names = coopteam._names(data, nc, no)
+    rows = coopteam._exports(data, names, ec, eo)
+    imports = coopteam._imports(data, names, ic, io)
+    for name, cls, pkg, size, off in rows:
+        if (name == coopteam.FUNCTION and size > 0
+                and coopteam._resolve(rows, imports, pkg) == coopteam.OWNER):
+            sc = uscode.Script.at(data, coopteam._script_start(data, off))
+            return sc.disk_len, sc.mem_len
+    return None
+
+
+def test_show_log_sites(games):
+    """Forcing the squad log on moves jump WORDS and nothing else.
+
+    The edit points each `if (bShowLog)` jump at the instruction it was
+    skipping, so the value written has to be an offset the function already
+    contains. Two things are checked that a length comparison cannot see:
+    every site's new target must be a real instruction boundary inside its
+    own function, and EVERY function in the package -- not just the ones
+    touched -- must still parse to the same disk and memory length, because
+    `ScriptSize` is a memory length and the jumps around it are memory
+    offsets.
+    """
+    checked = 0
+    for det in games:
+        if not any(st.key.endswith("_show_log") for st in det.profile.settings):
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            for key in root.match(showlog.PACKAGES):
+                shipped = store.original(key) or root.read(key)
+                found = showlog.sites(shipped)
+                must(found, "%s: no bShowLog site found in %s"
+                     % (det.profile.short, key.split("/")[-1]))
+                must(showlog.census(shipped) == (len(found), 0),
+                     "%s: %s does not read as shipped"
+                     % (det.profile.short, key.split("/")[-1]))
+
+                out, n = showlog.force_on(shipped)
+                must(n == len(found),
+                     "%s: forced %d site(s) of %d"
+                     % (det.profile.short, n, len(found)))
+                must(len(out) == len(shipped),
+                     "%s: the package length moved %d -> %d"
+                     % (det.profile.short, len(shipped), len(out)))
+
+                # only the jump words, and only their own two bytes
+                allowed = set()
+                for _o, _f, at, _stored, _want in found:
+                    allowed.update((at, at + 1))
+                moved = {i for i in range(len(shipped)) if shipped[i] != out[i]}
+                must(moved <= allowed,
+                     "%s: %d byte(s) changed outside the jump words"
+                     % (det.profile.short, len(moved - allowed)))
+                for _o, _f, at, _stored, want in found:
+                    import struct as _s
+                    must(_s.unpack_from("<H", out, at)[0] == want,
+                         "%s: a jump word did not take its new target"
+                         % det.profile.short)
+
+                # every function in the package still parses the same
+                before, after = _script_shapes(shipped), _script_shapes(out)
+                must(before and before == after,
+                     "%s: %d function(s) changed shape in %s"
+                     % (det.profile.short,
+                        sum(1 for k in before if before[k] != after.get(k)),
+                        key.split("/")[-1]))
+
+                again, n2 = showlog.force_on(out)
+                must(again == out and n2 == 0,
+                     "%s: applying twice is not the same as once"
+                     % det.profile.short)
+                must(showlog.census(out) == (0, len(found)),
+                     "%s: a forced package does not read as forced"
+                     % det.profile.short)
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d package(s): jump words only, every function's shape unmoved"
+            % checked)
+
+
+def _script_shapes(data):
+    """{owner.function: (diskLen, memLen)} for every function with script."""
+    import struct
+    from tcxbox import uscode
+    (_v, _l, _f, nc, no, ec, eo, ic, io) = coopteam._summary(data)
+    names = coopteam._names(data, nc, no)
+    rows = coopteam._exports(data, names, ec, eo)
+    imports = coopteam._imports(data, names, ic, io)
+    out = {}
+    for name, cls, pkg, size, off in rows:
+        if size <= 0 or not coopteam._resolve(rows, imports, cls).endswith(
+                "Function"):
+            continue
+        try:
+            sc = uscode.Script.at(data, coopteam._script_start(data, off))
+        except Exception:                                      # noqa: BLE001
+            continue
+        key = "%s.%s" % (coopteam._resolve(rows, imports, pkg), name)
+        out[key] = (sc.disk_len, sc.mem_len)
+    return out
+
+
+def test_hdd_cache_reader(games):
+    """The cached bundle is located and reassembled correctly. Reads only.
+
+    This is the reader behind the sync that keeps the emulator's hard drive
+    in step with the disc, and getting it wrong would write 5 MB into the
+    wrong clusters of somebody's Xbox hard drive. So the whole chain is
+    exercised -- xemu's config, the qcow2 cluster map, the FATX directory and
+    the file's extent list -- and the bytes it reassembles must parse as the
+    same bundle, with the same file list, as the one on the disc. A wrong
+    chain reassembles garbage and cannot fake that.
+
+    Nothing is written. `dry_run` is passed, and the image is opened
+    read-only.
+    """
+    hdd = xboxhdd.find_image()
+    if not hdd:
+        return "no emulator hard drive configured, so nothing to check"
+
+    entry, extents = xboxhdd.cached_state(hdd)
+    if entry is None:
+        return "no bundle cached on %s yet" % os.path.basename(hdd)
+    must(sum(ln for _o, ln in extents) == entry["size"],
+         "the extents cover %d bytes, the entry says %d"
+         % (sum(ln for _o, ln in extents), entry["size"]))
+
+    with xboxhdd.Qcow2(hdd) as img:
+        cached = b"".join(img.read(off, ln) for off, ln in extents)
+    must(len(cached) == entry["size"], "reassembled the wrong length")
+    must(umd.is_umd(cached),
+         "the reassembled bytes are not a .umd bundle -- the cluster chain "
+         "is wrong")
+
+    inside = [e.name for e in umd.parse(cached)[0]]
+    must(inside, "the cached bundle parsed but holds no files")
+
+    # and it must agree with the disc it was copied from
+    checked = 0
+    for det in games:
+        payload = engine._container_bytes(det.path)
+        if payload is None or len(payload) != entry["size"]:
+            continue
+        theirs = [e.name for e in umd.parse(payload)[0]]
+        if theirs != inside:
+            continue
+        out = xboxhdd.sync(hdd, payload, dry_run=True)
+        must(out["found"] and out["size"] == len(payload),
+             "a dry run disagreed with the entry it just read")
+        checked += 1
+    return ("%s: %d file(s) in the cached bundle, %d extent(s), %d bytes, "
+            "matched against %d disc(s)"
+            % (os.path.basename(hdd), len(inside), len(extents),
+               entry["size"], checked))
+
+
+def test_coop_team_in_the_streaming_pack(games):
+    """The gate is edited in COMMON.LIN too, which is the copy that runs.
+
+    `R6Game.u` inside `xboxufiles.umd` is not what the console executes --
+    `System\\COMMON.LIN` carries the same script and that is what loads. The
+    edit was verified byte-for-byte on the package through several rounds of
+    play-testing and did nothing, because it was being written to the copy
+    nobody reads.
+
+    Two things are checked. First that the `.LIN` finder agrees with the
+    package finder when pointed at the package, since that is the only place
+    where the right answer is independently known. Then that it locates and
+    opens the gate inside the pack, changing two bytes of the decompressed
+    stream and leaving both the stream and the container the same length --
+    `lin.substitute` has to fit the chunk back into its own budget.
+    """
+    checked = 0
+    for det in games:
+        if not any(st.key.endswith("_coop_squad")
+                   for st in det.profile.settings):
+            continue
+        store = dataedit.Store(engine.backup_dir_for(det.path))
+        with Root(det.path) as root:
+            # the cross-check: same answer as _gates, on the package
+            for key in root.match(coopteam.PACKAGE):
+                pkg = store.original(key) or root.read(key)
+                known = [(o, c) for _n, o, c in coopteam._gates(pkg)]
+                must(coopteam._lin_gates(pkg) == known,
+                     "%s: the pack finder disagrees with the package finder "
+                     "(%s vs %s)" % (det.profile.short,
+                                     coopteam._lin_gates(pkg), known))
+
+            for key in root.match(coopteam.LIN_CONTAINER):
+                shipped = store.original(key) or root.read(key)
+                if not lin.is_lin(shipped):
+                    continue
+                plain = lin.decompress(shipped)
+                gates = coopteam._lin_gates(plain)
+                must(len(gates) == 1,
+                     "%s: found %d gate(s) in %s, expected one"
+                     % (det.profile.short, len(gates), key.split("/")[-1]))
+                op_at, const_at = gates[0]
+                must(plain[op_at] == coopteam.EQ_INT
+                     and plain[const_at] == coopteam.NM_STANDALONE,
+                     "%s: the packed gate is not in its shipped form"
+                     % det.profile.short)
+                must(coopteam.census(shipped) == (1, 0),
+                     "%s: the pack does not read as shipped"
+                     % det.profile.short)
+
+                out, n = coopteam.open_to_system_link(shipped)
+                must(n == 1, "%s: the pack edit reported %d change(s)"
+                     % (det.profile.short, n))
+                must(len(out) == len(shipped),
+                     "%s: the container length moved %d -> %d"
+                     % (det.profile.short, len(shipped), len(out)))
+                after = lin.decompress(out)
+                must(len(after) == len(plain),
+                     "%s: the decompressed stream length moved"
+                     % det.profile.short)
+                moved = [i for i in range(len(plain)) if plain[i] != after[i]]
+                must(moved == [op_at, const_at],
+                     "%s: %d byte(s) changed in the stream, expected the two "
+                     "at %s" % (det.profile.short, len(moved),
+                                (op_at, const_at)))
+                must(coopteam.census(out) == (0, 1),
+                     "%s: the edited pack does not read as edited"
+                     % det.profile.short)
+                again, n2 = coopteam.open_to_system_link(out)
+                must(again == out and n2 == 0,
+                     "%s: applying twice is not the same as once"
+                     % det.profile.short)
+                checked += 1
+    must(checked > 0, "nothing was checked")
+    return ("%d streaming pack(s): gate located through the name table, two "
+            "bytes changed, container and stream lengths unmoved" % checked)
+
+
+def test_clamps(_games):
+    plain = b"Assault=50\r\nObservation=100\r\nSSniper=75\r\n"
+    out, _n = transforms.set_tpt_values(plain, {}, scale=4.0)
+    got = transforms.read_ini_values(out, ["Assault", "Observation", "SSniper"])
+    must(got["Assault"] == "100", "Assault should clamp to 100, got %r" % got)
+    must(got["Observation"] == "100", "Observation should stay at 100")
+    return "template skills clamp at 100 and keep their width"
+
+
+def test_ini_shapes(_games):
+    plain = b"a=+400.0\r\nb=1.5f\r\nc=10\r\nd=0.40\r\n"
+    out, n = transforms.scale_ini_values(plain, {k: 1.5 for k in "abcd"})
+    got = transforms.read_ini_values(out, list("abcd"))
+    must(got == {"a": "+600.0", "b": "2.2f", "c": "15", "d": "0.60"},
+         "shapes not preserved: %r" % got)
+    must(n == 4, "expected 4 changes, got %d" % n)
+    return "leading +, trailing f and integer forms all survive a scale"
+
+
+# ---------------------------------------------------------------------------
+# census
+# ---------------------------------------------------------------------------
+
+def test_gun_sides(games):
+    lines = []
+    for det in games:
+        root = Root(det.path)
+        if not root.match(r"\.GUN$"):
+            continue
+        ally = dataedit.gun_scope_set(root, "ally_guns")
+        enemy = dataedit.gun_scope_set(root, "enemy_guns")
+        must(not (ally & enemy), "%s: a gun is on both sides" % det.profile.short)
+        splits = det.profile.id in ("ghost_recon_xbox", "island_thunder_xbox")
+        if splits:
+            must(ally and enemy,
+                 "%s: the sides should be separable and came back %d/%d"
+                 % (det.profile.short, len(ally), len(enemy)))
+        lines.append("%s %d/%d" % (det.profile.short.split()[0], len(ally),
+                                   len(enemy)))
+    return "ally/enemy: " + ", ".join(lines)
+
+
+def test_enemy_templates(games):
+    lines = []
+    for det in games:
+        if det.profile.id not in ("ghost_recon_xbox", "island_thunder_xbox"):
+            continue
+        root = Root(det.path)
+        names = dataedit.enemy_template_set(root)
+        must(len(names) > 50,
+             "%s: only %d enemy templates" % (det.profile.short, len(names)))
+        lines.append("%s %d" % (det.profile.short.split()[0], len(names)))
+    return "enemy templates: " + ", ".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# disc images
+# ---------------------------------------------------------------------------
+
+def test_iso_matches_folder(shelf):
+    """The same game, read as an image and as a folder, is the same bytes.
+
+    This is the check that makes supporting both shapes safe: two independent
+    readers -- an XDVDFS walk and an os.walk -- have to agree.
+
+    Compared by file NAME rather than by key, because a key carries the
+    container a file was found in and the two copies of a game are not always
+    packed the same way. Black Arrow is the case in point: the retail disc keeps
+    its System folder inside `xboxdynamic.umd` and the prototype keeps the same
+    files loose, so their key sets do not intersect at all while their contents
+    do. Names intersect, and names are what the edits select on.
+    """
+    games = scan(shelf)
+    pairs = 0
+    checked = 0
+    notes = []
+    skipped = []
+    modded = []
+    for det in games:
+        if det.kind != "iso":
+            continue
+        # Matched on the TITLE NAME in the executable, not just the title id.
+        # Black Arrow's prototype disc carries the same title id as the retail
+        # one on purpose -- that is why one profile serves both -- but it is a
+        # different build with 96 terrorist templates against 120, so comparing
+        # the two would be asserting that a prototype equals a shipped game.
+        twin = next((d for d in games
+                     if d.kind == "folder"
+                     and d.profile.id == det.profile.id
+                     and d.title_name == det.title_name), None)
+        if twin is None:
+            skipped.append(det.profile.short)
+            continue
+        # A game this tool has already edited is SUPPOSED to differ from the
+        # copy it has not. Comparing them would be asserting that nobody uses
+        # the tool, and it fails the moment somebody does -- which is how this
+        # check first went red: the Rainbow Six 3 image had a grenade-carry mod
+        # applied and the extracted folder did not.
+        if engine.has_backup(det.path) or engine.has_backup(twin.path):
+            modded.append(det.profile.short)
+            continue
+        with Root(det.path) as a, Root(twin.path) as b:
+            left = _by_name(a)
+            right = _by_name(b)
+            common = sorted(set(left) & set(right))
+            smaller = min(len(left), len(right))
+            must(smaller and len(common) >= smaller * 0.85,
+                 "%s: %d names in common, against %d on the smaller side"
+                 % (det.profile.short, len(common), smaller))
+            same = differ = 0
+            for name in common[::13]:
+                if a.read(left[name]) == b.read(right[name]):
+                    same += 1
+                else:
+                    differ += 1
+            must(differ == 0,
+                 "%s: %d of %d sampled files differ between the image and the "
+                 "folder" % (det.profile.short, differ, same + differ))
+            checked += same
+        pairs += 1
+        notes.append(det.profile.short)
+    tail = ""
+    if skipped:
+        tail += "; no same-build folder for " + ", ".join(sorted(set(skipped)))
+    if modded:
+        tail += "; already modded, so not compared: " + ", ".join(sorted(set(modded)))
+    must(pairs or modded, "nothing left to compare")
+    return "%d game(s) present twice (%s), %d files byte-identical%s" % (
+        pairs, ", ".join(notes) or "none", checked, tail)
+
+
+def _by_name(root):
+    """{base name: key}, keeping only names that appear once."""
+    seen = {}
+    for key, f in root.files.items():
+        seen.setdefault(f.name, []).append(key)
+    return {n: keys[0] for n, keys in seen.items() if len(keys) == 1}
+
+
+def test_xiso_writer(where):
+    """Overwrite, shrink and grow a file inside a disc image."""
+    path = make_xiso.build(os.path.join(where, "tiny.iso"), {
+        "default.xbe": b"x" * 40,
+        "notes.ini": b"a=1\r\nb=2\r\n",
+    })
+    before = os.path.getsize(path)
+
+    with xiso.Xiso(path, writable=True) as iso:
+        entry = iso.files["/NOTES.INI"]
+        must(entry.size == 10, "size read back as %d" % entry.size)
+        must(entry.allocated == 2048, "allocation is %d" % entry.allocated)
+
+        iso.write(entry, 2, b"9")
+        must(iso.read(entry) == b"a=9\r\nb=2\r\n", "in-place write did not land")
+
+        grown = b"a=1\r\nb=2\r\nc=3\r\n"
+        iso.replace(entry, grown)
+        must(iso.files["/NOTES.INI"].size == len(grown),
+             "the directory entry was not told the new length")
+
+    with xiso.Xiso(path) as iso:
+        entry = iso.files["/NOTES.INI"]
+        must(entry.size == len(grown), "the new length did not survive a reopen")
+        must(iso.read(entry) == grown, "the grown file read back wrong")
+
+    with xiso.Xiso(path, writable=True) as iso:
+        entry = iso.files["/NOTES.INI"]
+        iso.replace(entry, b"a=1\r\n")
+        must(iso.read(entry) == b"a=1\r\n", "the shrunk file read back wrong")
+        tail = iso.read(entry, 5, 16)
+        must(tail == b"\0" * 16, "the old tail was left behind: %r" % tail)
+
+    must(os.path.getsize(path) == before,
+         "the image changed size, which means something was relocated")
+
+    with xiso.Xiso(path, writable=True) as iso:
+        entry = iso.files["/NOTES.INI"]
+        try:
+            iso.replace(entry, b"z" * 5000)
+        except xiso.XisoError:
+            pass
+        else:
+            raise AssertionError("a file was allowed to grow past its sectors")
+    return "in place, grown, shrunk, and a 5 KB write into a 2 KB slot refused"
+
+
+# ---------------------------------------------------------------------------
+# the whole cycle, on a copy
+# ---------------------------------------------------------------------------
+
+#: what has to be copied for each game to exercise its own edits
+FIXTURE_PARTS = {
+    "ghost_recon_xbox": ["default.xbe", "mission", "actor", "equip",
+                         "globs/ikedata.glb"],
+    "island_thunder_xbox": ["default.xbe", "mission", "actor", "equip",
+                            "globs/ikedata.glb"],
+    "ghost_recon2_xbox": ["default.xbe", "script", "equip/CmbtModl.xml",
+                          "globs/ikedata.glb"],
+    "summit_strike_xbox": ["default.xbe", "script", "equip/CmbtModl.xml",
+                           "globs/ikedata.glb"],
+    "rainbow_six_3_xbox": ["default.xbe", "System/RainbowSix3Xbox.ini",
+                           "System/xboxdynamic.umd"],
+    "black_arrow_xbox": ["RainbowSix3_Release.xbe",
+                         "system/R6GameSettings.ini",
+                         "system/RainbowSix3Xbox.ini", "template"],
+    "graw_xbox": ["default.xbe", "System/R6GameSettings.ini",
+                  "System/GR3XBoxAI.ini", "System/TWeapon.ini",
+                  "System/RainbowSix3Xbox.ini"],
+}
+
+
+def _snapshot(folder):
+    out = {}
+    for dirpath, _dirs, names in os.walk(folder):
+        if engine.BACKUP_DIR in dirpath:
+            continue
+        for name in names:
+            full = os.path.join(dirpath, name)
+            with open(full, "rb") as fh:
+                out[os.path.relpath(full, folder)] = hashlib.sha1(
+                    fh.read()).hexdigest()
+    return out
+
+
+def _fixture(det, where):
+    """A folder copy of the parts of a game its own edits reach.
+
+    Only for games this shelf also has extracted. Copying a 4 GB disc image to
+    exercise an edit is not a test anyone would run twice, so the image path is
+    covered by `test_iso_matches_folder` and `test_xiso_writer` instead.
+    """
+    parts = FIXTURE_PARTS.get(det.profile.id)
+    if parts is None or det.kind != "folder":
+        return None
+    dst = os.path.join(where, det.profile.id)
+    os.makedirs(dst, exist_ok=True)
+    for rel in parts:
+        src = os.path.join(det.path, rel.replace("/", os.sep))
+        out = os.path.join(dst, rel.replace("/", os.sep))
+        if not os.path.exists(src):
+            return None
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        if os.path.isdir(src):
+            shutil.copytree(src, out, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, out)
+    return dst
+
+
+def _folder_twin(everything, det):
+    """The extracted copy of this game, if the shelf has one."""
+    if det.kind == "folder":
+        return det
+    return next((d for d in everything
+                 if d.kind == "folder" and d.profile.id == det.profile.id), None)
+
+
+def test_cycle(games, where, everything):
+    from gui.presets import PRESETS
+
+    done = []
+    for det in games:
+        twin = _folder_twin(everything, det)
+        folder = _fixture(twin, where) if twin else None
+        if folder is None:
+            continue
+        det = twin
+        copy = identify(folder)
+        must(copy.ok, "the copy of %s was not recognised" % det.profile.short)
+        before = _snapshot(folder)
+
+        wrote = 0
+        for _name, values in PRESETS.get(det.profile.id, [])[1:]:
+            full = dict(det.profile.defaults())
+            full.update(values)
+            report = engine.apply(copy.path, copy.profile, full)
+            must(report["broken"] == 0,
+                 "%s: %d files could not be read back"
+                 % (det.profile.short, report["broken"]))
+            wrote += report["files"]
+
+        engine.revert(copy.path, copy.profile)
+        after = _snapshot(folder)
+        must(before == after,
+             "%s: %d file(s) differ after revert"
+             % (det.profile.short,
+                sum(1 for k in before if before[k] != after.get(k))))
+        done.append("%s %d" % (det.profile.short.split()[0], wrote))
+    must(done, "no fixtures were built")
+    return "every preset applied then reverted clean: " + ", ".join(done)
+
+
+def test_idempotent(games, where, everything):
+    """Applying the same settings twice leaves the same folder as applying once."""
+    from gui.presets import PRESETS
+
+    for det in games:
+        if det.profile.id != "ghost_recon_xbox":
+            continue
+        twin = _folder_twin(everything, det)
+        folder = _fixture(twin, where) if twin else None
+        if folder is None:
+            continue
+        det = twin
+        copy = identify(folder)
+        _name, values = PRESETS[det.profile.id][3]
+        full = dict(det.profile.defaults())
+        full.update(values)
+        engine.apply(copy.path, copy.profile, full)
+        once = _snapshot(folder)
+        engine.apply(copy.path, copy.profile, full)
+        twice = _snapshot(folder)
+        must(once == twice, "a second apply changed the folder again")
+        engine.revert(copy.path, copy.profile)
+        return "applying twice is the same as applying once"
+    raise AssertionError("Ghost Recon is not on this shelf as a folder")
+
+
+# ---------------------------------------------------------------------------
+
+def main(argv):
+    shelf = argv[0] if argv else r"E:\XBOX Classic Games"
+    print("shelf: %s" % shelf)
+    games = scan(shelf)
+    if not games:
+        print("no supported game folders found")
+        return 1
+    everything = list(games)
+    seen = {}
+    for det in games:
+        seen.setdefault(det.profile.id, det)
+    games = list(seen.values())
+    print("%d game(s): %s\n" % (len(games),
+                                ", ".join(d.profile.short for d in games)))
+
+    print("containers")
+    check("every glob parses and round-trips", lambda: test_globs(games))
+    check("every .umd parses and round-trips", lambda: test_umds(games))
+    check("every executable identifies its game", lambda: test_xbes(games))
+    check("every shell bitmap decodes", lambda: test_art(games))
+
+    check("every mission card has its own art",
+          lambda: test_mission_art(games))
+
+    print("disc images")
+    check("an image and its extracted folder agree byte for byte",
+          lambda: test_iso_matches_folder(shelf))
+
+    print("transforms")
+    check("edits keep the file's length", lambda: test_length_preserved(games))
+    check("the script edit parses, applies and keeps its length",
+          lambda: test_script_edit(games))
+    check("template skills clamp", lambda: test_clamps(games))
+    check("ini value shapes survive scaling", lambda: test_ini_shapes(games))
+    check("no option quietly writes what is already there",
+          lambda: test_no_option_is_a_noop(games))
+    check("every card shortens to a usable summary",
+          lambda: test_card_summaries(games))
+    check("every campaign list fits its disc",
+          lambda: test_campaign_lists(games))
+    check("whatever an apply rewrites, it backed up first",
+          lambda: test_every_written_file_is_backed_up(games))
+    check("each aiming record matches its disc",
+          lambda: test_aim_records_match_the_discs(games))
+    check("hunt spawn counts re-pack into the same bytes",
+          lambda: test_hunt_counts(games))
+    check("the squad edit opens one gate and leaves the other",
+          lambda: test_coop_team_gate(games))
+    check("the squad edit also reaches the streaming pack",
+          lambda: test_coop_team_in_the_streaming_pack(games))
+    check("forcing the squad log on moves jump words only",
+          lambda: test_show_log_sites(games))
+    check("the emulator hard-drive cache reads back right",
+          lambda: test_hdd_cache_reader(games))
+
+    print("census")
+    check("weapons split by side where the data allows",
+          lambda: test_gun_sides(games))
+    check("enemy templates are found", lambda: test_enemy_templates(games))
+
+    print("apply and revert, on copies")
+    with tempfile.TemporaryDirectory(prefix="tcxms-tests-") as where:
+        check("writing inside a disc image", lambda: test_xiso_writer(where))
+        check("every preset applies and reverts clean",
+              lambda: test_cycle(games, where, everything))
+        check("applying twice equals applying once",
+              lambda: test_idempotent(games, where, everything))
+        check("a reverted disc image is bit for bit as it was",
+              lambda: test_disc_revert_is_bit_exact(games, where))
+
+    print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
+    for name, _exc, tb in FAIL:
+        print("\n--- %s ---\n%s" % (name, tb))
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

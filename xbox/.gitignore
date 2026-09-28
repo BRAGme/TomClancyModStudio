@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+.tcxms-backup/
+docs/screens/*.tmp
+
+# Dropped by build_exe.py --preview; never committed
+assets/preview.mode
