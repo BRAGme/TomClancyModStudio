@@ -1,0 +1,2230 @@
+[
+ {
+  "class": "R6DescAssaultL85A1",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x004f67",
+  "m_ADamagePercent": [
+   58,
+   58,
+   24
+  ],
+  "m_ADamagePercent@": "0x004f77",
+  "m_AAccuracyPercent": [
+   63,
+   63,
+   75
+  ],
+  "m_AAccuracyPercent@": "0x004f87",
+  "m_ARecoilPercent": [
+   53,
+   66,
+   100
+  ],
+  "m_ARecoilPercent@": "0x004f97",
+  "m_ARecoveryPercent": [
+   90,
+   86,
+   86
+  ],
+  "m_ARecoveryPercent@": "0x004fa7",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultL85A1",
+   "R63rdWeapons.CMagAssaultL85A1",
+   "R63rdWeapons.SilencedAssaultL85A1"
+  ]
+ },
+ {
+  "class": "R6DescAssaultM14",
+  "m_ARangePercent": [
+   49,
+   49,
+   19
+  ],
+  "m_ARangePercent@": "0x0050e5",
+  "m_ADamagePercent": [
+   100,
+   100,
+   50
+  ],
+  "m_ADamagePercent@": "0x0050f5",
+  "m_AAccuracyPercent": [
+   76,
+   76,
+   91
+  ],
+  "m_AAccuracyPercent@": "0x005105",
+  "m_ARecoilPercent": [
+   40,
+   62,
+   92
+  ],
+  "m_ARecoilPercent@": "0x005115",
+  "m_ARecoveryPercent": [
+   83,
+   73,
+   78
+  ],
+  "m_ARecoveryPercent@": "0x005125",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultM14",
+   "R63rdWeapons.CMagAssaultM14",
+   "R63rdWeapons.SilencedAssaultM14"
+  ]
+ },
+ {
+  "class": "R6DescAssaultM16A2",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x005260",
+  "m_ADamagePercent": [
+   66,
+   66,
+   33
+  ],
+  "m_ADamagePercent@": "0x005270",
+  "m_AAccuracyPercent": [
+   74,
+   74,
+   86
+  ],
+  "m_AAccuracyPercent@": "0x005280",
+  "m_ARecoilPercent": [
+   38,
+   56,
+   99
+  ],
+  "m_ARecoilPercent@": "0x005290",
+  "m_ARecoveryPercent": [
+   90,
+   86,
+   86
+  ],
+  "m_ARecoveryPercent@": "0x0052a0",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultM16A2",
+   "R63rdWeapons.CMagAssaultM16A2",
+   "R63rdWeapons.SilencedAssaultM16A2"
+  ]
+ },
+ {
+  "class": "R6DescAssaultM4",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x0053e4",
+  "m_ADamagePercent": [
+   56,
+   56,
+   28
+  ],
+  "m_ADamagePercent@": "0x0053f4",
+  "m_AAccuracyPercent": [
+   49,
+   49,
+   59
+  ],
+  "m_AAccuracyPercent@": "0x005404",
+  "m_ARecoilPercent": [
+   47,
+   66,
+   99
+  ],
+  "m_ARecoilPercent@": "0x005414",
+  "m_ARecoveryPercent": [
+   96,
+   92,
+   92
+  ],
+  "m_ARecoveryPercent@": "0x005424",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultM4",
+   "R63rdWeapons.CMagAssaultM4",
+   "R63rdWeapons.SilencedAssaultM4"
+  ]
+ },
+ {
+  "class": "R6DescAssaultM82",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x005556",
+  "m_ADamagePercent": [
+   57,
+   57,
+   28
+  ],
+  "m_ADamagePercent@": "0x005566",
+  "m_AAccuracyPercent": [
+   55,
+   55,
+   68
+  ],
+  "m_AAccuracyPercent@": "0x005576",
+  "m_ARecoilPercent": [
+   48,
+   63,
+   99
+  ],
+  "m_ARecoilPercent@": "0x005586",
+  "m_ARecoveryPercent": [
+   92,
+   88,
+   88
+  ],
+  "m_ARecoveryPercent@": "0x005596",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultM82",
+   "R63rdWeapons.CMagAssaultM82",
+   "R63rdWeapons.SilencedAssaultM82"
+  ]
+ },
+ {
+  "class": "R6DescAssaultTAR21",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x0056d1",
+  "m_ADamagePercent": [
+   52,
+   52,
+   26
+  ],
+  "m_ADamagePercent@": "0x0056e1",
+  "m_AAccuracyPercent": [
+   57,
+   57,
+   70
+  ],
+  "m_AAccuracyPercent@": "0x0056f1",
+  "m_ARecoilPercent": [
+   49,
+   64,
+   99
+  ],
+  "m_ARecoilPercent@": "0x005701",
+  "m_ARecoveryPercent": [
+   89,
+   85,
+   84
+  ],
+  "m_ARecoveryPercent@": "0x005711",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultTAR21",
+   "R63rdWeapons.CMagAssaultTAR21",
+   "R63rdWeapons.SilencedAssaultTAR21"
+  ]
+ },
+ {
+  "class": "R6DescAssaultType97",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x005855",
+  "m_ADamagePercent": [
+   53,
+   53,
+   26
+  ],
+  "m_ADamagePercent@": "0x005865",
+  "m_AAccuracyPercent": [
+   41,
+   41,
+   53
+  ],
+  "m_AAccuracyPercent@": "0x005875",
+  "m_ARecoilPercent": [
+   31,
+   55,
+   98
+  ],
+  "m_ARecoilPercent@": "0x005885",
+  "m_ARecoveryPercent": [
+   98,
+   93,
+   93
+  ],
+  "m_ARecoveryPercent@": "0x005895",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultType97",
+   "R63rdWeapons.CMagAssaultType97",
+   "R63rdWeapons.SilencedAssaultType97"
+  ]
+ },
+ {
+  "class": "R6DescAssaultGalilARM",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x005a89",
+  "m_ADamagePercent": [
+   60,
+   60,
+   30
+  ],
+  "m_ADamagePercent@": "0x005a99",
+  "m_AAccuracyPercent": [
+   71,
+   71,
+   83
+  ],
+  "m_AAccuracyPercent@": "0x005aa9",
+  "m_ARecoilPercent": [
+   55,
+   66,
+   100
+  ],
+  "m_ARecoilPercent@": "0x005ab9",
+  "m_ARecoveryPercent": [
+   88,
+   84,
+   83
+  ],
+  "m_ARecoveryPercent@": "0x005ac9",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultGalilARM",
+   "R63rdWeapons.CMagAssaultGalilARM",
+   "R63rdWeapons.SilencedAssaultGalilARM"
+  ]
+ },
+ {
+  "class": "R6DescAssaultG3A3",
+  "m_ARangePercent": [
+   49,
+   49,
+   19
+  ],
+  "m_ARangePercent@": "0x005de8",
+  "m_ADamagePercent": [
+   87,
+   87,
+   43
+  ],
+  "m_ADamagePercent@": "0x005df8",
+  "m_AAccuracyPercent": [
+   65,
+   65,
+   82
+  ],
+  "m_AAccuracyPercent@": "0x005e08",
+  "m_ARecoilPercent": [
+   42,
+   65,
+   91
+  ],
+  "m_ARecoilPercent@": "0x005e18",
+  "m_ARecoveryPercent": [
+   86,
+   76,
+   81
+  ],
+  "m_ARecoveryPercent@": "0x005e28",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultG3A3",
+   "R63rdWeapons.CMagAssaultG3A3",
+   "R63rdWeapons.SilencedAssaultG3A3"
+  ]
+ },
+ {
+  "class": "R6DescAssaultG36K",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x0060e2",
+  "m_ADamagePercent": [
+   56,
+   56,
+   28
+  ],
+  "m_ADamagePercent@": "0x0060f2",
+  "m_AAccuracyPercent": [
+   59,
+   59,
+   72
+  ],
+  "m_AAccuracyPercent@": "0x006102",
+  "m_ARecoilPercent": [
+   43,
+   60,
+   99
+  ],
+  "m_ARecoilPercent@": "0x006112",
+  "m_ARecoveryPercent": [
+   92,
+   88,
+   88
+  ],
+  "m_ARecoveryPercent@": "0x006122",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultG36K",
+   "R63rdWeapons.CMagAssaultG36K",
+   "R63rdWeapons.SilencedAssaultG36K"
+  ]
+ },
+ {
+  "class": "R6DescLMG21E",
+  "m_ARangePercent": [
+   49
+  ],
+  "m_ARangePercent@": "0x007889",
+  "m_ADamagePercent": [
+   99
+  ],
+  "m_ADamagePercent@": "0x007891",
+  "m_AAccuracyPercent": [
+   54
+  ],
+  "m_AAccuracyPercent@": "0x007899",
+  "m_ARecoilPercent": [
+   61
+  ],
+  "m_ARecoilPercent@": "0x0078a1",
+  "m_ARecoveryPercent": [
+   62
+  ],
+  "m_ARecoveryPercent@": "0x0078a9",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalLMG21E"
+  ]
+ },
+ {
+  "class": "R6DescLMG23E",
+  "m_ARangePercent": [
+   39
+  ],
+  "m_ARangePercent@": "0x007a6d",
+  "m_ADamagePercent": [
+   60
+  ],
+  "m_ADamagePercent@": "0x007a75",
+  "m_AAccuracyPercent": [
+   45
+  ],
+  "m_AAccuracyPercent@": "0x007a7d",
+  "m_ARecoilPercent": [
+   75
+  ],
+  "m_ARecoilPercent@": "0x007a85",
+  "m_ARecoveryPercent": [
+   66
+  ],
+  "m_ARecoveryPercent@": "0x007a8d",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalLMG23E"
+  ]
+ },
+ {
+  "class": "R6DescLMGM249",
+  "m_ARangePercent": [
+   39
+  ],
+  "m_ARangePercent@": "0x007b68",
+  "m_ADamagePercent": [
+   55
+  ],
+  "m_ADamagePercent@": "0x007b70",
+  "m_AAccuracyPercent": [
+   52
+  ],
+  "m_AAccuracyPercent@": "0x007b78",
+  "m_ARecoilPercent": [
+   72
+  ],
+  "m_ARecoilPercent@": "0x007b80",
+  "m_ARecoveryPercent": [
+   70
+  ],
+  "m_ARecoveryPercent@": "0x007b88",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalLMGM249"
+  ]
+ },
+ {
+  "class": "R6DescLMGM60E4",
+  "m_ARangePercent": [
+   49
+  ],
+  "m_ARangePercent@": "0x007c48",
+  "m_ADamagePercent": [
+   100
+  ],
+  "m_ADamagePercent@": "0x007c50",
+  "m_AAccuracyPercent": [
+   47
+  ],
+  "m_AAccuracyPercent@": "0x007c58",
+  "m_ARecoilPercent": [
+   60
+  ],
+  "m_ARecoilPercent@": "0x007c60",
+  "m_ARecoveryPercent": [
+   63
+  ],
+  "m_ARecoveryPercent@": "0x007c68",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalLMGM60E4"
+  ]
+ },
+ {
+  "class": "R6DescLMGRPD",
+  "m_ARangePercent": [
+   37
+  ],
+  "m_ARangePercent@": "0x007d41",
+  "m_ADamagePercent": [
+   77
+  ],
+  "m_ADamagePercent@": "0x007d49",
+  "m_AAccuracyPercent": [
+   41
+  ],
+  "m_AAccuracyPercent@": "0x007d51",
+  "m_ARecoilPercent": [
+   61
+  ],
+  "m_ARecoilPercent@": "0x007d59",
+  "m_ARecoveryPercent": [
+   70
+  ],
+  "m_ARecoveryPercent@": "0x007d61",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalLMGRPD"
+  ]
+ },
+ {
+  "class": "R6DescAssaultFNC",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x007ee3",
+  "m_ADamagePercent": [
+   62,
+   62,
+   31
+  ],
+  "m_ADamagePercent@": "0x007ef3",
+  "m_AAccuracyPercent": [
+   72,
+   72,
+   84
+  ],
+  "m_AAccuracyPercent@": "0x007f03",
+  "m_ARecoilPercent": [
+   57,
+   67,
+   100
+  ],
+  "m_ARecoilPercent@": "0x007f13",
+  "m_ARecoveryPercent": [
+   86,
+   82,
+   82
+  ],
+  "m_ARecoveryPercent@": "0x007f23",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultFNC",
+   "R63rdWeapons.CMagAssaultFNC",
+   "R63rdWeapons.SilencedAssaultFNC"
+  ]
+ },
+ {
+  "class": "R6DescPistol92FS",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x008976",
+  "m_ADamagePercent": [
+   19,
+   19,
+   12
+  ],
+  "m_ADamagePercent@": "0x008986",
+  "m_AAccuracyPercent": [
+   34,
+   34,
+   42
+  ],
+  "m_AAccuracyPercent@": "0x008996",
+  "m_ARecoilPercent": [
+   34,
+   46,
+   67
+  ],
+  "m_ARecoilPercent@": "0x0089a6",
+  "m_ARecoveryPercent": [
+   89,
+   88,
+   86
+  ],
+  "m_ARecoveryPercent@": "0x0089b6",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistol92FS",
+   "R63rdWeapons.CMagPistol92FS",
+   "R63rdWeapons.SilencedPistol92FS"
+  ]
+ },
+ {
+  "class": "R6DescPistolAPArmy",
+  "m_ARangePercent": [
+   14,
+   14,
+   5
+  ],
+  "m_ARangePercent@": "0x008af9",
+  "m_ADamagePercent": [
+   14,
+   14,
+   7
+  ],
+  "m_ADamagePercent@": "0x008b09",
+  "m_AAccuracyPercent": [
+   35,
+   35,
+   43
+  ],
+  "m_AAccuracyPercent@": "0x008b19",
+  "m_ARecoilPercent": [
+   19,
+   37,
+   78
+  ],
+  "m_ARecoilPercent@": "0x008b29",
+  "m_ARecoveryPercent": [
+   90,
+   90,
+   88
+  ],
+  "m_ARecoveryPercent@": "0x008b39",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolAPArmy",
+   "R63rdWeapons.CMagPistolAPArmy",
+   "R63rdWeapons.SilencedPistolAPArmy"
+  ]
+ },
+ {
+  "class": "R6DescPistolCZ61",
+  "m_ARangePercent": [
+   6,
+   6
+  ],
+  "m_ARangePercent@": "0x008c7f",
+  "m_ADamagePercent": [
+   6,
+   6
+  ],
+  "m_ADamagePercent@": "0x008c8b",
+  "m_AAccuracyPercent": [
+   21,
+   21
+  ],
+  "m_AAccuracyPercent@": "0x008c97",
+  "m_ARecoilPercent": [
+   85,
+   87
+  ],
+  "m_ARecoilPercent@": "0x008ca3",
+  "m_ARecoveryPercent": [
+   86,
+   86
+  ],
+  "m_ARecoveryPercent@": "0x008caf",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolCZ61",
+   "R63rdWeapons.CMagPistolCZ61"
+  ]
+ },
+ {
+  "class": "R6DescAssaultFAMASG2",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x008db2",
+  "m_ADamagePercent": [
+   56,
+   56,
+   28
+  ],
+  "m_ADamagePercent@": "0x008dc2",
+  "m_AAccuracyPercent": [
+   60,
+   60,
+   73
+  ],
+  "m_AAccuracyPercent@": "0x008dd2",
+  "m_ARecoilPercent": [
+   52,
+   66,
+   99
+  ],
+  "m_ARecoilPercent@": "0x008de2",
+  "m_ARecoveryPercent": [
+   91,
+   87,
+   87
+  ],
+  "m_ARecoveryPercent@": "0x008df2",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultFAMASG2",
+   "R63rdWeapons.CMagAssaultFAMASG2",
+   "R63rdWeapons.SilencedAssaultFAMASG2"
+  ]
+ },
+ {
+  "class": "R6DescPistolDesertEagle357",
+  "m_ARangePercent": [
+   15,
+   15,
+   8
+  ],
+  "m_ARangePercent@": "0x008f49",
+  "m_ADamagePercent": [
+   34,
+   34,
+   17
+  ],
+  "m_ADamagePercent@": "0x008f59",
+  "m_AAccuracyPercent": [
+   37,
+   37,
+   44
+  ],
+  "m_AAccuracyPercent@": "0x008f69",
+  "m_ARecoilPercent": [
+   32,
+   45,
+   78
+  ],
+  "m_ARecoilPercent@": "0x008f79",
+  "m_ARecoveryPercent": [
+   86,
+   85,
+   84
+  ],
+  "m_ARecoveryPercent@": "0x008f89",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolDesertEagle357",
+   "R63rdWeapons.CMagPistolDesertEagle357",
+   "R63rdWeapons.SilencedPistolDesertEagle357"
+  ]
+ },
+ {
+  "class": "R6DescPistolDesertEagle50",
+  "m_ARangePercent": [
+   20,
+   20,
+   10
+  ],
+  "m_ARangePercent@": "0x0090f1",
+  "m_ADamagePercent": [
+   70,
+   70,
+   34
+  ],
+  "m_ADamagePercent@": "0x009101",
+  "m_AAccuracyPercent": [
+   36,
+   36,
+   44
+  ],
+  "m_AAccuracyPercent@": "0x009111",
+  "m_ARecoilPercent": [
+   1,
+   7,
+   54
+  ],
+  "m_ARecoilPercent@": "0x009121",
+  "m_ARecoveryPercent": [
+   81,
+   80,
+   78
+  ],
+  "m_ARecoveryPercent@": "0x009131",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolDesertEagle50",
+   "R63rdWeapons.CMagPistolDesertEagle50",
+   "R63rdWeapons.SilencedPistolDesertEagle50"
+  ]
+ },
+ {
+  "class": "R6DescPistolMac119",
+  "m_ARangePercent": [
+   11,
+   11
+  ],
+  "m_ARangePercent@": "0x009295",
+  "m_ADamagePercent": [
+   17,
+   17
+  ],
+  "m_ADamagePercent@": "0x0092a1",
+  "m_AAccuracyPercent": [
+   1,
+   1
+  ],
+  "m_AAccuracyPercent@": "0x0092ad",
+  "m_ARecoilPercent": [
+   69,
+   73
+  ],
+  "m_ARecoilPercent@": "0x0092b9",
+  "m_ARecoveryPercent": [
+   86,
+   85
+  ],
+  "m_ARecoveryPercent@": "0x0092c5",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolMac119",
+   "R63rdWeapons.CMagPistolMac119"
+  ]
+ },
+ {
+  "class": "R6DescPistolMicroUzi",
+  "m_ARangePercent": [
+   11,
+   11
+  ],
+  "m_ARangePercent@": "0x0093d8",
+  "m_ADamagePercent": [
+   14,
+   14
+  ],
+  "m_ADamagePercent@": "0x0093e4",
+  "m_AAccuracyPercent": [
+   19,
+   19
+  ],
+  "m_AAccuracyPercent@": "0x0093f0",
+  "m_ARecoilPercent": [
+   60,
+   64
+  ],
+  "m_ARecoilPercent@": "0x0093fc",
+  "m_ARecoveryPercent": [
+   86,
+   86
+  ],
+  "m_ARecoveryPercent@": "0x009408",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolMicroUzi",
+   "R63rdWeapons.CMagPistolMicroUzi"
+  ]
+ },
+ {
+  "class": "R6DescPistolMk23",
+  "m_ARangePercent": [
+   10,
+   10,
+   8
+  ],
+  "m_ARangePercent@": "0x009520",
+  "m_ADamagePercent": [
+   19,
+   19,
+   19
+  ],
+  "m_ADamagePercent@": "0x009530",
+  "m_AAccuracyPercent": [
+   35,
+   35,
+   42
+  ],
+  "m_AAccuracyPercent@": "0x009540",
+  "m_ARecoilPercent": [
+   53,
+   62,
+   62
+  ],
+  "m_ARecoilPercent@": "0x009550",
+  "m_ARecoveryPercent": [
+   88,
+   86,
+   85
+  ],
+  "m_ARecoveryPercent@": "0x009560",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolMk23",
+   "R63rdWeapons.CMagPistolMk23",
+   "R63rdWeapons.SilencedPistolMk23"
+  ]
+ },
+ {
+  "class": "R6DescPistolP228",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00969d",
+  "m_ADamagePercent": [
+   17,
+   17,
+   12
+  ],
+  "m_ADamagePercent@": "0x0096ad",
+  "m_AAccuracyPercent": [
+   32,
+   32,
+   40
+  ],
+  "m_AAccuracyPercent@": "0x0096bd",
+  "m_ARecoilPercent": [
+   33,
+   45,
+   63
+  ],
+  "m_ARecoilPercent@": "0x0096cd",
+  "m_ARecoveryPercent": [
+   90,
+   89,
+   87
+  ],
+  "m_ARecoveryPercent@": "0x0096dd",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolP228",
+   "R63rdWeapons.CMagPistolP228",
+   "R63rdWeapons.SilencedPistolP228"
+  ]
+ },
+ {
+  "class": "R6DescPistolSPP",
+  "m_ARangePercent": [
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x009814",
+  "m_ADamagePercent": [
+   15,
+   12
+  ],
+  "m_ADamagePercent@": "0x009820",
+  "m_AAccuracyPercent": [
+   21,
+   31
+  ],
+  "m_AAccuracyPercent@": "0x00982c",
+  "m_ARecoilPercent": [
+   60,
+   74
+  ],
+  "m_ARecoilPercent@": "0x009838",
+  "m_ARecoveryPercent": [
+   87,
+   85
+  ],
+  "m_ARecoveryPercent@": "0x009844",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolSPP",
+   "R63rdWeapons.SilencedPistolSPP"
+  ]
+ },
+ {
+  "class": "R6DescPistolSR2",
+  "m_ARangePercent": [
+   12,
+   12
+  ],
+  "m_ARangePercent@": "0x009956",
+  "m_ADamagePercent": [
+   20,
+   20
+  ],
+  "m_ADamagePercent@": "0x009962",
+  "m_AAccuracyPercent": [
+   26,
+   26
+  ],
+  "m_AAccuracyPercent@": "0x00996e",
+  "m_ARecoilPercent": [
+   59,
+   63
+  ],
+  "m_ARecoilPercent@": "0x00997a",
+  "m_ARecoveryPercent": [
+   85,
+   85
+  ],
+  "m_ARecoveryPercent@": "0x009986",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolSR2",
+   "R63rdWeapons.CMagPistolSR2"
+  ]
+ },
+ {
+  "class": "R6DescPistolUSP",
+  "m_ARangePercent": [
+   10,
+   10,
+   7
+  ],
+  "m_ARangePercent@": "0x009a90",
+  "m_ADamagePercent": [
+   20,
+   20,
+   16
+  ],
+  "m_ADamagePercent@": "0x009aa0",
+  "m_AAccuracyPercent": [
+   32,
+   32,
+   39
+  ],
+  "m_AAccuracyPercent@": "0x009ab0",
+  "m_ARecoilPercent": [
+   17,
+   37,
+   51
+  ],
+  "m_ARecoilPercent@": "0x009ac0",
+  "m_ARecoveryPercent": [
+   90,
+   89,
+   87
+  ],
+  "m_ARecoveryPercent@": "0x009ad0",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalPistolUSP",
+   "R63rdWeapons.CMagPistolUSP",
+   "R63rdWeapons.SilencedPistolUSP"
+  ]
+ },
+ {
+  "class": "R6DescAssaultFAL",
+  "m_ARangePercent": [
+   49,
+   49,
+   19
+  ],
+  "m_ARangePercent@": "0x009c0c",
+  "m_ADamagePercent": [
+   99,
+   99,
+   49
+  ],
+  "m_ADamagePercent@": "0x009c1c",
+  "m_AAccuracyPercent": [
+   74,
+   74,
+   89
+  ],
+  "m_AAccuracyPercent@": "0x009c2c",
+  "m_ARecoilPercent": [
+   33,
+   60,
+   91
+  ],
+  "m_ARecoilPercent@": "0x009c3c",
+  "m_ARecoveryPercent": [
+   85,
+   76,
+   80
+  ],
+  "m_ARecoveryPercent@": "0x009c4c",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultFAL",
+   "R63rdWeapons.CMagAssaultFAL",
+   "R63rdWeapons.SilencedAssaultFAL"
+  ]
+ },
+ {
+  "class": "R6DescPrimaryWeaponNone",
+  "m_ARangePercent": [
+   0
+  ],
+  "m_ARangePercent@": "0x009d8d",
+  "m_ADamagePercent": [
+   0
+  ],
+  "m_ADamagePercent@": "0x009d95",
+  "m_AAccuracyPercent": [
+   0
+  ],
+  "m_AAccuracyPercent@": "0x009d9d",
+  "m_ARecoilPercent": [
+   0
+  ],
+  "m_ARecoilPercent@": "0x009da5",
+  "m_ARecoveryPercent": [
+   0
+  ],
+  "m_ARecoveryPercent@": "0x009dad"
+ },
+ {
+  "class": "R6DescShotgunM1",
+  "m_ARangePercent": [
+   8,
+   8
+  ],
+  "m_ARangePercent@": "0x009f98",
+  "m_ADamagePercent": [
+   100,
+   100
+  ],
+  "m_ADamagePercent@": "0x009fa4",
+  "m_AAccuracyPercent": [
+   1,
+   1
+  ],
+  "m_AAccuracyPercent@": "0x009fb0",
+  "m_ARecoilPercent": [
+   5,
+   5
+  ],
+  "m_ARecoilPercent@": "0x009fbc",
+  "m_ARecoveryPercent": [
+   91,
+   91
+  ],
+  "m_ARecoveryPercent@": "0x009fc8",
+  "m_WeaponTags": [
+   "BUCK",
+   "SLUG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.BuckShotgunM1",
+   "R63rdWeapons.SlugShotgunM1"
+  ]
+ },
+ {
+  "class": "R6DescShotgunSPAS12",
+  "m_ARangePercent": [
+   8,
+   8
+  ],
+  "m_ARangePercent@": "0x00a0d0",
+  "m_ADamagePercent": [
+   100,
+   100
+  ],
+  "m_ADamagePercent@": "0x00a0dc",
+  "m_AAccuracyPercent": [
+   1,
+   1
+  ],
+  "m_AAccuracyPercent@": "0x00a0e8",
+  "m_ARecoilPercent": [
+   19,
+   19
+  ],
+  "m_ARecoilPercent@": "0x00a0f4",
+  "m_ARecoveryPercent": [
+   87,
+   87
+  ],
+  "m_ARecoveryPercent@": "0x00a100",
+  "m_WeaponTags": [
+   "BUCK",
+   "SLUG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.BuckShotgunSPAS12",
+   "R63rdWeapons.SlugShotgunSPAS12"
+  ]
+ },
+ {
+  "class": "R6DescShotgunUSAS12",
+  "m_ARangePercent": [
+   8,
+   8
+  ],
+  "m_ARangePercent@": "0x00a212",
+  "m_ADamagePercent": [
+   100,
+   100
+  ],
+  "m_ADamagePercent@": "0x00a21e",
+  "m_AAccuracyPercent": [
+   1,
+   1
+  ],
+  "m_AAccuracyPercent@": "0x00a22a",
+  "m_ARecoilPercent": [
+   46,
+   46
+  ],
+  "m_ARecoilPercent@": "0x00a236",
+  "m_ARecoveryPercent": [
+   77,
+   77
+  ],
+  "m_ARecoveryPercent@": "0x00a242",
+  "m_WeaponTags": [
+   "BUCK",
+   "SLUG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.BuckShotgunUSAS12",
+   "R63rdWeapons.SlugShotgunUSAS12"
+  ]
+ },
+ {
+  "class": "R6DescAssaultAUG",
+  "m_ARangePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ARangePercent@": "0x00a378",
+  "m_ADamagePercent": [
+   57,
+   57,
+   23
+  ],
+  "m_ADamagePercent@": "0x00a388",
+  "m_AAccuracyPercent": [
+   59,
+   59,
+   73
+  ],
+  "m_AAccuracyPercent@": "0x00a398",
+  "m_ARecoilPercent": [
+   54,
+   66,
+   100
+  ],
+  "m_ARecoilPercent@": "0x00a3a8",
+  "m_ARecoveryPercent": [
+   90,
+   86,
+   86
+  ],
+  "m_ARecoveryPercent@": "0x00a3b8",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultAUG",
+   "R63rdWeapons.CMagAssaultAUG",
+   "R63rdWeapons.SilencedAssaultAUG"
+  ]
+ },
+ {
+  "class": "R6DescSniperAWCovert",
+  "m_ARangePercent": [
+   19
+  ],
+  "m_ARangePercent@": "0x00a5b7",
+  "m_ADamagePercent": [
+   40
+  ],
+  "m_ADamagePercent@": "0x00a5bf",
+  "m_AAccuracyPercent": [
+   83
+  ],
+  "m_AAccuracyPercent@": "0x00a5c7",
+  "m_ARecoilPercent": [
+   90
+  ],
+  "m_ARecoilPercent@": "0x00a5cf",
+  "m_ARecoveryPercent": [
+   52
+  ],
+  "m_ARecoveryPercent@": "0x00a5d7",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.SilencedSniperAWCovert"
+  ]
+ },
+ {
+  "class": "R6DescSniperDragunov",
+  "m_ARangePercent": [
+   61,
+   27
+  ],
+  "m_ARangePercent@": "0x00a6ca",
+  "m_ADamagePercent": [
+   100,
+   50
+  ],
+  "m_ADamagePercent@": "0x00a6d6",
+  "m_AAccuracyPercent": [
+   83,
+   94
+  ],
+  "m_AAccuracyPercent@": "0x00a6e2",
+  "m_ARecoilPercent": [
+   1,
+   86
+  ],
+  "m_ARecoilPercent@": "0x00a6ee",
+  "m_ARecoveryPercent": [
+   60,
+   53
+  ],
+  "m_ARecoveryPercent@": "0x00a6fa",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSniperDragunov",
+   "R63rdWeapons.SilencedSniperDragunov"
+  ]
+ },
+ {
+  "class": "R6DescSniperM82A1",
+  "m_ARangePercent": [
+   100,
+   57
+  ],
+  "m_ARangePercent@": "0x00a821",
+  "m_ADamagePercent": [
+   100,
+   100
+  ],
+  "m_ADamagePercent@": "0x00a82d",
+  "m_AAccuracyPercent": [
+   89,
+   100
+  ],
+  "m_AAccuracyPercent@": "0x00a839",
+  "m_ARecoilPercent": [
+   1,
+   82
+  ],
+  "m_ARecoilPercent@": "0x00a845",
+  "m_ARecoveryPercent": [
+   9,
+   1
+  ],
+  "m_ARecoveryPercent@": "0x00a851",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSniperM82A1",
+   "R63rdWeapons.SilencedSniperM82A1"
+  ]
+ },
+ {
+  "class": "R6DescSniperPSG1",
+  "m_ARangePercent": [
+   49,
+   19
+  ],
+  "m_ARangePercent@": "0x00a96d",
+  "m_ADamagePercent": [
+   98,
+   54
+  ],
+  "m_ADamagePercent@": "0x00a979",
+  "m_AAccuracyPercent": [
+   83,
+   95
+  ],
+  "m_AAccuracyPercent@": "0x00a985",
+  "m_ARecoilPercent": [
+   16,
+   85
+  ],
+  "m_ARecoilPercent@": "0x00a991",
+  "m_ARecoveryPercent": [
+   42,
+   35
+  ],
+  "m_ARecoveryPercent@": "0x00a99d",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSniperPSG1",
+   "R63rdWeapons.SilencedSniperPSG1"
+  ]
+ },
+ {
+  "class": "R6DescSniperSSG3000",
+  "m_ARangePercent": [
+   71,
+   27
+  ],
+  "m_ARangePercent@": "0x00aaad",
+  "m_ADamagePercent": [
+   78,
+   39
+  ],
+  "m_ADamagePercent@": "0x00aab9",
+  "m_AAccuracyPercent": [
+   80,
+   92
+  ],
+  "m_AAccuracyPercent@": "0x00aac5",
+  "m_ARecoilPercent": [
+   58,
+   93
+  ],
+  "m_ARecoilPercent@": "0x00aad1",
+  "m_ARecoveryPercent": [
+   52,
+   42
+  ],
+  "m_ARecoveryPercent@": "0x00aadd",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSniperSSG3000",
+   "R63rdWeapons.SilencedSniperSSG3000"
+  ]
+ },
+ {
+  "class": "R6DescSniperVSSVintorez",
+  "m_ARangePercent": [
+   9
+  ],
+  "m_ARangePercent@": "0x00abfd",
+  "m_ADamagePercent": [
+   25
+  ],
+  "m_ADamagePercent@": "0x00ac05",
+  "m_AAccuracyPercent": [
+   54
+  ],
+  "m_AAccuracyPercent@": "0x00ac0d",
+  "m_ARecoilPercent": [
+   76
+  ],
+  "m_ARecoilPercent@": "0x00ac15",
+  "m_ARecoveryPercent": [
+   70
+  ],
+  "m_ARecoveryPercent@": "0x00ac1d",
+  "m_WeaponTags": [
+   "NORMAL"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.SilencedSniperVSSVintorez"
+  ]
+ },
+ {
+  "class": "R6DescSniperWA2000",
+  "m_ARangePercent": [
+   87,
+   37
+  ],
+  "m_ARangePercent@": "0x00ad16",
+  "m_ADamagePercent": [
+   100,
+   50
+  ],
+  "m_ADamagePercent@": "0x00ad22",
+  "m_AAccuracyPercent": [
+   67,
+   79
+  ],
+  "m_AAccuracyPercent@": "0x00ad2e",
+  "m_ARecoilPercent": [
+   1,
+   93
+  ],
+  "m_ARecoilPercent@": "0x00ad3a",
+  "m_ARecoveryPercent": [
+   52,
+   45
+  ],
+  "m_ARecoveryPercent@": "0x00ad46",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSniperWA2000",
+   "R63rdWeapons.SilencedSniperWA2000"
+  ]
+ },
+ {
+  "class": "R6DescSubCZ61",
+  "m_ARangePercent": [
+   6,
+   6,
+   4
+  ],
+  "m_ARangePercent@": "0x00ae5f",
+  "m_ADamagePercent": [
+   6,
+   6,
+   4
+  ],
+  "m_ADamagePercent@": "0x00ae6f",
+  "m_AAccuracyPercent": [
+   30,
+   30,
+   40
+  ],
+  "m_AAccuracyPercent@": "0x00ae7f",
+  "m_ARecoilPercent": [
+   85,
+   89,
+   91
+  ],
+  "m_ARecoilPercent@": "0x00ae8f",
+  "m_ARecoveryPercent": [
+   100,
+   99,
+   97
+  ],
+  "m_ARecoveryPercent@": "0x00ae9f",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubCZ61",
+   "R63rdWeapons.CMagSubCZ61",
+   "R63rdWeapons.SilencedSubCZ61"
+  ]
+ },
+ {
+  "class": "R6DescSubM12S",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00afcc",
+  "m_ADamagePercent": [
+   25,
+   25,
+   13
+  ],
+  "m_ADamagePercent@": "0x00afdc",
+  "m_AAccuracyPercent": [
+   39,
+   39,
+   45
+  ],
+  "m_AAccuracyPercent@": "0x00afec",
+  "m_ARecoilPercent": [
+   70,
+   77,
+   90
+  ],
+  "m_ARecoilPercent@": "0x00affc",
+  "m_ARecoveryPercent": [
+   93,
+   90,
+   91
+  ],
+  "m_ARecoveryPercent@": "0x00b00c",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubM12S",
+   "R63rdWeapons.CMagSubM12S",
+   "R63rdWeapons.SilencedSubM12S"
+  ]
+ },
+ {
+  "class": "R6DescSubMac119",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00b145",
+  "m_ADamagePercent": [
+   15,
+   15,
+   8
+  ],
+  "m_ADamagePercent@": "0x00b155",
+  "m_AAccuracyPercent": [
+   13,
+   13,
+   27
+  ],
+  "m_AAccuracyPercent@": "0x00b165",
+  "m_ARecoilPercent": [
+   72,
+   76,
+   86
+  ],
+  "m_ARecoilPercent@": "0x00b175",
+  "m_ARecoveryPercent": [
+   100,
+   99,
+   97
+  ],
+  "m_ARecoveryPercent@": "0x00b185",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubMac119",
+   "R63rdWeapons.CMagSubMac119",
+   "R63rdWeapons.SilencedSubMac119"
+  ]
+ },
+ {
+  "class": "R6DescSubMicroUzi",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00b2c4",
+  "m_ADamagePercent": [
+   15,
+   15,
+   12
+  ],
+  "m_ADamagePercent@": "0x00b2d4",
+  "m_AAccuracyPercent": [
+   28,
+   28,
+   38
+  ],
+  "m_AAccuracyPercent@": "0x00b2e4",
+  "m_ARecoilPercent": [
+   59,
+   65,
+   71
+  ],
+  "m_ARecoilPercent@": "0x00b2f4",
+  "m_ARecoveryPercent": [
+   100,
+   99,
+   97
+  ],
+  "m_ARecoveryPercent@": "0x00b304",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubMicroUzi",
+   "R63rdWeapons.CMagSubMicroUzi",
+   "R63rdWeapons.SilencedSubMicroUzi"
+  ]
+ },
+ {
+  "class": "R6DescSubMP510A2",
+  "m_ARangePercent": [
+   10,
+   10,
+   7
+  ],
+  "m_ARangePercent@": "0x00b44b",
+  "m_ADamagePercent": [
+   39,
+   39,
+   19
+  ],
+  "m_ADamagePercent@": "0x00b45b",
+  "m_AAccuracyPercent": [
+   43,
+   43,
+   53
+  ],
+  "m_AAccuracyPercent@": "0x00b46b",
+  "m_ARecoilPercent": [
+   44,
+   64,
+   82
+  ],
+  "m_ARecoilPercent@": "0x00b47b",
+  "m_ARecoveryPercent": [
+   94,
+   89,
+   91
+  ],
+  "m_ARecoveryPercent@": "0x00b48b",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubMP510A2",
+   "R63rdWeapons.CMagSubMP510A2",
+   "R63rdWeapons.SilencedSubMP510A2"
+  ]
+ },
+ {
+  "class": "R6DescSubMP5A4",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00b5c8",
+  "m_ADamagePercent": [
+   21,
+   21,
+   10
+  ],
+  "m_ADamagePercent@": "0x00b5d8",
+  "m_AAccuracyPercent": [
+   44,
+   44,
+   53
+  ],
+  "m_AAccuracyPercent@": "0x00b5e8",
+  "m_ARecoilPercent": [
+   75,
+   83,
+   91
+  ],
+  "m_ARecoilPercent@": "0x00b5f8",
+  "m_ARecoveryPercent": [
+   95,
+   92,
+   92
+  ],
+  "m_ARecoveryPercent@": "0x00b608",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubMP5A4",
+   "R63rdWeapons.CMagSubMP5A4",
+   "R63rdWeapons.SilencedSubMP5A4"
+  ]
+ },
+ {
+  "class": "R6DescSubMP5KPDW",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00b735",
+  "m_ADamagePercent": [
+   18,
+   18,
+   9
+  ],
+  "m_ADamagePercent@": "0x00b745",
+  "m_AAccuracyPercent": [
+   23,
+   23,
+   35
+  ],
+  "m_AAccuracyPercent@": "0x00b755",
+  "m_ARecoilPercent": [
+   73,
+   81,
+   89
+  ],
+  "m_ARecoilPercent@": "0x00b765",
+  "m_ARecoveryPercent": [
+   95,
+   92,
+   92
+  ],
+  "m_ARecoveryPercent@": "0x00b775",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubMP5KPDW",
+   "R63rdWeapons.CMagSubMP5KPDW",
+   "R63rdWeapons.SilencedSubMP5KPDW"
+  ]
+ },
+ {
+  "class": "R6DescSubMP5SD5",
+  "m_ARangePercent": [
+   7,
+   7
+  ],
+  "m_ARangePercent@": "0x00b8af",
+  "m_ADamagePercent": [
+   8,
+   8
+  ],
+  "m_ADamagePercent@": "0x00b8bb",
+  "m_AAccuracyPercent": [
+   47,
+   47
+  ],
+  "m_AAccuracyPercent@": "0x00b8c7",
+  "m_ARecoilPercent": [
+   91,
+   94
+  ],
+  "m_ARecoilPercent@": "0x00b8d3",
+  "m_ARecoveryPercent": [
+   93,
+   90
+  ],
+  "m_ARecoveryPercent@": "0x00b8df",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.SilencedSubMP5SD5",
+   "R63rdWeapons.CMagSubMP5SD5"
+  ]
+ },
+ {
+  "class": "R6DescSubMTAR21",
+  "m_ARangePercent": [
+   15,
+   15,
+   9
+  ],
+  "m_ARangePercent@": "0x00b9e8",
+  "m_ADamagePercent": [
+   15,
+   15,
+   8
+  ],
+  "m_ADamagePercent@": "0x00b9f8",
+  "m_AAccuracyPercent": [
+   34,
+   34,
+   48
+  ],
+  "m_AAccuracyPercent@": "0x00ba08",
+  "m_ARecoilPercent": [
+   81,
+   88,
+   91
+  ],
+  "m_ARecoilPercent@": "0x00ba18",
+  "m_ARecoveryPercent": [
+   93,
+   90,
+   90
+  ],
+  "m_ARecoveryPercent@": "0x00ba28",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubMTAR21",
+   "R63rdWeapons.CMagSubMTAR21",
+   "R63rdWeapons.SilencedSubMTAR21"
+  ]
+ },
+ {
+  "class": "R6DescSubP90",
+  "m_ARangePercent": [
+   14,
+   5
+  ],
+  "m_ARangePercent@": "0x00bb5d",
+  "m_ADamagePercent": [
+   17,
+   8
+  ],
+  "m_ADamagePercent@": "0x00bb69",
+  "m_AAccuracyPercent": [
+   39,
+   48
+  ],
+  "m_AAccuracyPercent@": "0x00bb75",
+  "m_ARecoilPercent": [
+   72,
+   94
+  ],
+  "m_ARecoilPercent@": "0x00bb81",
+  "m_ARecoveryPercent": [
+   93,
+   90
+  ],
+  "m_ARecoveryPercent@": "0x00bb8d",
+  "m_WeaponTags": [
+   "NORMAL",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubP90",
+   "R63rdWeapons.SilencedSubP90"
+  ]
+ },
+ {
+  "class": "R6DescSubSR2",
+  "m_ARangePercent": [
+   12,
+   12,
+   6
+  ],
+  "m_ARangePercent@": "0x00bc8f",
+  "m_ADamagePercent": [
+   20,
+   20,
+   10
+  ],
+  "m_ADamagePercent@": "0x00bc9f",
+  "m_AAccuracyPercent": [
+   35,
+   35,
+   44
+  ],
+  "m_AAccuracyPercent@": "0x00bcaf",
+  "m_ARecoilPercent": [
+   59,
+   68,
+   86
+  ],
+  "m_ARecoilPercent@": "0x00bcbf",
+  "m_ARecoveryPercent": [
+   99,
+   98,
+   97
+  ],
+  "m_ARecoveryPercent@": "0x00bccf",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubSR2",
+   "R63rdWeapons.CMagSubSR2",
+   "R63rdWeapons.SilencedSubSR2"
+  ]
+ },
+ {
+  "class": "R6DescSubTMP",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00bddf",
+  "m_ADamagePercent": [
+   15,
+   15,
+   8
+  ],
+  "m_ADamagePercent@": "0x00bdef",
+  "m_AAccuracyPercent": [
+   31,
+   31,
+   46
+  ],
+  "m_AAccuracyPercent@": "0x00bdff",
+  "m_ARecoilPercent": [
+   75,
+   78,
+   87
+  ],
+  "m_ARecoilPercent@": "0x00be0f",
+  "m_ARecoveryPercent": [
+   99,
+   98,
+   95
+  ],
+  "m_ARecoveryPercent@": "0x00be1f",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubTMP",
+   "R63rdWeapons.CMagSubTMP",
+   "R63rdWeapons.SilencedSubTMP"
+  ]
+ },
+ {
+  "class": "R6DescSubUMP",
+  "m_ARangePercent": [
+   10,
+   10,
+   8
+  ],
+  "m_ARangePercent@": "0x00bf4c",
+  "m_ADamagePercent": [
+   26,
+   26,
+   21
+  ],
+  "m_ADamagePercent@": "0x00bf5c",
+  "m_AAccuracyPercent": [
+   43,
+   43,
+   52
+  ],
+  "m_AAccuracyPercent@": "0x00bf6c",
+  "m_ARecoilPercent": [
+   66,
+   87,
+   78
+  ],
+  "m_ARecoilPercent@": "0x00bf7c",
+  "m_ARecoveryPercent": [
+   96,
+   85,
+   92
+  ],
+  "m_ARecoveryPercent@": "0x00bf8c",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubUMP",
+   "R63rdWeapons.CMagSubUMP",
+   "R63rdWeapons.SilencedSubUMP"
+  ]
+ },
+ {
+  "class": "R6DescSubUzi",
+  "m_ARangePercent": [
+   11,
+   11,
+   7
+  ],
+  "m_ARangePercent@": "0x00c0ba",
+  "m_ADamagePercent": [
+   21,
+   21,
+   10
+  ],
+  "m_ADamagePercent@": "0x00c0ca",
+  "m_AAccuracyPercent": [
+   40,
+   40,
+   55
+  ],
+  "m_AAccuracyPercent@": "0x00c0da",
+  "m_ARecoilPercent": [
+   75,
+   77,
+   90
+  ],
+  "m_ARecoilPercent@": "0x00c0ea",
+  "m_ARecoveryPercent": [
+   92,
+   91,
+   89
+  ],
+  "m_ARecoveryPercent@": "0x00c0fa",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalSubUzi",
+   "R63rdWeapons.CMagSubUzi",
+   "R63rdWeapons.SilencedSubUzi"
+  ]
+ },
+ {
+  "class": "R6DescAssaultAK47",
+  "m_ARangePercent": [
+   37,
+   37,
+   15
+  ],
+  "m_ARangePercent@": "0x00c55f",
+  "m_ADamagePercent": [
+   80,
+   80,
+   40
+  ],
+  "m_ADamagePercent@": "0x00c56f",
+  "m_AAccuracyPercent": [
+   56,
+   56,
+   72
+  ],
+  "m_AAccuracyPercent@": "0x00c57f",
+  "m_ARecoilPercent": [
+   34,
+   57,
+   89
+  ],
+  "m_ARecoilPercent@": "0x00c58f",
+  "m_ARecoveryPercent": [
+   90,
+   83,
+   85
+  ],
+  "m_ARecoveryPercent@": "0x00c59f",
+  "m_WeaponTags": [
+   "NORMAL",
+   "CMAG",
+   "SILENCED"
+  ],
+  "m_WeaponClasses": [
+   "R63rdWeapons.NormalAssaultAK47",
+   "R63rdWeapons.CMagAssaultAK47",
+   "R63rdWeapons.SilencedAssaultAK47"
+  ]
+ }
+]
