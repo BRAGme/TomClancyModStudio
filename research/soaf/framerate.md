@@ -1,14 +1,28 @@
 # Sum of All Fears (PS2, SLES-51180) — why it feels slow in PCSX2
 
-**Short answer: it is almost certainly not the emulator. The game presents one
-new image every two vsyncs — 25 fps on PAL — while PCSX2 runs it at full
-speed.** That is the same shape as Ghost Recon's and Jungle Storm's 30 fps cap
-(60 Hz NTSC, one extra vblank wait); this disc is PAL, so the same cap lands at
-25.
+> **Correction, 2026-09-28 (same day).** The first version of this file led
+> with "it is almost certainly not the emulator". **That is not established and
+> should not be relied on.** It rested on PCSX2's counters in two screenshots
+> taken at 09:07 (FPS 50.00, EE 10% / GS 7% in menus, EE 32% / GS 24% in a
+> mission) and generalised them to a slowdown observed later, at a moment for
+> which there is no capture. The user subsequently reported the PCSX2
+> performance numbers showing **red**, which indicates speed below target —
+> i.e. the emulator genuinely *was* falling behind at the time it felt laggy.
+> No screenshot of that state exists yet, so this file cannot say what it was
+> doing. §1's cadence measurement stands on its own evidence; §2's conclusion
+> does not, and §3 is now a live candidate rather than a footnote.
+>
+> Checked while correcting this: in both 09:07 screenshots the OSD reads
+> `FPS: 50.00 [P]` in **white**. An earlier attempt to measure the colour by
+> sampling pixels returned "red" because the crop caught the menu's red banner
+> artwork instead of the text. The colour question is settled for *those two
+> frames only*.
 
-A second, genuinely expensive thing is also happening during video playback and
-is documented below, but it is not what makes the game *feel* laggy at full
-speed.
+**What is measured:** the game presents one new image every two vsyncs — 25 fps
+on PAL (§1). That is the same shape as Ghost Recon's and Jungle Storm's 30 fps
+cap (60 Hz NTSC, one extra vblank wait); this disc is PAL, so the same cap
+lands at 25. Whether that is *the* cause of the reported lag, or merely a
+ceiling sitting underneath a separate emulator-side problem, is open.
 
 Evidence: one GS dump,
 `Pictures/PCXS2 Snaps/The Sum of All Fears/..._20260928115540.gs.zst`,
@@ -38,7 +52,10 @@ The 368-byte frames are not idle — they are a full-buffer clear: `PRIM=6`
 **clear, then draw, then flip** across *two* vsyncs, and a new image reaches the
 screen at half the display rate: **25 fps on a 50 Hz PAL output**.
 
-## 2. Why this reads as "emulation is slow" when it is not
+## 2. The full-speed reading — and why it does not settle the question
+
+> Superseded in part; see the correction at the top. Everything below is true
+> of the 09:07 screenshots and of nothing else.
 
 PCSX2's own counters during play, from the status bar:
 
@@ -52,11 +69,15 @@ An emulator that is struggling shows a *falling* FPS number and a pegged EE or
 GS. This one is keeping up comfortably and still looks stuttery, which is what
 a 25 fps game on a 50 Hz output looks like.
 
-**The menus being "just as laggy" is the decisive observation.** The menus
-upload no video and draw almost nothing (7% GS), so nothing about §3 applies to
-them. The one thing the menus, the logo and gameplay all share is the
-presentation cadence. A cost that only appears during video cannot explain a
-menu that feels identical.
+The menus being "just as laggy" was read as decisive: menus upload no video and
+drew almost nothing (7% GS) at 09:07, so §3 could not explain them, leaving the
+shared presentation cadence as the only common factor.
+
+**That inference is weaker than it looked.** It assumes the menus were in the
+same state when they felt laggy as when they were measured at 7% GS, and the
+red counters say the machine was somewhere this file has not observed. A menu
+that is red is not the menu in these screenshots. Treat the shared-cadence
+argument as a hypothesis with one supporting measurement, not as a conclusion.
 
 ## 3. The FMV upload path — real, expensive, but a separate problem
 
@@ -83,11 +104,28 @@ second. If the logo ever does drop below full speed, this is why, and the
 standard remedy is to let FMVs run on the software renderer, or to lower the
 upscale.
 
-This does **not** explain the menus (§2), and on the evidence here it was not
-costing full speed either — the dump was taken at 50.00 fps.
+This was originally filed as "real but not the cause". With the red counters
+reported, it is **a leading candidate for the intro at least** — the dump was
+taken at the logo, which is exactly where this cost is paid, and a GS dump
+records no FPS, so nothing here shows the emulator was keeping up when it was
+captured. The claim that "the dump was taken at 50.00 fps" was imported from
+the 09:07 screenshots and is withdrawn.
+
+What would confirm it in one step: set the upscale to 1x (native) and watch the
+intro. If the red goes away, this is the cause and the remedy is a software
+renderer for FMVs or a lower upscale. If it stays red at native, the cost is
+not invalidation and this section is not the answer.
 
 ## 4. What has NOT been established
 
+* **Whether the emulator is keeping up at the moment it feels laggy.** This is
+  the central open question and the one the file originally answered too
+  confidently. The only speed evidence is two screenshots from 09:07 showing
+  full speed in white; the reported red counters are from a later, uncaptured
+  state. **A screenshot taken while the numbers are red settles it**, and the
+  useful reading is the OSD line plus the EE / VU / GS percentages in the
+  status bar. Red with a low GS% points at the EE or the game; red with a high
+  GS% points at §3 and the upscale.
 * The dump covers **the intro FMV only**. The 2-vsync cadence is measured
   there and nowhere else. It is consistent with the menu and gameplay reports
   but not proven for them — a dump taken in a menu and one in a mission would
