@@ -189,3 +189,57 @@ be predicted from the outside.
 
 The probe disc is `E:/PS2 Games/GR_SOAF_probe (throwaway).iso`, built from an
 untouched copy. Nothing on the real discs was modified.
+
+### 7a. Result: stuck at loading -- and why the probe was under-built
+
+Booted 2026-09-28. **The mission hangs on the loading screen.** It does not
+crash or fall back to the menu; it simply never finishes.
+
+Before blaming the format, the probe itself was wrong, and the mistake is
+instructive. **A level is about fourteen files, not six.** The six swapped were
+the ones sharing an extension between the two discs, which is not the same
+thing as the level's full set:
+
+| | Ghost Recon `M01_CAVES` | SOAF `TRAINING` |
+|---|---|---|
+| swapped | `.AOL` `.ENV` `.MAZ` `.MOL` `.POL` `.SHT` | same six |
+| **left mismatched** | `.BMZ` **2,153,061** | `.BMZ` **2,638,992** |
+| also present, GR only | `.PAK` `.RSB` `.POB` `_GRASS.BMZ` `_SKY.BMZ` `_SKY.POZ` | -- |
+| also present, SOAF only | -- | `.BMB` `.BMH` `.COZ` `.SDP` `.TOE` `.XML` |
+
+So the disc booted Sum of All Fears' geometry against Ghost Recon's 2 MB
+texture bundle, its `.PAK`, its sky and its grass. Geometry that indexes into a
+bundle it was not built for is reason enough to hang, with nothing wrong with
+the `.MAZ` at all.
+
+**The `.MAZ` format is, separately, looking fine.** Compared 32 words deep,
+Sum of All Fears and Ghost Recon agree on structure: magic `-10`, then a
+repeating four-word record whose fourth word is always `1`, at every matching
+index in both files. The container is the same; §2's reading holds for this
+file at least.
+
+**What §2 got wrong.** "Every file type is shared, none exclusive to either
+disc" was drawn from the twenty-eight most common extensions. It does not hold
+per level: `.BMB`, `.BMH`, `.COZ` and `.SDP` are SOAF's level packaging and
+`.PAK` is Ghost Recon's. The *asset* formats match; the *level packaging* does
+not, and that is the harder half.
+
+**Next probe, if this is picked up again.** Swap the full overlapping set --
+above all `.BMZ`, the texture bundle -- and find out what Ghost Recon's loader
+does about the files Sum of All Fears has no counterpart for. Two things to
+settle first, both static:
+
+1. What `.BMZ` actually is in each game, and whether SOAF's packs into Ghost
+   Recon's 2,153,061-byte slot at all.
+2. Whether Ghost Recon's loader requires `<level>.PAK`, which Sum of All Fears
+   never ships. If it does, and new entries cannot be added to `GR.IMG` (the
+   writer replaces files, it does not grow the entry or name tables), then a
+   level port needs a donor level whose own `.PAK` is acceptable, or the
+   loader patched not to want one.
+
+**A dead end that was tried:** reading the hung PC out of the savestate. A scan
+of `PCSX2 Internal Structures.dat` for values in Ghost Recon's text range
+returns page-aligned recompiler bookkeeping (`0x230000`, `0x5b0000`, ...), not
+program counters, and mapping those to symbols produces confident nonsense.
+Getting a real PC needs PCSX2's `cpuRegisters` layout for this build; do not
+repeat the scan-and-symbolise approach.
