@@ -477,3 +477,77 @@ Expect Ghost Recon's sand-coloured fog, its cave skybox and its command map over
 Sum of All Fears' training ground -- all cosmetic, and all from the `.ENV`.
 If it loads, the next step is an `.ENV` carrying Sum of All Fears' fog and far
 plane with Ghost Recon's map name, skybox and command-map fields.
+
+## 12. Probe 4: still stuck -- the load dies in `LoadPortals`
+
+Probe 4 (Ghost Recon's own `.ENV`, Sum of All Fears' six geometry and texture
+files) **also sticks at loading**, so the `.ENV` was a real fault (§11) but not
+the only one.
+
+### 12a. The loader's order
+
+`MAPLoader::LoadWithSim` (`0x0047C9F0`), traced call by call:
+
+    LoadFromMol     .mol    models and rooms
+    LoadPortals     .pol    portals between rooms
+    CGraphicSystem::LoadMissionMap   .MAZ / .SHT / .BMZ
+    LoadObjects     .aol    placed objects
+
+### 12b. How far it got, from what is left in RAM
+
+Probe 4's savestate (slot 3), searched for each file's bytes:
+
+| | in RAM |
+|---|---|
+| Ghost Recon's sky textures, command-map bitmap, briefing art (named by the `.ENV`) | **yes** -- resident |
+| SOAF `.MOL` | its last 110 bytes only, in stack-area memory |
+| SOAF `.POL` | its first 21 bytes only (chunk header + `Version`), in stack-area memory |
+| SOAF `.MAZ` `.SHT` `.BMZ` `.AOL` | **nothing, not even headers** |
+
+Read against 12a: the `.MOL` was streamed through to its end, the `.POL`'s header
+was read, and nothing after that was touched. **The load dies in `LoadFromMol`'s
+tail or, more likely, `LoadPortals`.** The two fragments are small and sit in
+stack memory, so treat this as strong circumstantial evidence rather than proof;
+it is, however, exactly the pattern 12a predicts.
+
+The game prints nothing about its load (checked `emulog.txt`), so the log
+cannot confirm it.
+
+### 12c. Ruled out, each checked rather than assumed
+
+* **Version records** -- identical: `.AOL` v5 `ObjectList`, `.POL` v1
+  `PortalList`, `.MOL` v9, `.SHT` `RoomData`.
+* **Object classes** -- every class Sum of All Fears places (`n`, `door`,
+  `glass`, `target`, `dyn`, `forest`, `spotlight`) is used by some Ghost Recon
+  level.
+* **An object-count cap** -- `LoadObjects` checks the chunk id is `0xA`, reads a
+  count and loops with no upper bound. (SOAF's training ground places 85
+  objects to Ghost Recon's maximum of 53, but the load never reaches objects.)
+* **Portal name prefixes** -- `p`, `pd`, `pt`, `pwt` all occur in Ghost Recon.
+* **Capacity** -- texture count, room counts, portal count, and every file size
+  are inside the range Ghost Recon's own levels already use.
+
+### 12d. What `LoadPortal` does with each portal
+
+`MAPLoader::LoadPortal` (`0x0047B8A0`, 1,816 bytes): reads a chunk header,
+builds the portal's name with `sprintf("%d")`, reads vertices, ints and a
+string, then turns each of the portal's two room numbers into a string with
+`itoa` and searches the `RSArray<Room>` for a room of that name, and finally
+calls `RSModelManager::FindModel` for the portal's geometry. The rooms come
+from `LoadFromMol`, which ran just before. Neither game's `.MOL` registers
+models under portal names -- not even Ghost Recon's own -- so the name
+`FindModel` is given comes from the portal record itself, not yet identified.
+
+### 12e. Next step
+
+Mirror `LoadPortal`'s reads in Python, run it over Ghost Recon's `.POL` and
+Sum of All Fears', and find the first field where Sum of All Fears' records
+stop parsing the way Ghost Recon's code expects. Deterministic, and needs no
+more boots.
+
+### 12f. A better donor, found along the way
+
+Ghost Recon has its own `TRAINING` level, and it is a close relative of Sum of
+All Fears': both have **exactly 17** `pwt` portals and **exactly 62** `target`
+objects. If room numbering carries over between the two, `TRAINING` is a far
+better slot than `M01_CAVES` for this level.
