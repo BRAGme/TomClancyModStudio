@@ -551,3 +551,43 @@ Ghost Recon has its own `TRAINING` level, and it is a close relative of Sum of
 All Fears': both have **exactly 17** `pwt` portals and **exactly 62** `target`
 objects. If room numbering carries over between the two, `TRAINING` is a far
 better slot than `M01_CAVES` for this level.
+
+## 13. Probe 5: Sum of All Fears' training ground in Ghost Recon's `TRAINING` slot
+
+### 13a. Why this slot
+
+Ghost Recon's own `TRAINING.ENV` already reads `<MapFileName>training\training.map`
+-- Sum of All Fears' map name exactly -- and shares its far plane (250) and fog
+distances (190 / 240). With §12f's 17 `pwt` portals and 62 targets in both, the
+two are the same level in two generations. So Ghost Recon's `.ENV` stays, and
+there is no name to reconcile at all. Seven missions load it: `T01`-`T07.MIS`
+(plus `TRAINING_MP.MIS`), all via `training.env`.
+
+### 13b. The space problem, and a probe-only workaround
+
+All six Sum of All Fears files are larger than Ghost Recon's `TRAINING` slots,
+the texture bundle by 337 KB. `GR.IMG` has no **blank** free run of 2.1 MB:
+the allocator found large unclaimed runs, but they hold data, and it refuses to
+overwrite unclaimed non-zero bytes (correctly -- unreferenced is not the same as
+unused). `GR.IMG` cannot simply grow either: `MENU.IMG` begins at the exact
+byte `GR.IMG` ends.
+
+For this throwaway disc, `MP06_CASTLE.BMZ` (a multiplayer map's texture bundle,
+2,233,124 bytes) was blanked and its record set to zero length, handing its
+slot to the allocator; everything else went through `Vokes.write` and its
+blank-check as normal. The texture bundle landed in the donor slot, and
+`.SHT`, `.MOL` and `.AOL` in the space it vacated; `.MAZ` and `.POL` grew in
+place into blank runs freed behind them. All six read back to their original
+lengths. The only file that changed in the listing is `MP06_CASTLE.BMZ`, which a
+zero-length record drops from it; `TRAINING.ENV` is byte-identical to the
+shipped one. **Multiplayer map MP06 (Castle) is broken on this disc.**
+
+**For a real port tool** this workaround is not acceptable: it needs a way to
+make room -- most likely moving `MENU.IMG` to the end of the image, updating
+its ISO directory record, and growing `GR.IMG` into the space. Every serious
+level port will need more room than the level it replaces.
+
+### 13c. What to run
+
+`E:/PS2 Games/GR_SOAF_probe5_training (throwaway).iso` -- Ghost Recon's
+Training, first mission (`T01`).
