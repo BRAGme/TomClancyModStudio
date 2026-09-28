@@ -710,9 +710,14 @@ It was then removed, because working is not the same as usable:
   always or not at all, menus included.
 
 Shipping that as an option would have offered something that looks like split
-screen and is not one. The addresses stay here; the switch does not. Anyone
-reviving this should start from the HUD and a second avatar, not from the
-renderer — the renderer is the part that already works.
+screen and is not one. The addresses stay here; the switch does not.
+
+**Do not treat this as a lead to pick back up.** The two-viewport path is this
+engine's *older* split-screen implementation — the one Ghost Recon and Jungle
+Storm moved on from — and building on it would be harder than the approach the
+project already takes for split screen on those discs. It is recorded here
+because it is genuinely present and genuinely runs, which is surprising and
+would otherwise cost someone a day to rediscover, not because it is the way in.
 
 For the record, the patch was: both initialisers rewritten to store 1, using
 the spare pointer reload that follows each store:
