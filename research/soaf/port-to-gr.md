@@ -591,3 +591,69 @@ level port will need more room than the level it replaces.
 
 `E:/PS2 Games/GR_SOAF_probe5_training (throwaway).iso` -- Ghost Recon's
 Training, first mission (`T01`).
+
+## 14. Probe 5 result: a crash, not a hang
+
+Training `T01` on probe 5 no longer sits on the loading screen: PCSX2 stops
+with **"R5900 Exception: Jump to unaligned address (PC: 0xCDCDCDCD)"** after
+about 17 s of loading (`emulog.txt`, 2277 s). `0xCDCDCDCD` is a fill pattern:
+code called through a pointer in memory that was allocated and never written.
+The behaviour changed with the slot, so the `TRAINING` slot got the loader
+doing something the `M01_CAVES` slot did not.
+
+### 14a. What the savestate (slot 4) can and cannot say
+
+**Can:** stale frames below the stack pointer, most recent first:
+`HandleLoadEnvironment` -> (message dispatch) -> `HandleLoadMap` ->
+`RSSimMAPLoader` / `MAPLoader` / `ROBLoader` constructors; older still,
+`RSModelManager::LoadModel` -> `RSQOBLoader::Load`. Stale frames are call
+history, not one guaranteed chain, but they put the crash inside the map load
+that `HandleLoadMap` starts.
+
+**Cannot:** the faulting registers. The state was saved after the CPU had
+entered the BIOS exception path -- `$sp` is a kernel stack, `$ra` and `EPC` are
+BIOS code (`0x00081FEC` / `0x00081FF4`, a `jalr $v1; ... syscall` callback
+trampoline), and `$v1` no longer holds `0xCDCDCDCD`. No `0xCDCDCDCD` remains in
+kernel memory. The kernel's handler table (`0x80019484`) is intact. Do not try
+to recover the fault from a state saved after the dialog.
+
+### 14b. Checked and ruled out
+
+* **`0xCDCDCDCD` baked into SOAF's files** (a PC debug-build exporter writing
+  uninitialised fields to disk): **no** -- zero occurrences in any of the six
+  geometry files; a couple in texture pixels, which Ghost Recon's own files
+  have too. The bad pointer is runtime memory.
+* **Unknown surface ids in collision groups:**
+  `IkeSurfacePropertiesMgr::FindPropertyForID` knows ids -1..26 and returns 0
+  for anything else, not garbage. Not this.
+* **Missing model files:** the numeric prefixes on placed objects
+  (`308_<door>killhouse01`) are **room numbers**, not model files -- Ghost
+  Recon's own `TRAINING.AOL` shows the same "no file" pattern for 14 of 15
+  prefixes and loads fine.
+
+### 14c. A correction to §12b
+
+§12b located the M01_CAVES stall in `LoadPortals` from a 110-byte `.MOL` tail
+and a 21-byte `.POL` header found in stack memory. Sampling 40 chunks of each
+file in both probes finds **none** of them resident in either -- these files are
+parsed as they stream and discarded, so residency cannot measure progress. The
+fragments were real but thin; `LoadPortals` is a hypothesis, not a finding.
+
+### 14d. The decisive next step: breakpoints on the loader
+
+Ghost Recon's symbols give every load step's address. Break on each in PCSX2's
+debugger (Debug -> Open Debugger -> Breakpoints) and start `T01`; the last one
+that fires before the exception is the step that fails:
+
+| step | address |
+|---|---|
+| `IkeSimulationMgr::HandleLoadMap` | `0x00388D60` |
+| `MAPLoader::LoadWithSim` | `0x0047C9F0` |
+| `MAPLoader::LoadFromMol` | `0x0047C340` |
+| `MAPLoader::LoadPortals` | `0x0047C020` |
+| `CGraphicSystem::LoadMissionMap` | `0x0044D890` |
+| `MAPLoader::LoadObjects` | `0x0047B730` |
+| `IkeSimulationMgr::HandleLoadSkybox` | `0x003991E0` |
+
+After that, the failing function can be mirrored in Python over SOAF's file
+and Ghost Recon's to find the field that differs.
