@@ -129,3 +129,63 @@ safely.
 
 **Untested.** It assumes the filter is `LobbyCfg` and that a co-op game type
 can run with one player. Both are cheap to find out and neither risks the disc.
+
+---
+
+## 7. The first probe, built (2026-09-28)
+
+Built and ready to boot; **not yet run**, so this section records method and
+measurements, not an outcome.
+
+**What was swapped.** Sum of All Fears' `TRAINING` level set replaced Ghost
+Recon's `M01_CAVES` inside a copy of the Ghost Recon ISO. `M01_CAVES` was
+chosen because it is the first campaign mission -- one menu selection to reach
+-- and because its slots fit:
+
+| file | GR M01_CAVES slot | SOAF TRAINING, LZO-packed | |
+|---|---|---|---|
+| `.MAZ` | 496,120 | 401,587 | in place |
+| `.MOL` | 504,107 | 350,239 | in place |
+| `.SHT` | 432,283 | 327,914 | in place |
+| `.AOL` | 65,692 | 11,334 | in place |
+| `.POL` | 1,019 | 2,215 | **relocated** (+1,196) |
+| `.ENV` | 510 | 245 | in place |
+
+SOAF's files are stored decompressed, Ghost Recon's LZO-packed, so each was
+packed with `tcps2.rselzo.compress` first (38 s for the `.MAZ`; the whole set
+is about 100 s in pure Python). Packed ratios ran 19-53%.
+
+Only the six level-asset files were replaced. `M01_CAVES.MIS` is **untouched**,
+so Ghost Recon's own mission script, actors and objectives run on top of Sum of
+All Fears' geometry. That is deliberate: the question this probe asks is
+whether the engine loads the level at all, and leaving the mission alone keeps
+one variable in play instead of three.
+
+**Verified after writing:** all six files read back and decompress to their
+original lengths and leading bytes (`.MAZ` `f6 ff ff ff`, `.ENV`
+`<EnvironmentFile`, and so on), and `GR.IMG` still lists all 4,004 files.
+
+**Level fit across the whole disc**, for reuse: every Ghost Recon level fits
+SOAF's `TRAINING` except for `.POL`, which overflows everywhere. The cheapest
+targets are `M06_CASTLE` (+776 bytes), `M01_CAVES` (+1,196), `M09_SWAMP`
+(+1,208) and `D03_DEPOT` (+1,212).
+
+**What the result will mean:**
+
+* *Loads, recognisable geometry* -- the formats are compatible and the rest is
+  detail: textures, collision, spawn points, then the mission script.
+* *Loads, but garbled or untextured* -- the `.MAZ` is being parsed, so the
+  container is right and the difference is in what it references. Good outcome.
+* *Hangs or drops back to the menu* -- the `.MAZ` payload past the shared
+  header is not version-compatible after all, and §2's "same format" reading
+  was too optimistic. That is where to look first.
+
+One caveat found while preparing it: these level files reference almost nothing
+by filename -- a scan turned up three references in the whole set, of which one
+(`M09_BANK_SKYBOX.POB`, named in the `.ENV`) is absent from Ghost Recon. So
+asset binding is by index or some other handle, and how SOAF's indices land in
+Ghost Recon's tables is unknown. That is a likely source of garbling and cannot
+be predicted from the outside.
+
+The probe disc is `E:/PS2 Games/GR_SOAF_probe (throwaway).iso`, built from an
+untouched copy. Nothing on the real discs was modified.
