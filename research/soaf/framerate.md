@@ -18,6 +18,42 @@
 > artwork instead of the text. The colour question is settled for *those two
 > frames only*.
 
+> **RESOLVED, 2026-09-28, later the same day.** A capture taken while the
+> counters were red settles it, and **both explanations below are wrong**.
+> Main menu, PCSX2 reading: FPS **39.54 in red**, **GPU: 100%**,
+> **EE: 4% / VU: 0% / GS: 6%**, **Speed: 79%** (40 of 50 vsyncs), Vulkan HW at
+> **3072x3072 (6x)**.
+>
+> The emulated PS2 is idle and the **host GPU is saturated**. This is a plain
+> host-GPU bottleneck from 6x upscaling -- 3072x3072 is 9.4 Mpx per full-screen
+> draw and the menu is stacked alpha-blended full-screen layers. The fix is to
+> lower the internal resolution.
+>
+> What that kills:
+> * **S2 ("the game caps at 25 fps, the emulator is fine")** -- wrong. Speed is
+>   79%; the emulator is behind. The 2-vsync cadence in S1 is also most likely
+>   just standard interlaced output: the status bar reads `Interlaced (Field)`,
+>   so two fields per image is normal PAL, not a Ghost-Recon-style vblank cap.
+>   S1 should not be cited as evidence of a cap without new work.
+> * **S3 (the FMV's 1,024 tile uploads)** -- wrong as the cause. The user
+>   reports the logos run fine, which is exactly where that cost is paid. The
+>   upload pattern is still accurately measured and still inefficient; it is
+>   just not what was making the game slow.
+>
+> **Still unexplained:** at 09:07 the same menu at the same 6x showed
+> **GPU 8%** and full speed; later it is **GPU 100%** at 79%. Same scene, same
+> upscale, ~12x the GPU load. Something changed host-side between the two --
+> a graphics setting (blending accuracy, MSAA, filtering), a driver or power
+> state, or another GPU consumer. Lowering the upscale treats the symptom; this
+> is the cause worth finding.
+>
+> **Method lesson.** Two confident diagnoses were built on counters captured at
+> a different moment than the problem. Neither survived the first measurement
+> taken *while the fault was on screen*. For a performance question, the
+> capture must come from the faulting state, and the decisive fields are the
+> host GPU% against the emulated EE/VU/GS% -- which of them is pegged names the
+> bottleneck immediately.
+
 **What is measured:** the game presents one new image every two vsyncs — 25 fps
 on PAL (§1). That is the same shape as Ghost Recon's and Jungle Storm's 30 fps
 cap (60 Hz NTSC, one extra vblank wait); this disc is PAL, so the same cap
