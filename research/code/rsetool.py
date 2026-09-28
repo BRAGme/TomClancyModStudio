@@ -80,23 +80,36 @@ class Image:
 
 # ---------------------------------------------------------------- strings
 def strings(img, minlen=4):
-    """Every printable run of at least `minlen` bytes, however it ends.
+    """NUL-terminated printable runs of at least `minlen` bytes.
 
-    Until 2026-09-28 this emitted a run ONLY when a NUL terminated it::
+    Tab, newline and carriage return count as *part of* a run rather than
+    ending it, matching `Image.cstr`. That one detail is the whole fix made on
+    2026-09-28. The original loop tested only `32 <= c < 127`, so a `\\n` broke
+    the run, and the emit test then required the terminator to be NUL::
 
-        if c == 0 and i - run >= minlen:
+        if c == 0 and i - run >= minlen:      # the byte seen was \\n, not NUL
 
-    which silently discarded every run ending in any other byte. That is not a
-    rare case in this engine: `printf`-style debug strings end in `\\n`, so all
-    of them were invisible. On Sum of All Fears the old rule found 18,864 runs
-    and this one finds 48,670 -- **61% of the string pool was being dropped**,
-    including the entire i.Link transport layer (`ILink:Out of  IOBuffer`,
-    `SendPacket %d`, `Recved fraged packet %d %d %d`).
+    -- so every `printf`-style string was discarded whole. That hid real
+    content: Sum of All Fears' entire i.Link transport layer
+    (`ILink:Out of  IOBuffer\\n`, `SendPacket %d\\n`,
+    `Recved fraged packet %d %d %d\\n`) was invisible.
 
-    Any "0 hits, therefore absent" conclusion drawn from `strings` or `grepstr`
-    before that date is unsafe and should be re-run. Tab, newline and carriage
-    return are treated as part of a run, matching `Image.cstr`, so a multi-line
-    format string comes back whole.
+    The NUL requirement is deliberately KEPT. It is the noise filter: without
+    it, every 4-byte printable run inside MIPS code is emitted and the result
+    balloons with garbage like `'E$\\j'` -- on Ghost Recon 19,923 real strings
+    become 50,928. A first attempt at this fix dropped the NUL test and did
+    exactly that, which also produced a badly misleading "61% of the pool was
+    missing" statistic; the true figure is the ~3-4% below, and the rest was
+    machine code being read as text.
+
+    Recovered by this fix: Ghost Recon 19,301 -> 19,923, Jungle Storm
+    9,772 -> 10,096, Sum of All Fears 18,864 -> 19,648.
+
+    A "0 hits, therefore absent" conclusion drawn before the fix is only
+    unsafe if the thing being looked for is `\\n`-terminated debug output --
+    class names, asset names and menu ids were always NUL-terminated and are
+    unaffected. Every such negative recorded for Ghost Recon and Jungle Storm
+    was re-run on 2026-09-28 and all of them held.
     """
     out = []
     d = img.data
@@ -106,11 +119,9 @@ def strings(img, minlen=4):
             if run is None: run = i
         else:
             if run is not None:
-                if i - run >= minlen:
+                if c == 0 and i - run >= minlen:
                     out.append((img.va(run), d[run:i].decode("latin1")))
                 run = None
-    if run is not None and len(d) - run >= minlen:
-        out.append((img.va(run), d[run:].decode("latin1")))
     return out
 
 

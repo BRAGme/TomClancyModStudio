@@ -1,5 +1,23 @@
 # Feature map — Ghost Recon (PS2, SLUS-20613), `SLUS_206.13`
 
+> **String negatives re-verified 2026-09-28.** `rsetool.strings` had a defect
+> that broke a printable run at a newline and then demanded a NUL
+> terminator, so
+> every `printf`-style debug string was discarded whole (it hid Sum of All
+> Fears' entire i.Link transport layer). Fixed: tab/newline/CR now continue a
+> run, the NUL terminator is still required as the noise filter. Recovered
+> here: 19,301 -> 19,923 strings.
+>
+> **Every string-derived negative in this document was re-run against the fixed
+> scanner and all of them hold**, listed below. That is the expected result
+> rather than luck: only newline-terminated debug output was ever hidden, and
+> these negatives are about C++ class names, asset names and menu ids, which
+> are NUL-terminated and were always visible.
+>
+> | claim | verdict |
+> |---|---|
+> | the five camera-view strings are the only ones in the pool | **holds** (the 6th `camera` hit is `CameraPoint`, a model attach-point, not a view) |
+
 Every address here is a **virtual address**, which for this ELF equals
 `file_offset + 0x00100000 - 0x80`. Every fact below came from a tool result this
 session (symbol table, disassembly, string scan, or `jal`-target scan). Guesses are

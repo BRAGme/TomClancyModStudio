@@ -1,5 +1,27 @@
 # Ghost Recon: Jungle Storm (PS2, SLUS-20820) — feature/string map of the three images
 
+> **String negatives re-verified 2026-09-28.** `rsetool.strings` had a defect
+> that broke a printable run at a newline and then demanded a NUL
+> terminator, so
+> every `printf`-style debug string was discarded whole (it hid Sum of All
+> Fears' entire i.Link transport layer). Fixed: tab/newline/CR now continue a
+> run, the NUL terminator is still required as the noise filter. Recovered
+> here: 9,772 -> 10,096 strings.
+>
+> **Every string-derived negative in this document was re-run against the fixed
+> scanner and all of them hold**, listed below. That is the expected result
+> rather than luck: only newline-terminated debug output was ever hidden, and
+> these negatives are about C++ class names, asset names and menu ids, which
+> are NUL-terminated and were always visible.
+>
+> | claim | verdict |
+> |---|---|
+> | Ghost Recon PS2 class names (`BulletHolePS2`, `BulletHoleManagerPS2`, `IkeEffectsMgr::DisplayBullethole`, `BloodPoolPS2`, `EffMgrPS2`) absent as strings (S2a) | **holds** (0 before, 0 after) |
+> | `IkeParticleEffect`, `IkeTriParticleEffect`, `RSParticleSystem`, `EffectManager`, `Emitter`, `RainEmitter`, `WindEmitter` absent (S2b) | **holds** (0 before, 0 after) |
+> | only 8 view-family strings; 6 are the camera-view enum (S2c) | **holds** |
+> | `wave` matches only `shock_wave_type1/2/3` (`patch_candidates_js.md` S D) | **holds** (3 before, 3 after) |
+> | all four feature families score 0 in `offline.bin` and `online.bin` | **holds** (0 before, 0 after, all four) |
+
 Static analysis only, via `rsetool.py` (address models `js` / `offline` / `online`).
 Every address below is an in-game **VA**. Nothing under `E:\PS2 Games\` was modified.
 Anything not backed by a tool result in this session is labelled GUESS.

@@ -96,15 +96,25 @@ one predicts the other.
 ## 2. String-driven hunt
 
 > **Health warning, 2026-09-28.** Everything in this section was produced with
-> a version of `rsetool.strings` that emitted a run **only when a NUL
-> terminated it**, silently dropping every run ending in any other byte — which
-> on this engine means every `printf`-style debug string, because they end in
-> `\n`. The old rule found 18,864 runs here; the corrected one finds 48,670.
-> **61% of the string pool was missing**, including the whole i.Link transport
-> layer (see `network.md`). The tool is fixed. Treat every "0 hits, therefore
-> absent" claim below as unsafe until re-run; two have already been corrected
-> in place, and the split-screen negative was re-tested and **holds**
-> (`splitscreen` / `viewport` / `2player` are still 0 under the fixed scanner).
+> a version of `rsetool.strings` that broke a printable run at `\n` and then
+> required a NUL terminator — so every `printf`-style string was discarded
+> whole, including this game's entire i.Link transport layer (see
+> `network.md`). The tool is fixed: tab/newline/CR now count as part of a run,
+> and the NUL terminator requirement is kept as the noise filter. Recovered
+> here: **18,864 → 19,648 strings, about 4%**.
+>
+> An earlier revision of this warning said "61% of the string pool was
+> missing", from a first fix that also dropped the NUL test. That was wrong.
+> Removing the NUL test emits every 4-byte printable run inside MIPS code, so
+> the 48,670 it produced was mostly machine code read as text. **The real
+> figure is ~4%.**
+>
+> What this does and does not invalidate: only `\n`-terminated debug output was
+> ever hidden. Class names, asset names and menu ids are NUL-terminated and
+> were always visible, so most negatives below are unaffected. The split-screen
+> negative was re-tested and **holds** (`splitscreen` / `viewport` / `2player`
+> still 0). Two negatives below were wrong for unrelated reasons and are
+> corrected in place.
 
 47,904 printable runs (≥4 chars, `[\x20-\x7e]`) extracted from the loadable
 segment with their virtual addresses. Every VA below is machine-computed from the
