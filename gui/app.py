@@ -47,7 +47,7 @@ from .widgets import (ActionButton, Chrome, NavItem, ScrollArea,
 
 APP_NAME = "Tom Clancy Xbox Mod Studio"
 PRESET_HINT = "Choose a preset…"
-VERSION = "1.2"
+VERSION = "1.0"
 NOTES_TAB = "About this game"
 
 #: Shelf entries are label -> path. Preview entries carry this instead of a
