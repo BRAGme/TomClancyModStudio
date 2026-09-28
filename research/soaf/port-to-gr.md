@@ -371,3 +371,47 @@ SOAF data does not load":
 | loads | loads | relocation (or SOAF's `.POL`) was the problem |
 | loads | hangs | the SOAF level data itself does not load in Ghost Recon |
 | hangs | -- | Ghost Recon cannot take a relocated level file; every port must fit in place |
+
+## 10. The controlled experiment, answered (2026-09-28)
+
+| disc | result |
+|---|---|
+| A, stock GR with `M01_CAVES.POL` relocated | **loads and plays normally** |
+| B, six SOAF files in place, nothing relocated | **stuck at loading** |
+
+So **relocation is fine** -- Ghost Recon reads a moved level file without
+complaint, which is also good news for every data edit this tool makes on that
+disc. And **Sum of All Fears' level data is what Ghost Recon will not finish
+loading**, independent of where it sits.
+
+### 10a. What the game is doing while it waits
+
+Two savestates from disc B, read with the method in §9b:
+
+    slot 1   VSync <- sceGsSyncV <- IkeUIMgr::CheckingLoadingLoop+0xE8 <- main
+    slot 2   RSInputImpl::Update <- RSInputMgr::Update <- IkeGameMgr::Update <- main
+
+`CheckingLoadingLoop` is the loading screen's own loop: each frame it tests
+the load state at `this+0xB0`, waits a vsync (or `WaitSema` on the semaphore
+at `0x005E7C80`), and goes round again. **The main thread is healthy and
+waiting.** The loader runs on another thread and never signals completion.
+Neither snapshot shows that thread, because a savestate's `cpuRegs` is only
+the thread that was running.
+
+**Next step:** read the loader thread's saved context from the EE kernel's
+thread table in `eeMemory.bin` -- its PC will be inside whatever SOAF data it
+failed on, and Ghost Recon's symbols will name it.
+
+### 10b. On retargeting to Jungle Storm
+
+Jungle Storm is the right *final* target for multiplayer: its networking is
+TCP/IP over the PS2 network adapter, which PCSX2 emulates, where Sum of All
+Fears uses i.Link, which it does not. (Jungle Storm has no LAN mode as such --
+its online is a Ubi.com lobby, which needs a stand-in server; see
+`js_skip_dnas`.)
+
+It is not the right place to *debug* the load. Ghost Recon ships a symbol
+table and Jungle Storm does not, and Sum of All Fears' code matched Ghost
+Recon more closely than Jungle Storm (§4 of `code.md`), so its data is if
+anything less likely to load in Jungle Storm. Find why it will not load in
+Ghost Recon, fix that, then carry the fix across.
