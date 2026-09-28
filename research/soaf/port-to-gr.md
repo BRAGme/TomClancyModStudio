@@ -243,3 +243,58 @@ returns page-aligned recompiler bookkeeping (`0x230000`, `0x5b0000`, ...), not
 program counters, and mapping those to symbols produces confident nonsense.
 Getting a real PC needs PCSX2's `cpuRegisters` layout for this build; do not
 repeat the scan-and-symbolise approach.
+
+## 8. The two blocking questions, answered (2026-09-28)
+
+### 8a. `.PAK` is not a level requirement
+
+`.pak` appears in Ghost Recon as four literals -- `common.pak`, `menu.pak`,
+`loading.pak`, `action.pak` -- and one suffix at `0x0058C1EF`, appended to a
+built name at `0x0051B76C`. All of it belongs to a single function,
+`LoadingTexturePak__12UITextureMgrFiPCc` (`0x0051B660`), whose callers are:
+
+    IkeRootContainer::HandleGameStateChange  (x3)
+    IkeUIMgr::Initialize (x2), PreInit, Create
+    SPBriefing::SetVisible
+
+Every one is a UI or briefing path. `<level>.PAK` is loading-screen and
+briefing artwork, **not level data**, so a ported level does not need a `.PAK`
+counterpart and Ghost Recon's own can stay in place. This was the question that
+could have sunk the whole idea -- new entries cannot be added to `GR.IMG`,
+since the writer replaces files and does not grow the entry or name tables.
+It does not sink it.
+
+### 8b. `.BMZ` is a texture bundle, same format, and it fits
+
+Header, both games:
+
+| word | SOAF `TRAINING` | GR `M01_CAVES` | |
+|---|---|---|---|
+| 0 | 1250 | 694 | texture count |
+| 1 | **-4** | **-4** | version, identical |
+| 2 | 72 | 40 | header or record size, **differs** |
+| 4,5 | 256, 256 | 512, 512 | dimensions of the first texture |
+| 16 | **0x20000006** | **0x20000006** | identical marker |
+
+Same family, same version word, same per-entry marker; word 2 differs and is
+the one thing to resolve if entries ever need rewriting rather than wholesale
+replacement.
+
+Packed with `rselzo`, SOAF's `TRAINING.BMZ` is **2,095,691** bytes against
+`M01_CAVES.BMZ`'s **2,153,061**-byte slot, so it **fits with 57 KB spare**.
+Ten of Ghost Recon's 117 level `.BMZ` slots would take it. (404 s to compress
+in pure Python -- cache the result.)
+
+### 8c. Probe 2, built
+
+`E:/PS2 Games/GR_SOAF_probe2 (throwaway).iso`. Same swap as §7 plus the texture
+bundle -- seven files now, `.MAZ` `.MOL` `.SHT` `.AOL` `.POL` `.ENV` `.BMZ`,
+all into `M01_CAVES`. Only `.POL` relocates; the rest fit in place. All seven
+read back and decompress to their original lengths. `GR.IMG` still lists 4,004
+files. `M01_CAVES.MIS` remains Ghost Recon's, as before.
+
+Still mismatched, and the next things to suspect if it still hangs: Ghost
+Recon's `M01_CAVES.RSB`, `.POB`, `_GRASS.BMZ`, `_SKY.BMZ` and `_SKY.POZ`, none
+of which Sum of All Fears' `TRAINING` has a counterpart for, and Sum of All
+Fears' `.BMB`, `.BMH`, `.COZ`, `.SDP`, `.TOE` and `.XML`, which have nowhere to
+go in a Ghost Recon level.
