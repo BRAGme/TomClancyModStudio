@@ -34,7 +34,9 @@ maps' own say 1000000). This adds one, in four parts.
     scripts do (JS 0x00352348: name, position, the up vector, room id from
     the scene's vtable +0x28 a metre above, -1), records the cloud, and
     resumes at the removal with no visual, no damage and no explosion alert.
-    Anything else is created as before.
+    Anything else is created as before. The default look, "round", fires
+    smoke_medium_type2, whose empty PARTICLE_EFFECT14.POB is rebuilt as a
+    dome of smoke (see 'the round cloud' below).
 
   * Sight. A ring of the last 8 clouds {x, y, z + 1.5 m, time} is kept. A
     sight line that passes within 5 m of a cloud's centre from 2 s after it
@@ -74,7 +76,8 @@ import struct
 
 from .grasm import assemble
 
-CAVES = [(0x00175678, 0x00175804), (0x00175808, 0x00175950), (0x00175D58, 0x00175F30), (0x00173908, 0x00173AA4)]
+CAVES = [(0x00175678, 0x00175804), (0x00175808, 0x00175950), (0x00175D58, 0x00175F30), (0x00173908, 0x00173AA4),
+         (0x0018CC80, 0x0018CDDC), (0x0018CEB0, 0x0018CFBC)]
 
 HOOK_TOGGLE, HOOK_TOGGLE_STOCK = 0x003A631C, 0x0C0CD05C   # jal IsUsingItem (slot: addiu a0, s1, 0x1b4)
 HOOK_DET, HOOK_DET_STOCK = 0x0037018C, 0x0C1263F4         # jal RSGameMessage::Create (a0 = 0x1ef)
@@ -84,7 +87,8 @@ CHECKLOS_CALLS = (0x003D3884, 0x003D39C0, 0x003D3BDC, 0x003D3C50)
 CHECKLOS_STOCK = 0x0C0F4FBC                               # jal CheckLineOfSight
 
 FRAG, SMOKE = 4, 9                                        # projectile indices (EQUIP_PRJ.DIR order)
-LOOKS = ("smoke_large_type1", "smoke_large_type2", "smoke_large_type3")
+LOOKS = ("smoke_large_type1", "smoke_large_type2", "smoke_large_type3", "round")
+ROUND_EFFECT = "smoke_medium_type2"                       # the effect "round" fires; its POB is rebuilt below
 DURATION = 45                                             # s, the effect's life
 ON, OFF = 2.0, DURATION - 5.0                             # the cloud blocks sight between these ages
 RADIUS = 5.0
@@ -95,7 +99,14 @@ SYMS = dict(
     CREATE=0x00498FD0, ADD_STR=0x00125750, ADD_VEC=0x0014E0E0, ADD_US=0x00133B80, ADD_INT=0x00136A20,
     SEND=0x00125810, RELEASE=0x00124AE0, CONSTS=0x00124280, UPVEC=0x00245A60, SCENE=0x00122730,
     RESUME=0x00370408, CLOCK=0x00684768, DATAMGR=0x001245F0, LOOKTO=0x003D4A50, CHECKLOS=CHECKLOS, LOSC_BODY=LOSC + 8,
+    EXIT=0x00370480,
 )
+
+HOLD_SLOTS = 2                                            # grenades whose landing is waited on at once
+                                                          # (a third pops where it is, as it did before)
+HOLD_EPS = 0.03                                           # m per frame under which it counts as stopped
+HOLD_MAX = 5.0                                            # s to wait for it to stop before popping anyway
+HOLD_STALE = 1.0                                          # s without a frame after which a slot is another grenade's
 
 
 def _hi(f):
@@ -171,9 +182,14 @@ smk_det:
     li    a1, {SMOKE}
     addiu v0, v0, 0x4c              ; the smoke grenade's ExplosionData
     bne   v0, s3, sd_other          ; another projectile with no visual (the howitzer shell)
+    addiu s0, sp, 0x2a8             ; (delay) the caller's sp+0x248, where the grenade is now
+    move  a0, s0
+    jal   smk_hold                  ; has it stopped moving?
+    move  a1, s4                    ; (delay) the SimProjectile
+    beqz  v0, sd_hold               ; no: let it fly on, the fuse asks again next frame
     nop
     jal   SCENE
-    addiu s0, sp, 0x2a8             ; (delay) the caller's sp+0x248
+    nop
     lwc1  $f0, 0(s0)
     swc1  $f0, 0x30(sp)
     lwc1  $f0, 4(s0)
@@ -272,9 +288,121 @@ sd_done:
     addiu ra, ra, %lo(RESUME)       ; on to removing the projectile
     jr    ra
     nop
+sd_hold:                            ; still in the air or rolling: handle nothing, keep the grenade
+    lq    s0, 0x00(sp)
+    lq    s1, 0x10(sp)
+    lq    s2, 0x20(sp)
+    ld    ra, 0x50(sp)
+    addiu sp, sp, 0x60
+    j     EXIT                      ; HandleDetonateProjectile's own epilogue
+    nop
 sd_create:
     j     CREATE
     nop
+"""
+
+# ---- the cloud waits for the grenade to land -------------------------------------------------
+# SimProjectile::CheckForDetonation (JS 0x003C49C0) keeps NO "already detonated" flag: while the
+# fuse is past and the projectile is alive it sends message 0x201 again every frame. So a smoke
+# grenade that goes off in the air can simply be left alone -- it keeps bouncing, the detonation is
+# offered again next frame, and the cloud pops when it comes to rest. Rest is measured from the
+# position the handler is about to explode at (its own sp+0x248, read from the projectile's live
+# state), because consecutive frames give consecutive positions; that needs no struct offsets.
+SRC_HOLD = """
+smk_hold:                           ; a0 = &position, a1 = SimProjectile
+                                    ; v0 = 1: pop the cloud here.  0: hold, it is still moving
+    lui   t0, %hi(CLOCK)
+    lw    t0, %lo(CLOCK)(t0)
+    beqz  t0, sh_pop                ; no clock: never hold
+    nop
+    lwc1  $f0, 0xd4(t0)             ; now
+    lui   t1, %hi(smk_slots)
+    addiu t1, t1, %lo(smk_slots)
+    li    t2, {SLOTS}
+    move  t3, zero                  ; the first free slot passed
+sh_find:
+    lw    t4, 0(t1)
+    beq   t4, a1, sh_seen
+    nop
+    bnez  t4, sh_next
+    nop
+    bnez  t3, sh_next
+    nop
+    move  t3, t1
+sh_next:
+    addiu t2, t2, -1
+    bnez  t2, sh_find
+    addiu t1, t1, 24
+    beqz  t3, sh_pop                ; every slot taken: this one pops where it is
+    nop
+    move  t1, t3
+    sw    a1, 0(t1)                 ; first sight of this grenade
+    b     sh_reset
+    nop
+sh_seen:
+    lwc1  $f2, 20(t1)
+    sub.s $f2, $f0, $f2             ; since the last frame
+    mtc1  zero, $f3
+    c.lt.s $f2, $f3
+    bc1t  sh_reset                  ; the clock went back: a load
+    lui   t5, {STALE_HI}
+    mtc1  t5, $f3
+    c.lt.s $f3, $f2
+    bc1t  sh_reset                  ; a gap: another grenade at the same address
+    nop
+    lwc1  $f2, 16(t1)
+    sub.s $f2, $f0, $f2             ; how long it has been held
+    lui   t5, {MAXW_HI}
+    mtc1  t5, $f3
+    c.lt.s $f3, $f2
+    bc1t  sh_free                   ; long enough: pop wherever it is
+    nop
+    lwc1  $f4, 0(a0)
+    lwc1  $f5, 4(t1)
+    sub.s $f4, $f4, $f5
+    mul.s $f6, $f4, $f4
+    lwc1  $f4, 4(a0)
+    lwc1  $f5, 8(t1)
+    sub.s $f4, $f4, $f5
+    mul.s $f4, $f4, $f4
+    add.s $f6, $f6, $f4
+    lwc1  $f4, 8(a0)
+    lwc1  $f5, 12(t1)
+    sub.s $f4, $f4, $f5
+    mul.s $f4, $f4, $f4
+    add.s $f6, $f6, $f4             ; how far it moved, squared
+    lui   t5, {EPS2_HI}
+    ori   t5, t5, {EPS2_LO}
+    mtc1  t5, $f3
+    c.lt.s $f6, $f3
+    bc1t  sh_free                   ; it has stopped: the cloud pops here
+    nop
+    b     sh_keep
+    nop
+sh_reset:
+    swc1  $f0, 16(t1)               ; the hold starts now
+sh_keep:
+    lwc1  $f1, 0(a0)
+    swc1  $f1, 4(t1)
+    lwc1  $f1, 4(a0)
+    swc1  $f1, 8(t1)
+    lwc1  $f1, 8(a0)
+    swc1  $f1, 12(t1)
+    b     sh_hold
+    swc1  $f0, 20(t1)
+sh_free:
+    sw    zero, 0(t1)
+sh_pop:
+    jr    ra
+    li    v0, 1
+sh_hold:
+    jr    ra
+    move  v0, zero
+"""
+
+SRC_SLOTS = """
+smk_slots:                          ; {SLOTS} x {{projectile, x, y, z, held since, last seen}}
+{SLOTDATA}
 """
 
 # ---- is a live cloud across this sight line --------------------------------------------------
@@ -516,6 +644,28 @@ smk_name:
 """
 
 _CAVE_STOCK_HEX = {
+    0x0018CC80: (
+        "27BDFF70 3C020062 FFB60070 FFB40050 2456C500 FFB30040 0080A02D FFB20030"
+        "00A0982D FFB00010 00E0902D FFBF0080 FFB50060 FFB10020 8EC20024 14400003"
+        "00C0802D 1000003B 2402FF9C 3C150057 0C05E8CC 8EA46634 04400036 2402FF38"
+        "12000006 00000000 82020000 10400003 00000000 16400005 3C020062 0C05E8C0"
+        "8EA46634 1000002B 2402FF2E 24030010 2451C5B0 AC54C5B0 0200282D AE330004"
+        "AE230008 26240014 0C05B8F2 240603FF 3C100062 0240282D 2610C560 A2200413"
+        "0200202D 0C05B8F2 24060020 2610FFE0 0000202D AE300010 0C05E958 A200003F"
+        "3C090062 3C0B0019 02C0202D 0220382D 2529DAC0 256BBA10 AFA00000 2405000E"
+        "24060001 24080414 0C05F5AA 240A0004 0040802D 16000004 3C030057 24020013"
+        "10000003 AC626630 0C05E8C0 8EA46634 0200102D DFBF0080 DFB60070 DFB50060"
+        "DFB40050 DFB30040 DFB20030 DFB10020 DFB00010 03E00008 27BD0090"),
+    0x0018CEB0: (
+        "27BDFF90 3C020062 FFB40050 FFB30040 2454C500 FFB10020 0080982D FFB00010"
+        "00A0882D FFBF0060 FFB20030 8E820024 14400003 00C0802D 1000002C 2402FF9C"
+        "3C120057 0C05E8CC 8E446634 04400027 2402FF38 12000004 00000000 82020000"
+        "14400005 3C020062 0C05E8C0 8E446634 1000001E 2402FF2E 0200282D 2450C5B0"
+        "AC53C5B0 AE110004 26040014 0C05B8F2 240603FF A2000413 3C090062 3C0B0019"
+        "0200382D 0280202D 2529DAC0 256BBA10 24050012 AFA00000 24060001 24080414"
+        "0C05F5AA 240A0004 0040802D 16000004 3C030057 24020012 10000003 AC626630"
+        "0C05E8C0 8E446634 0200102D DFBF0060 DFB40050 DFB30040 DFB20030 DFB10020"
+        "DFB00010 03E00008 27BD0070"),
     0x00175678: (
         "27BDFED0 FFB200B0 FFBF0120 0080902D FFBE0110 FFB70100 FFB600F0 FFB500E0"
         "FFB400D0 FFB300C0 FFB100A0 0C05D4FE FFB00090 14400049 0000102D 27A20050"
@@ -594,14 +744,21 @@ def _sources(look: str):
     if look not in LOOKS:
         raise ValueError("smoke look %r" % look)
     k = dict(FRAG=FRAG, SMOKE=SMOKE, OFF_HI=hex(_hi(OFF)), ON_HI=hex(_hi(ON)), R2_HI=hex(_hi(RADIUS * RADIUS)),
-             INV_HI=hex(_bits(INVALID) >> 16), INV_LO=hex(_bits(INVALID) & 0xFFFF))
+             INV_HI=hex(_bits(INVALID) >> 16), INV_LO=hex(_bits(INVALID) & 0xFFFF),
+             SLOTS=HOLD_SLOTS, STALE_HI=hex(_hi(HOLD_STALE)), MAXW_HI=hex(_hi(HOLD_MAX)),
+             EPS2_HI=hex(_bits(HOLD_EPS * HOLD_EPS) >> 16), EPS2_LO=hex(_bits(HOLD_EPS * HOLD_EPS) & 0xFFFF),
+             SLOTDATA="\n".join("    .word 0" for _ in range(6 * HOLD_SLOTS)))
+    assert _bits(HOLD_STALE) & 0xFFFF == 0 and _bits(HOLD_MAX) & 0xFFFF == 0
     ring = "\n".join("    .word 0\n    .word 0\n    .word 0\n    .word %#x" % _bits(INVALID) for _ in range(8))
-    data = SRC_DATA.replace("{RING}", ring).replace("{NAME}", "%s(%d)" % (look, DURATION))
+    effect = ROUND_EFFECT if look == "round" else look
+    data = SRC_DATA.replace("{RING}", ring).replace("{NAME}", "%s(%d)" % (effect, DURATION))
     return [
         (0, SRC_BLOCKED.format(**k) + SRC_TOGGLE.format(**k)),
         (1, SRC_BLOCKED2.format(**k) + SRC_LOS),
-        (2, SRC_DET.format(**k) + SRC_DET2.format(**k)),
+        (2, SRC_DET.format(**k)),
         (3, SRC_CLEAR + SRC_OTHER + data),
+        (4, SRC_HOLD.format(**k)),
+        (5, SRC_DET2.format(**k) + SRC_SLOTS.format(**k)),
     ]
 
 
@@ -656,7 +813,7 @@ def edits(look: str = LOOKS[2]):
 def js_edits(v: dict):
     if not v.get("js_smoke"):
         return []
-    return edits(v.get("js_smoke_look", LOOKS[2])) + ai_edits(v.get("js_smoke_ai", "all"))
+    return edits(v.get("js_smoke_look", "round")) + ai_edits(v.get("js_smoke_ai", "all"))
 
 
 # ---- the AI pops smoke when it runs for cover -------------------------------------------------
@@ -674,13 +831,15 @@ def js_edits(v: dict):
 # the throw never came. Instead a gate (0x00175AF0): 15 s between AI smokes anywhere, none while 2 clouds
 # are alive -- a large cloud is heavy on the frame rate.
 
-CAVES_AI = [(0x00197F00, 0x001980A0), (0x0018CAB0, 0x0018CC7C), (0x00175AF0, 0x00175BA8)]
+CAVES_AI = [(0x00197F00, 0x001980A0), (0x0018CAB0, 0x0018CC7C), (0x00175AF0, 0x00175BA8),
+            (0x00197C08, 0x00197CF4)]
 HOOK_RFC, HOOK_RFC_STOCK = 0x001B7914, 0x0C06DB84   # jal RSScript::AddElement (slot: move a1, s0)
 HOOK_OK, HOOK_OK_STOCK = 0x001B0A44, 0x0C0F829C     # jal IsOkToFragHereNow (slot: move a3, s2)
 HOOK_IDX, HOOK_IDX_STOCK = 0x00376470, 0x0C08AF38   # jal InventoryItem::GetIndex (slot: move a0, s1)
 HOOK_ARC, HOOK_ARC_STOCK = 0x001B09D0, 0x0C0FA55C   # jal HumanAI::FragLOSBlocked (slot: swc1 f0, 0x58(sp))
 AI_GAP = 15.0                                       # s between two AI smokes, anywhere
 AI_MAX_CLOUDS = 2                                   # no AI smoke while this many clouds are alive
+HOOK_REP, HOOK_REP_STOCK = 0x001B0A60, 0x0C0F83EC   # jal HumanAI::ReportGrenadeUse (slot: move a1, s2)
 AI_CHANCE = 0x3F00                                  # 0.5 per run for cover
 AI_SIDES = ("off", "squad", "enemies", "all")
 
@@ -971,6 +1130,24 @@ smk_ai_last:
     .word {INVALID}
 """
 
+# A throw reports the grenade to the team (HumanAI::ReportGrenadeUse, JS 0x003E0FB0, which writes team+0xEC =
+# now), and IsOkToFragHereNow refuses a frag from a team that used one in the last 30 s.  Smoke went through the
+# same throw, so every smoke a team put out stopped that team fragging for half a minute -- with smoke allowed
+# every 15 s, the enemy threw smoke and never a grenade.  Smoke is not a frag, so it does not report one.
+SRC_REP = """
+smk_rep:                            ; a0 = the team, a1 = the HumanAI throwing
+    move  t9, ra
+    jal   smk_find                  ; is he throwing smoke?
+    lw    t8, 0x14(a1)              ; (delay) his SimHuman
+    bnez  v0, sr_quiet
+    move  ra, t9                    ; (delay) either way, go back to his caller
+    j     REPORTGREN                ; a real grenade: the team waits 30 s as it always did
+    nop
+sr_quiet:
+    jr    ra
+    nop
+"""
+
 _SIDE_SRC = {
     "squad": "    bnez  t0, rs_out                ; your squad only\n    nop",
     "enemies": "    beqz  t0, rs_out                ; everyone but your squad\n    nop",
@@ -978,6 +1155,15 @@ _SIDE_SRC = {
 }
 
 _AI_STOCK_HEX = {
+    0x00197C08: (
+        "27BDFFA0 FFB40040 FFB30030 0080A02D FFB20020 00A0982D FFB10010 00C0902D"
+        "FFB00000 00E0882D FFBF0050 0C060CC8 0100802D DA280000 DA440000 DA450010"
+        "DA460020 DA470030 DA890000 DA6A0000 DA8B0000 DA6C0000 4BE821BC 4BE828BD"
+        "4BE830BE 4BE83A0B 4BC84ADB 4BC8531B 4A0002FF 4A0002FF 48C08000 4BAB42EC"
+        "4BA8632C 4A2B4B3C 4A2C533C 4A0002FF 22310010 DA280000 2210FFFF 48438000"
+        "306300C0 10600004 00000000 1410FFEA 00000000 20030001 10400003 0060802D"
+        "0C060CDE 00000000 0200102D DFBF0050 DFB40040 DFB30030 DFB20020 DFB10010"
+        "DFB00000 03E00008 27BD0060"),
     0x00197F00: (
         "27BDFF60 FFB70080 FFB20030 3C170058 FFBF0090 0080902D FFB60070 FFB50060"
         "FFB40050 FFB30040 FFB10020 FFB00010 AE400008 8E510000 1000003B 8E550004"
@@ -1022,6 +1208,7 @@ JS_STOCK[HOOK_RFC] = HOOK_RFC_STOCK
 JS_STOCK[HOOK_OK] = HOOK_OK_STOCK
 JS_STOCK[HOOK_IDX] = HOOK_IDX_STOCK
 JS_STOCK[HOOK_ARC] = HOOK_ARC_STOCK
+JS_STOCK[HOOK_REP] = HOOK_REP_STOCK
 
 
 def assemble_ai(side: str = "all"):
@@ -1032,7 +1219,8 @@ def assemble_ai(side: str = "all"):
              GAP_HI=hex(_hi(AI_GAP)), LIFE_HI=hex(_hi(float(DURATION))), MAXC=AI_MAX_CLOUDS,
              INVALID=hex(_bits(INVALID)))
     assert _bits(AI_GAP) & 0xFFFF == 0 and _bits(float(DURATION)) & 0xFFFF == 0
-    pieces = [(0, SRC_RFC.format(**k)), (1, SRC_RFC2.format(**k)), (2, SRC_GATE.format(**k))]
+    pieces = [(0, SRC_RFC.format(**k)), (1, SRC_RFC2.format(**k)), (2, SRC_GATE.format(**k)),
+              (3, SRC_REP.format(**k))]
     names = set().union(*(_labels_of(src) for _i, src in pieces))
     labels = {n: CAVES_AI[0][0] for n in names}
     for _ in range(3):
@@ -1071,6 +1259,8 @@ def ai_edits(side: str = "all"):
                 "smoke grenades: a soldier throwing smoke releases smoke"))
     out.append((HOOK_ARC, j(l["smk_arc"], HOOK_ARC), HOOK_ARC_STOCK,
                 "smoke grenades: a smoke throw needs no clear arc"))
+    out.append((HOOK_REP, j(l["smk_rep"], HOOK_REP), HOOK_REP_STOCK,
+                "smoke grenades: smoke does not use up the team's 30 s grenade wait"))
     return out
 
 
@@ -1147,6 +1337,72 @@ def _op_smoke_kit(plain, params):
     return out, 1
 
 
+# ---- the round cloud ---------------------------------------------------------------------------
+# A general effect "smoke_x_typeN" is particle type N-1, one RSParticleSystem read from PARTICLE_EFFECT<N>.POB
+# (IkeEffectsMgr::CreateGeneralEffect maps types 0-27 one to one, JS table 0x005892B0; GR's registration order,
+# EffectManager::Initialize, is ParticleEffect1..59). smoke_large_type3 is POB 18: a 3ds Max Blizzard -- 75
+# particles 9 m wide born anywhere on a flat 24 x 8 m rectangle, the waterfall mist of the ravine and river maps
+# -- which is why that cloud reads as a few big flat cards and fills the screen. POB 14 (smoke_medium_type2) is a
+# blank SuperSpray (no particles, no texture) that no map, mission or vehicle names; "round" rebuilds it from POB
+# 17 (smoke_medium_type3, a working SuperSpray smoke column, ike_fx_smoke_light) with a dome's numbers.
+#
+# The particle block follows the emitter object's name (length-prefixed, NUL included) by 84 bytes of object
+# header, then u32 emitter type (3 SuperSpray, 0 Blizzard), u32 n, n bytes of user properties, then the members
+# RSParticleSystem::ReadBinaryPOB (GR 0x004BD060) reads, in order. Offsets below are from that point. What each
+# does was read off RSParticleSystem::UpdatePointParticles (GR 0x004C72F0): a SuperSpray particle leaves at
+# polar angle off_axis +- axis_spread from the emitter's +Z (world up: the effect is sent the up vector), azimuth
+# off_plane +- plane_spread, speed times 1 + speed_var noise per component; count particles are born per
+# emission window, never more than count alive.
+ROUND_FIELDS = {                      # name: (offset, POB 17's value, the dome's)
+    "speed":        (12, 2.4, 1.0),     # m/s
+    "speed_var":    (16, 0.0062606, 0.5),
+    "grow_for":     (20, 1.1667, 1.5),  # s from small to full size
+    "life":         (36, 4.3333, 6.0),  # s
+    "life_var":     (40, 0.0, 1.0),
+    "size":         (44, 3.2, 3.5),     # m
+    "size_var":     (48, 0.0, 0.8),
+    "off_axis":     (124, 0.0, 0.65),   # rad: 0 .. 1.3 from straight up
+    "axis_spread":  (128, 0.61087, 0.65),
+    "plane_spread": (136, 3.1415927, 3.1415927),
+}
+ROUND_COUNT = (192, 90, 84)           # i0d8: about 60 alive at 6 s each
+ROUND_SOURCE = "/PARTICLE_EFFECT17.POB"
+
+
+def _pob_block(b: bytes, emitter: bytes) -> int:
+    """Where the particle members start, after the emitter type, the property string and its length."""
+    i = b.find(emitter + b"\x00")
+    if i < 0 or b.find(emitter + b"\x00", i + 1) >= 0:
+        raise ValueError("POB: emitter %r not found once" % emitter)
+    p = i + len(emitter) + 1 + 84
+    kind, n = struct.unpack_from("<II", b, p)
+    if kind != 3:
+        raise ValueError("POB: emitter type %d, not a SuperSpray" % kind)
+    return p + 8 + n
+
+
+def _op_smoke_round(plain, params, sibling=None):
+    if sibling is None:
+        raise ValueError("smoke_round is built from %s" % ROUND_SOURCE)
+    blank = _pob_block(plain, b"SuperSpray01")
+    if struct.unpack_from("<I", plain, blank + ROUND_COUNT[0])[0] not in (0, ROUND_COUNT[2]):
+        raise ValueError("PARTICLE_EFFECT14.POB is not the shipped blank")
+    out = bytearray(sibling)
+    p = _pob_block(sibling, b"SuperSpray01")
+    if b"ike_fx_smoke_light" not in sibling:
+        raise ValueError("%s is not the shipped smoke" % ROUND_SOURCE)
+    for name, (off, stock, new) in ROUND_FIELDS.items():
+        got = struct.unpack_from("<f", sibling, p + off)[0]
+        if abs(got - stock) > 1e-3 * max(1.0, abs(stock)):
+            raise ValueError("%s: %s is %g, not the shipped %g" % (ROUND_SOURCE, name, got, stock))
+        struct.pack_into("<f", out, p + off, new)
+    off, stock, new = ROUND_COUNT
+    if struct.unpack_from("<I", sibling, p + off)[0] != stock:
+        raise ValueError("%s: particle count is not the shipped %d" % (ROUND_SOURCE, stock))
+    struct.pack_into("<I", out, p + off, new)
+    return bytes(out), 1
+
+
 #: kits (single player's kit menus) that carry smoke instead of frags, per choice
 SMOKE_KITS = {
     "none": (),
@@ -1163,6 +1419,8 @@ def _register():
     dataedit.OPS.setdefault("smoke_prj", _op_smoke_prj)
     dataedit.OPS.setdefault("smoke_label", _op_smoke_label)
     dataedit.OPS.setdefault("smoke_kit", _op_smoke_kit)
+    dataedit.OPS.setdefault("smoke_round", _op_smoke_round)
+    dataedit._WANTS_SIBLING.setdefault("smoke_round", lambda path: ROUND_SOURCE)
 
 
 _register()
@@ -1178,6 +1436,9 @@ def data_edits(v: dict) -> list:
     if kits:
         out.append(FileEdit("smoke_kit", r"/(%s)\.KIT$" % "|".join(re.escape(k) for k in kits), "GR.IMG", {},
                             "%d kit(s) carry smoke grenades" % len(kits)))
+    if v.get("js_smoke_look", "round") == "round":
+        out.append(FileEdit("smoke_round", r"/PARTICLE_EFFECT14\.POB$", "GR.IMG", {},
+                            "PARTICLE_EFFECT14.POB becomes the round smoke cloud"))
     return out
 
 
@@ -1188,7 +1449,7 @@ def selftest(gr_elf: bytes, js_elf: bytes):
         off = va - 0x100000 + 0x100
         if int.from_bytes(js_elf[off:off + 4], "little") != w:
             bad.append("js %08X" % va)
-    for look, side in zip(LOOKS, ("squad", "enemies", "all")):
+    for look, side in zip(LOOKS, ("squad", "enemies", "all", "all")):
         e = edits(look) + ai_edits(side)
         if len({va for va, *_ in e}) != len(e):
             bad.append("js duplicate VA")

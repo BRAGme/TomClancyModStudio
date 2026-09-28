@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grextras, grhitblur, grshrapnel, grsight, grsquad,
                grdeathmusic, grfrag, grhu, grhuspot, grpierce, grselcopy, grsmoke, grsplat, grsuppress,
-               grtotalwar, grtrigger, grsprint)
+               grtotalwar, grtrigger, grsprint, grshotgun, grshotsound, grlan)
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
 from . import rseweapons, rstuning
@@ -918,16 +918,66 @@ def _settings():
                      "a lot of particles). A smoke throw ignores the check "
                      "for branches in its first metres. Needs 'Smoke "
                      "grenades'."),
-        Setting("js_smoke_look", "Smoke grenade cloud", CHOICE, "smoke_large_type3", "Weapons",
+        Setting("js_smoke_look", "Smoke grenade cloud", CHOICE, "round", "Weapons",
                 confidence="experimental",
                 choices=[
+                    Choice("round", "Round cloud",
+                           "A dome about 6 m across that billows up and out "
+                           "from the grenade: ~60 puffs 3.5 m wide. Built "
+                           "into an effect slot the game leaves empty."),
                     Choice("smoke_large_type1", "Large smoke, type 1", ""),
                     Choice("smoke_large_type2", "Large smoke, type 2", ""),
                     Choice("smoke_large_type3", "Large smoke, type 3",
-                           "The one two maps (a ravine, a river) place."),
+                           "The waterfall mist two maps (a ravine, a river) "
+                           "place: 75 sheets 9 m wide on a flat 24 x 8 m "
+                           "patch. Looks flat and is heavy on frame rate."),
                 ],
-                help="Which of the game's three large smoke effects a smoke "
-                     "grenade makes. Needs 'Smoke grenades'."),
+                help="What a smoke grenade's cloud looks like: the round "
+                     "cloud made for it, or one of the game's three large "
+                     "smoke effects. Needs 'Smoke grenades'."),
+        Setting("js_shotgun", "Shotgun", BOOL, False, "Weapons", confidence="experimental",
+                help="Adds a pump shotgun, built out of parts the disc already "
+                     "carries: the unused M4 masterkey shotgun model, and the "
+                     "G36 weapon slot, which is listed in the game's weapon "
+                     "index but is in no kit and whose own model was cut. No "
+                     "weapon is lost. One trigger pull throws a spread of "
+                     "pellets, each aimed separately -- the engine's own "
+                     "rounds-per-pull, which no shipped weapon uses for more "
+                     "than one round. Short range, heavy hit up close."),
+        Setting("js_shotgun_pellets", "Shotgun pellets", CHOICE, "9", "Weapons",
+                confidence="experimental",
+                choices=[Choice("6", "6 pellets", "Easier on ammo."),
+                         Choice("8", "8 pellets", ""),
+                         Choice("9", "9 pellets", "What Heroes Unleashed gives its shotguns.")],
+                help="How many pellets one shell throws. The magazine holds "
+                     "eight shells' worth, and the ammo counter counts "
+                     "pellets, so it drops by this much per shot. Needs "
+                     "'Shotgun'."),
+        Setting("js_shotgun_sound", "Shotgun uses the Sum of All Fears blast", BOOL, False, "Weapons",
+                confidence="experimental",
+                help="Neither game has a shotgun sound, so the gun borrows a "
+                     "rifle's. This copies the real shotgun blast out of a Sum "
+                     "of All Fears disc -- the same engine -- over an unused "
+                     "sample in the sound bank that every mission loads. "
+                     "Needs that disc present, and 'Shotgun'."),
+        Setting("js_shotgun_spread", "Shotgun pattern", CHOICE, "hu", "Weapons",
+                confidence="experimental",
+                choices=[Choice("hu", "Heroes Unleashed", "That mod's own shotgun accuracy, unchanged."),
+                         Choice("medium", "Twice as open", ""),
+                         Choice("wide", "Four times as open", "A scattergun.")],
+                help="How far the pellets of one shell spread. Heroes "
+                     "Unleashed gives its shotguns rifle-tight accuracy and "
+                     "gets the pattern from a separate pellet-spread field "
+                     "the PS2 game does not have, so here the accuracy cone "
+                     "has to be both: open it too far and the gun stops "
+                     "pointing where you aim. Needs 'Shotgun'."),
+        Setting("js_shotgun_kits", "Kits carrying the shotgun", CHOICE, "some", "Weapons",
+                confidence="experimental",
+                choices=[Choice("none", "None", "The shotgun exists but no kit carries it."),
+                         Choice("some", "A rifleman and a demolitions kit", ""),
+                         Choice("all", "Six kits", "One per specialty, plus spares.")],
+                help="Which single-player kits carry the shotgun in place of "
+                     "their rifle. Needs 'Shotgun'."),
         Setting("js_quick_trigger", "Quick trigger taps always fire", BOOL, False,
                 "Weapons", confidence="experimental",
                 help="Let go of R1 and press it again quickly and the game "
@@ -1015,7 +1065,7 @@ def _settings():
                      "untouched.",
                 caution="Never played. Stacks with 'extra skill' and "
                         "marksmanship dials."),
-    ] + rstuning.cards("js_")
+    ] + grlan.cards("js_", "Online") + rstuning.cards("js_")
 
 
 STOCK[0x003BF6C0] = 0xC4207340  # lwc1 f0, 0x7340(at): 0.0225 s, the in-view update interval
@@ -1065,6 +1115,9 @@ def build_edits(v: dict) -> list:
     if v.get("js_skip_dnas"):
         for va, _s, word in DNAS_SKIP:
             w(va, word, "online: skip DNAS, post 'passed'")
+
+    for va, value, stock, note in grlan.edits(v, "js_"):
+        e.append(WordEdit(va, value, stock, note))
 
     if v.get("js_blood"):
         w(0x00247344, 0x24020001, "the Blood setting always answers yes")
@@ -1254,6 +1307,8 @@ def build_data(v: dict) -> list:
     out += rstuning.edits("js_", grhu.without_overridden("js_", v), "GR.IMG")
     out += grhu.data_edits("js_", v)
     out += grsmoke.data_edits(v)
+    out += grshotgun.data_edits(v)
+    out += grshotsound.data_edits(v, "js_")
     return out
 
 

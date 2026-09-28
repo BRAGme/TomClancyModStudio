@@ -25,7 +25,7 @@ accordingly in the interface.
 from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grcontrols, grextras, grhitblur, grshrapnel,
-               grhu, grhuspot, grsight, grsplat, grsquad, grtotalwar, grtrigger)
+               grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger)
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
 from . import rseweapons, rstuning
@@ -443,6 +443,48 @@ def _settings():
                 caution="Never played. Recorded in one voice only, so it may "
                         "not match the soldier you take over. Single player "
                         "keeps only the blip."),
+        Setting("gr_shotgun", "Shotgun", BOOL, False, "Weapons", confidence="experimental",
+                help="Adds a pump shotgun, built out of parts the disc already "
+                     "carries: the unused M4 masterkey shotgun model, and the "
+                     "G36 weapon slot, which is listed in the game's weapon "
+                     "index but is in no kit and whose own model was cut. No "
+                     "weapon is lost. One trigger pull throws a spread of "
+                     "pellets, each aimed separately. Short range, heavy hit "
+                     "up close."),
+        Setting("gr_shotgun_pellets", "Shotgun pellets", CHOICE, "9", "Weapons",
+                confidence="experimental",
+                choices=[Choice("6", "6 pellets", "Easier on ammo."),
+                         Choice("8", "8 pellets", ""),
+                         Choice("9", "9 pellets", "What Heroes Unleashed gives its shotguns.")],
+                help="How many pellets one shell throws. The magazine holds "
+                     "eight shells' worth, and the ammo counter counts "
+                     "pellets, so it drops by this much per shot. Needs "
+                     "'Shotgun'."),
+        Setting("gr_shotgun_sound", "Shotgun uses the Sum of All Fears blast", BOOL, False, "Weapons",
+                confidence="experimental",
+                help="Neither game has a shotgun sound, so the gun borrows a "
+                     "rifle's. This copies the real shotgun blast out of a Sum "
+                     "of All Fears disc -- the same engine -- over an unused "
+                     "sample in the sound bank that every mission loads. "
+                     "Needs that disc present, and 'Shotgun'."),
+        Setting("gr_shotgun_spread", "Shotgun pattern", CHOICE, "hu", "Weapons",
+                confidence="experimental",
+                choices=[Choice("hu", "Heroes Unleashed", "That mod's own shotgun accuracy, unchanged."),
+                         Choice("medium", "Twice as open", ""),
+                         Choice("wide", "Four times as open", "A scattergun.")],
+                help="How far the pellets of one shell spread. Heroes "
+                     "Unleashed gives its shotguns rifle-tight accuracy and "
+                     "gets the pattern from a separate pellet-spread field "
+                     "the PS2 game does not have, so here the accuracy cone "
+                     "has to be both: open it too far and the gun stops "
+                     "pointing where you aim. Needs 'Shotgun'."),
+        Setting("gr_shotgun_kits", "Kits carrying the shotgun", CHOICE, "some", "Weapons",
+                confidence="experimental",
+                choices=[Choice("none", "None", "The shotgun exists but no kit carries it."),
+                         Choice("some", "A rifleman and a demolitions kit", ""),
+                         Choice("all", "Six kits", "One per specialty, plus spares.")],
+                help="Which kits carry the shotgun in place of their rifle. "
+                     "Needs 'Shotgun'."),
         Setting("gr_blood", "Blood always on", BOOL, False, "World",
                 confidence="experimental",
                 help="Ghost Recon draws a spray when a soldier is hit and a "
@@ -1171,6 +1213,8 @@ def build_data(v: dict) -> list:
     out += rseweapons.edits('gr_', v, 'GR.IMG')
     out += rstuning.edits("gr_", grhu.without_overridden("gr_", v), "GR.IMG")
     out += grhu.data_edits("gr_", v)
+    out += grshotgun.data_edits(v, "gr_")
+    out += grshotsound.data_edits(v, "gr_")
     return out
 
 

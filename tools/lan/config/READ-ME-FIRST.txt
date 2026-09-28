@@ -1,0 +1,54 @@
+Jungle Storm -- LAN co-op config
+================================
+
+This is the whole setup, 3 KB of it. It makes YOUR copy of Jungle Storm match Tristan's, and
+points its ONLINE menu at his machine instead of Ubisoft's dead servers.
+
+You need
+  * Tom Clancy's Ghost Recon: Jungle Storm (USA), SLUS-20820, as a disc image
+  * Tom Clancys PS2 ModStudio.exe
+  * Radmin VPN, connected to the same network as Tristan
+Nothing else. Do not send or download a patched disc image -- you patch your own.
+
+Step 1 -- put the config next to your disc
+------------------------------------------
+Easiest, if you have Python:
+
+    python install-config.py "D:\path\to\your Jungle Storm.iso"
+
+No Python? Do it by hand instead. Beside your disc image, make these folders:
+
+    <folder with your .iso>\.tcms-backup\<your iso's name without .iso>\
+
+so a disc at  D:\Games\Jungle Storm.iso  wants
+
+    D:\Games\.tcms-backup\Jungle Storm\
+
+and copy applied-settings.json into it. The folder name must match the file name exactly,
+without the .iso.
+
+Step 2 -- load it in ModStudio
+------------------------------
+Open ModStudio, choose your disc, and press LAST APPLIED at the bottom. It will be greyed out
+until step 1 is done. Pick "2026-09-28  LAN co-op", press Load, then press APPLY TO DISC.
+
+It lists everything it is about to change before it writes anything, and it keeps a backup of
+the original, so RESTORE DISC always puts your copy back.
+
+Step 3 -- play
+--------------
+Tristan runs the lobby server on his PC. You just boot the patched disc and choose ONLINE.
+There is no login to make: any name and password is accepted.
+
+What the config turns on
+------------------------
+106 settings, the same ones Tristan is running, which matters: both copies need the same weapon
+and kit data or the two games will not agree about what anyone is holding. Among them:
+
+  * ONLINE points at 26.209.25.36 -- Tristan's Radmin address -- and skips the dead DNAS check
+  * the shotgun, with its Heroes Unleashed numbers and its Sum of All Fears firing sound
+  * smoke grenades, Heroes Unleashed weapon and skill values, third-person camera, 60 FPS
+  * blood, bullet holes, callouts, penetration, louder enemy grenades
+
+If Tristan's Radmin address ever changes, he sends you a new applied-settings.json and you redo
+steps 1 and 2. Nothing else has to change.

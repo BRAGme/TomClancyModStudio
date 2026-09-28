@@ -108,6 +108,48 @@ in Jungle Storm at `00379880` / `003889D0`.
 | `003A8B88` (GR) | `28420003` | `28420006` | camera cycle wraps at 6, unlocking chase and ghost |
 | `00388958` (JS) | `28420003` | `28420006` | the same |
 
+## Online, and the LAN redirect (Jungle Storm only)
+
+Ghost Recon has no online mode at all: `SLUS_206.13` contains neither `gsconnect`
+nor `gsinit.php`, and there is no bootstrap to redirect. Everything here is
+Jungle Storm's.
+
+`GSFetchServerList` at `0x00531830` turns a name into an address in two tries,
+and the order is what makes the option possible:
+
+| VA | word | what |
+| --- | --- | --- |
+| `0x00531864` | `jal 0x006d2bd8` | **`inet_addr`** on the name field — tried **first** |
+| `0x00531870` | `beq v0, -1` | only a failure there falls through to DNS |
+| `0x0053189c` | `jal 0x006d19e8` | `gethostbyname`, same `a0` |
+| `0x005318e0` | `jal 0x006971b0` | `htons` |
+| `0x005318e4` | `24040050` | `addiu a0, zero, 0x50` — port 80, the one hardcoded port |
+
+Because `inet_addr` runs before the resolver, writing a dotted quad over the name
+resolves with **no name server consulted at all** — which is what lets a VPN
+address work with nothing else configured on either machine.
+
+The name field is 32 bytes at VA `0x0059e490` (file `0x0049e590`):
+`gsconnect.ubisoft.com` and eleven NUL bytes, ending exactly where the request
+line begins at `0x0059e4b0`. A dotted quad is at most 15 characters, so the
+replacement is written over the whole field with NUL fill and nothing is
+displaced. The request line itself — `GET /gsinit.php?dp=GHOSTRECONIT_PS2
+HTTP/1.1` with a `HOST: gsconnect.ubisoft.com` header at `0x0059e4e4` — is left
+alone: the header is sent, not checked.
+
+Of everything a real Ubi.com directory returned, `GSGetServerAddress`
+(`0x006ffdc0`, one caller, type 0) reads exactly `[Servers] RouterIP0` and
+`RouterPort0`, so a stand-in has one GET to answer. Gameplay after that is
+peer-to-peer and not brokered: host TCP 10070 / UDP 10071, joiner UDP 10072 /
+TCP 10073, hard cap 12 connections (`slti` at file `0x003b4328`).
+
+`tcps2/grlan.py` writes the redirect; the port instruction is only touched when
+the port is changed, and is capped at 32767 because that immediate sign-extends.
+The option depends on the DNAS skip, since `DNAS.BIN` loads before any of this.
+The stand-in lobby server lives in `tools/lan/`.
+
+---
+
 ## Not code: the enemies
 
 There is **no hardcoded enemy cap in either executable**. `Company::AddPlatoon`
