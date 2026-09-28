@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""rsetool.py - shared analysis helpers for the two Red Storm Engine PS2 ELFs.
+"""rsetool.py - shared analysis helpers for the Red Storm Engine PS2 ELFs.
 
-    python rsetool.py strings  gr|js|offline|online  [minlen]     -> VA<TAB>string
-    python rsetool.py xref     gr|js|offline|online  <VA-hex>     -> code sites forming that address
-    python rsetool.py grepstr  gr|js|offline|online  <regex>      -> matching strings + xrefs
+    python rsetool.py strings  gr|js|soaf|offline|online  [minlen]     -> VA<TAB>string
+    python rsetool.py xref     gr|js|soaf|offline|online  <VA-hex>     -> code sites forming that address
+    python rsetool.py grepstr  gr|js|soaf|offline|online  <regex>      -> matching strings + xrefs
     python rsetool.py sym      <regex>                            -> Ghost Recon symbols matching
-    python rsetool.py dis      gr|js|offline|online <VA-hex> [n]  -> R5900-aware disassembly
-    python rsetool.py word     gr|js|offline|online <VA-hex>      -> the 32-bit word at VA
+    python rsetool.py dis      gr|js|soaf|offline|online <VA-hex> [n]  -> R5900-aware disassembly
+    python rsetool.py word     gr|js|soaf|offline|online <VA-hex>      -> the 32-bit word at VA
 
 Address model
 -------------
   gr       SLUS_206.13     VA = fileoff + 0x00100000 - 0x80
   js       SLUS_208.20     VA = fileoff + 0x00100000 - 0x100
+  soaf     SLES_511.80     VA = fileoff + 0x00100000 - 0x80
   offline  offline.bin     VA = fileoff + 0x00692700
   online   online.bin      VA = fileoff + 0x00692700
 
@@ -31,11 +32,15 @@ GR = "E:/PS2 Games/Tom Clancy's Ghost Recon (USA)/SLUS_206.13"
 JS = "E:/PS2 Games/Tom Clancy's Ghost Recon - Jungle Storm (USA)/SLUS_208.20"
 OFF = "E:/PS2 Games/Tom Clancy's Ghost Recon - Jungle Storm (USA)/offline.bin"
 ONL = "E:/PS2 Games/Tom Clancy's Ghost Recon - Jungle Storm (USA)/online.bin"
+SOAF = ("E:/PS2 Games/Sum of All Fears, The (Europe) (En,Fr,De,Es,It)"
+        "/SLES_511.80")
 
 # name -> (path, file_start, file_end_or_None, VA_of_file_start)
 TARGETS = {
     "gr":      (GR,  0x80,   0x80 + 0x004ded00, 0x00100000),
     "js":      (JS,  0x100,  0x100 + 0x00512900, 0x00100000),
+    # Sum of All Fears: PT_LOAD at file 0x80, VA 0x00100000, filesz 0x4A5780
+    "soaf":    (SOAF, 0x80,  0x80 + 0x004a5780, 0x00100000),
     "offline": (OFF, 0x00,   None,               0x00692700),
     "online":  (ONL, 0x00,   None,               0x00692700),
 }
@@ -75,17 +80,37 @@ class Image:
 
 # ---------------------------------------------------------------- strings
 def strings(img, minlen=4):
+    """Every printable run of at least `minlen` bytes, however it ends.
+
+    Until 2026-09-28 this emitted a run ONLY when a NUL terminated it::
+
+        if c == 0 and i - run >= minlen:
+
+    which silently discarded every run ending in any other byte. That is not a
+    rare case in this engine: `printf`-style debug strings end in `\\n`, so all
+    of them were invisible. On Sum of All Fears the old rule found 18,864 runs
+    and this one finds 48,670 -- **61% of the string pool was being dropped**,
+    including the entire i.Link transport layer (`ILink:Out of  IOBuffer`,
+    `SendPacket %d`, `Recved fraged packet %d %d %d`).
+
+    Any "0 hits, therefore absent" conclusion drawn from `strings` or `grepstr`
+    before that date is unsafe and should be re-run. Tab, newline and carriage
+    return are treated as part of a run, matching `Image.cstr`, so a multi-line
+    format string comes back whole.
+    """
     out = []
     d = img.data
     run = None
     for i, c in enumerate(d):
-        if 32 <= c < 127:
+        if 32 <= c < 127 or c in (9, 10, 13):
             if run is None: run = i
         else:
             if run is not None:
-                if c == 0 and i - run >= minlen:
+                if i - run >= minlen:
                     out.append((img.va(run), d[run:i].decode("latin1")))
                 run = None
+    if run is not None and len(d) - run >= minlen:
+        out.append((img.va(run), d[run:].decode("latin1")))
     return out
 
 

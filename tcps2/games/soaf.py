@@ -23,10 +23,12 @@ transforms run on it unmodified.
 
 from __future__ import annotations
 
-from ..model import BOOL, INT, FileEdit, GameProfile, Overlay, Setting
+from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
+                     Setting, WordEdit)
 from . import rseweapons, rstuning
 
 BOOT = "SLES_511.80"
+NOP = 0x00000000
 
 ELF = Overlay(
     name=BOOT,
@@ -37,7 +39,76 @@ ELF = Overlay(
     file_span=0x004A5780 + 0x80,
 )
 
-STOCK = {}
+#: Code sites, every one recovered by signature-matching Ghost Recon's
+#: unstripped build into this stripped one and then confirmed by reading the
+#: word back out of `SLES_511.80` (see `research/soaf/code.md` §4).
+#:
+#: This is the same method Jungle Storm's addresses came from, and it works
+#: better here: SOAF's bullet-hole and effects code is instruction-for-
+#: instruction identical to Ghost Recon's apart from `jal` targets and `lui`
+#: halves, where Jungle Storm's had drifted. `__ct__20BulletHoleManagerPS2Fv`
+#: matches 23 of 23 words, `AddOneBulletHole` 87 of 87.
+STOCK = {
+    # bullet-hole ring: the array size and the two clear-loop bounds that have
+    # to move with it (one in the constructor, one in Clear())
+    0x004FD430: 0x24050014,   # addiu a1, zero, 20   BulletHoleManagerPS2 size
+    0x004FD44C: 0x24020014,   # addiu v0, zero, 20   its constructor clear loop
+    0x004FD498: 0x24030014,   # addiu v1, zero, 20   Clear() -- load / restart
+    # IkeEffectsMgr::DisplayBullethole
+    0x00240458: 0x3C0341F0,   # lui v1, 0x41f0       30.0f default lifetime
+    0x00240560: 0x3C024000,   # lui v0, 0x4000       2.0f short-lived surfaces
+    0x0024050C: 0x1000001B,   # b                    unknown surface -> no decal
+    # BulletHolePS2::Render's vertex colour {0x40, 0x40, 0x40, 0x20} at
+    # 0x00539D40, materialised only at 0x004FD8E8; the last word is the alpha
+    0x00539D4C: 0x00000020,
+    # weather particle counts: four fixed-size arrays, as in Ghost Recon
+    0x0024E440: 0x24050FA0,   # addiu a1, zero, 4000  IkeRainEffect drops
+    0x0024ED9C: 0x240509C4,   # addiu a1, zero, 2500  IkeSnowEffect flakes
+    0x004EF710: 0x2405012C,   # addiu a1, zero, 300   RainEffectPS2
+    0x004F17D0: 0x24050064,   # addiu a1, zero, 100   SnowEffectPS2
+    # blood spray lifetime: BillboardEffectPS2::SetParameters, type-7 branch
+    0x004EC0BC: 0x3C023F00,   # lui v0, 0x3f00 (0.5 s)
+}
+
+#: SuppressBehavior::ShouldIFrag, this game's copy at 0x001A64C0. The five
+#: words are Ghost Recon's own grenade option, ported site for site; each one
+#: is the same instruction with the same encoding at the same offset into the
+#: function, and the single call site matches Ghost Recon's argument for
+#: argument (a0 = this, a1 = the target, a2 = this+0x34).
+GRENADES = (
+    (0x001A65C0, 0x14400003, 0x10000003),   # thrower need not be outdoors
+    (0x001A65F0, 0x14400004, 0x10000004),   # target need not be outdoors
+    (0x001A6610, 0x3C024361, 0x3C0242C8),   # minimum 15 m -> 10 m (distance^2)
+    (0x001A6674, 0x3C0244C8, 0x3C024561),   # maximum 40 m -> 60 m
+    (0x001A66BC, 0x3C023F40, 0x3C023F80),   # 75% roll -> always
+)
+STOCK.update({va: s for va, s, _n in GRENADES})
+
+#: Split screen was tried and withdrawn, 2026-09-28.
+#:
+#: The engine's machinery is real: `EffMgrPS2::Render` tests a flag at
+#: `g_graphic_sys+0x18BC` and, when it is set, loops over exactly two
+#: viewports, each with its own draw area. Nothing on this disc sets that flag,
+#: so an option forced it on by rewriting the two initialisers that clear it.
+#:
+#: It worked, and that is the point: the game booted and the world really did
+#: draw twice, top and bottom, with the two halves showing different views. But
+#: it is not a feature and cannot be made into one from here -- the HUD is laid
+#: out for one screen and straddles the boundary, there is no second player,
+#: pad or soldier, and the game has no menu entry to reach it. The option was
+#: removed rather than shipped as something that looks like split screen and is
+#: not. `research/soaf/code.md` §5a keeps the addresses and the result.
+
+#: 0x49740000 is 999,424 s (11.5 days), not the float maximum, for the reason
+#: Ghost Recon's table records: a full ring reuses the hole with the least life
+#: left, and at 3.39e38 every hole reads the same remaining life, so slot 0
+#: took every new hole. At 1e6 the oldest goes first.
+DECAL_LIFE = {"stock": None, "120": 0x3C0342F0, "1000": 0x3C03447A,
+              "perm": 0x3C034974}
+SHORT_LIFE = {"stock": None, "120": 0x3C0242F0, "1000": 0x3C02447A,
+              "perm": 0x3C024974}
+DECAL_ALPHA = {"stock": None, "50": 0x40, "75": 0x60, "100": 0x80}
+BLOOD_SPRAY = {"2": 0x3C024000, "5": 0x3C0240A0}
 
 NOTES = (
     "The Sum of All Fears reads correctly -- 2,751 files across SOAF.IMG and "
@@ -45,11 +116,19 @@ NOTES = (
     "the length it declares -- and the tool wears its artwork.\n\n"
     "Its missions use the same grammar as Ghost Recon's, so the enemy options "
     "here are the same edits, running on this game unmodified.\n\n"
-    "It has no render patches. Unlike Ghost Recon, which shipped an unstripped "
-    "debug build, this executable is stripped, and it routes its tunables "
-    "through name-driven registration tables rather than the instruction "
-    "immediates that made Ghost Recon patchable -- so there is nothing "
-    "honest to offer there yet.\n\n"
+    "It now has render patches. This executable is stripped, so searching it "
+    "for its own tunables by name found only registration tables and no "
+    "numbers worth writing -- but the bullet-hole and effects code is the "
+    "same Red Storm source as Ghost Recon's, and Ghost Recon shipped its "
+    "symbol table. Matching Ghost Recon's compiled functions against this "
+    "disc recovered the addresses: 23 of 23 words for the bullet-hole "
+    "manager's constructor, 87 of 87 for AddOneBulletHole -- a closer match "
+    "than Jungle Storm gives. Every stock word below was then read back out "
+    "of SLES_511.80 to confirm it, and is checked again before anything is "
+    "written. All eight were applied to a disc and read back out of the "
+    "patched image on 2026-09-28 -- through this game's MODE2/2352 sectors, "
+    "which is the part that is unique to it -- so they land where they are "
+    "aimed. None has been watched working in a running game.\n\n"
     "Two levers it has that Ghost Recon does not, both still to be wired up: "
     "CMBTMODL.XML holds the entire wound and difficulty model as named floats, "
     "and its game-type script tables are populated where all of Ghost Recon's "
@@ -80,6 +159,96 @@ def _settings():
                      "leadership in every hostile template. Only templates used "
                      "by non-allied companies are touched, so your own side is "
                      "left alone."),
+        Setting("soaf_enemy_grenades", "Enemies throw grenades more readily",
+                BOOL, False, "Enemies", confidence="applied",
+                help="An enemy throws only when both rooms are outdoors, the "
+                     "target is 15-40 m away and a 75% roll passes. This "
+                     "allows indoor throws at 10-60 m every time the other "
+                     "checks pass; the check that keeps grenades off nearby "
+                     "friendlies stays. This game kept Ghost Recon's "
+                     "suppressive-fire grenade decision -- Jungle Storm is the "
+                     "one that dropped it -- so this is Ghost Recon's own "
+                     "option, site for site.",
+                caution="Never played. Throws at the far end may fall short: "
+                        "the throw speed is unchanged. The function that asks "
+                        "the question is Ghost Recon's; the behaviour that "
+                        "calls it had drifted too far to match, so how often "
+                        "this game asks at all was not established."),
+
+        # ---- bullet holes -----------------------------------------------
+        Setting("soaf_decal_pool", "Bullet holes kept on screen", INT, 20,
+                "Bullet Holes", minimum=20, maximum=400, unit="holes",
+                confidence="applied",
+                help="A 20-entry ring, the same one Ghost Recon has. Raising it "
+                     "sets the array size and both clear-loop bounds that have "
+                     "to move with it -- one in the constructor, one in the "
+                     "clear a quick load or restart runs -- or the extra "
+                     "entries start with an uninitialised active flag.",
+                caution="Each hole is 48 bytes of heap, measured off this "
+                        "disc's own array indexer, not assumed from Ghost "
+                        "Recon."),
+        Setting("soaf_decal_life", "How long bullet holes last", CHOICE,
+                "stock", "Bullet Holes", confidence="applied",
+                choices=[Choice("stock", "Stock (30 seconds)", ""),
+                         Choice("120", "2 minutes", ""),
+                         Choice("1000", "About 17 minutes", ""),
+                         Choice("perm", "Permanent",
+                                "Holes never expire; the oldest is reused only "
+                                "when the 'kept on screen' cap is full.")],
+                help="Holes do not fade -- they are drawn at full strength "
+                     "until their lifetime runs out or the ring reuses their "
+                     "slot. Pair 'Permanent' with a higher cap."),
+        Setting("soaf_decal_short", "Also extend the short-lived surfaces",
+                BOOL, False, "Bullet Holes", confidence="applied",
+                requires={"soaf_decal_life": ("120", "1000", "perm")},
+                help="Three surface types get a 2-second hole instead of 30. "
+                     "This gives them the same lifetime as everything else."),
+        Setting("soaf_decal_everywhere", "Bullet holes on every surface", BOOL,
+                False, "Bullet Holes", confidence="applied",
+                help="DisplayBullethole bails out early on a surface type it "
+                     "does not recognise and draws nothing. Removing that "
+                     "early-out falls through to the default texture and size, "
+                     "so every surface marks.",
+                caution="Untested, and the most invasive of the decal options "
+                        "-- try it on its own."),
+        Setting("soaf_decal_strength", "How dark bullet holes are", CHOICE,
+                "stock", "Bullet Holes", confidence="applied",
+                choices=[Choice("stock", "Stock (faint, 25%)", ""),
+                         Choice("50", "50%", ""),
+                         Choice("75", "75%", ""),
+                         Choice("100", "Full strength", "")],
+                help="Every hole is drawn with one fixed colour, RGB 0x40 and "
+                     "alpha 0x20 -- a quarter of full opacity, which is why "
+                     "they look faint. This raises that alpha. The colour sits "
+                     "at 0x00539D40 and the hole renderer is the only thing "
+                     "that reads it."),
+
+        # ---- world ------------------------------------------------------
+        Setting("soaf_weather", "Rain and snow density", CHOICE, "stock",
+                "World", confidence="applied",
+                choices=[Choice("stock", "As shipped", ""),
+                         Choice("half", "Lighter", "Half the particles."),
+                         Choice("double", "Heavier", "Twice the particles.")],
+                help="Four fixed-size particle arrays, the same four Ghost "
+                     "Recon has and at the same shipped counts: 4,000 "
+                     "raindrops and 2,500 flakes in the general effect, 300 "
+                     "and 100 in the PS2-specific one.",
+                caution="These are real allocations, not pools that grow."),
+        Setting("soaf_blood_spray", "Blood spray lasts", CHOICE, "stock",
+                "World", confidence="applied",
+                choices=[Choice("stock", "Half a second (as shipped)", ""),
+                         Choice("2", "2 seconds", ""),
+                         Choice("5", "5 seconds", "")],
+                help="A bullet hit on a soldier throws a small blood spray "
+                     "that lasts half a second, which is easy to miss. This "
+                     "keeps it on screen longer. Unlike Jungle Storm, this "
+                     "game does not hide its Blood setting, so the spray is "
+                     "there as shipped once Blood is on in the game's own "
+                     "options.",
+                caution="The spray is drawn where the bullet hit and does not "
+                        "follow the soldier, so a long one hangs in the air "
+                        "after he moves -- 5 seconds looked wrong in play on "
+                        "Ghost Recon. For spotting hits, not for normal play."),
     ] + rstuning.cards("soaf_") + rstuning.soaf_cards()
 
 
@@ -210,6 +379,59 @@ def _mission_settings():
     return out
 
 
+def build_edits(v: dict) -> list:
+    """The code patches, all of them in the boot ELF.
+
+    Every write goes through `w`, which carries the stock word along so the
+    engine refuses the site if the disc does not hold what this table says it
+    holds -- which is what makes a signature-ported address safe to ship.
+    """
+    e = []
+
+    def w(va, value, note):
+        e.append(WordEdit(va, value, STOCK[va], note))
+
+    pool = int(v.get("soaf_decal_pool", 20))
+    if pool != 20:
+        w(0x004FD430, 0x24050000 | (pool & 0xFFFF),
+          "bullet-hole pool = %d" % pool)
+        w(0x004FD44C, 0x24020000 | (pool & 0xFFFF),
+          "bullet-hole clear loop = %d" % pool)
+        w(0x004FD498, 0x24030000 | (pool & 0xFFFF),
+          "bullet holes cleared on load / restart = %d" % pool)
+
+    life = v.get("soaf_decal_life", "stock")
+    if DECAL_LIFE.get(life):
+        w(0x00240458, DECAL_LIFE[life], "bullet-hole lifetime")
+        if v.get("soaf_decal_short"):
+            w(0x00240560, SHORT_LIFE[life], "short-lived surfaces too")
+
+    if v.get("soaf_decal_everywhere"):
+        w(0x0024050C, NOP, "draw a hole on unrecognised surfaces too")
+
+    alpha = DECAL_ALPHA.get(v.get("soaf_decal_strength", "stock"))
+    if alpha:
+        w(0x00539D4C, alpha, "bullet-hole alpha (0x80 = opaque)")
+
+    weather = v.get("soaf_weather", "stock")
+    if weather in ("half", "double"):
+        f = 2 if weather == "double" else 0.5
+        for va, stock_n in ((0x0024E440, 4000), (0x0024ED9C, 2500),
+                            (0x004EF710, 300), (0x004F17D0, 100)):
+            n = max(16, min(0x7FFF, int(stock_n * f)))
+            w(va, 0x24050000 | n, "weather particles = %d" % n)
+
+    spray = BLOOD_SPRAY.get(v.get("soaf_blood_spray", "stock"))
+    if spray:
+        w(0x004EC0BC, spray, "blood spray lasts longer")
+
+    if v.get("soaf_enemy_grenades"):
+        for va, _stock, new in GRENADES:
+            w(va, new, "enemies throw grenades more readily")
+
+    return e
+
+
 def build_data(v: dict) -> list:
     out = []
     # Per-mission first, and skipped entirely when the global switch
@@ -253,7 +475,7 @@ PROFILE = GameProfile(
     overlays=[ELF],
     settings=(_settings() + rseweapons.cards('soaf_')
               + _mission_settings()),
-    build_edits=lambda v: [],
+    build_edits=build_edits,
     build_pnach=lambda v: [],
     build_data=build_data,
     archive_pattern=r"/(SOAF|MENU)\.IMG$",

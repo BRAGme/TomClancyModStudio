@@ -10,8 +10,12 @@ stripped-vs-unstripped does not track compiler choice across these three games.
 Zero named functions survive. There is no DWARF. Everything below was recovered
 from strings and from two purpose-built cross-reference scans (pointer-table scan
 and `lui`/`addiu` immediate-pair scan), not from a symbol table. **No safe,
-machine-verified immediate-word patch candidate was found this pass** — see
-"Patch candidates" for why and for the concrete next probe. What *was* established
+machine-verified immediate-word patch candidate was found by *that* method** —
+see "Patch candidates" for why and for the concrete next probe. **§4, added
+2026-09-28, carries out that probe by a different route and recovers twelve,
+all now shipping as options**: signature-matching Ghost Recon's unstripped
+build into this one, which turns out to fit SOAF more closely than it fits
+Jungle Storm. What *was* established
 is a precise load map, a full string-driven survey with real code cross-references
 for several hits, and one genuinely interesting discovery: SOAF's boot code
 contains a live, byte-exact reference to `host0:ike/gr.elf` — Ghost Recon's own
@@ -90,6 +94,17 @@ one predicts the other.
 ---
 
 ## 2. String-driven hunt
+
+> **Health warning, 2026-09-28.** Everything in this section was produced with
+> a version of `rsetool.strings` that emitted a run **only when a NUL
+> terminated it**, silently dropping every run ending in any other byte — which
+> on this engine means every `printf`-style debug string, because they end in
+> `\n`. The old rule found 18,864 runs here; the corrected one finds 48,670.
+> **61% of the string pool was missing**, including the whole i.Link transport
+> layer (see `network.md`). The tool is fixed. Treat every "0 hits, therefore
+> absent" claim below as unsafe until re-run; two have already been corrected
+> in place, and the split-screen negative was re-tested and **holds**
+> (`splitscreen` / `viewport` / `2player` are still 0 under the fixed scanner).
 
 47,904 printable runs (≥4 chars, `[\x20-\x7e]`) extracted from the loadable
 segment with their virtual addresses. Every VA below is machine-computed from the
@@ -178,6 +193,13 @@ the reader/loader function was not located this pass.
 | `viewport` | 0 |
 | `twoplayer` / `2player` | 0 |
 
+> **Corrected 2026-09-28 — see §5.** The string negative below is real, but the
+> conclusion drawn from it ("does not have local split-screen at all") is wrong.
+> The engine's split-screen state machine *is* compiled into SOAF; it is the
+> game-side UI and per-player support that is absent. The caveat this section
+> already records — that Ghost Recon's split-screen accessors have no string
+> literals either — is exactly why, and it should have blocked the conclusion.
+
 **Clean, total negative** — nothing resembling split-screen terminology exists
 anywhere in the string pool. For contrast, `Coop` (1), `\coop_avatar.toe` (1),
 `Multiplayer`/`MULTIPLAYER` (2) and ` mMultiplayerGameType = ` (1) **do** exist,
@@ -249,14 +271,23 @@ codename** (shared with Ghost Recon), not a C++ class-name prefix as the
 | `Easy` | 4 (`Easy`, `Easy`, `EASY`, `EASY`) |
 | `Normal` | 4 |
 | `Hard` | 4 |
-| `Recruit` | 0 |
-| `Veteran` | 0 |
-| `Elite` | 0 |
+| `Recruit` | ~~0~~ **8** |
+| `Veteran` | ~~0~~ **4** |
+| `Elite` | ~~0~~ **7** |
 
-SOAF uses a plain **3-tier Easy/Normal/Hard** difficulty (with `Difficulty` /
-`DIFFICULTY` / `DIFFICULTY_SUBBOX` UI strings nearby). Ghost Recon's
-Recruit/Veteran/Elite naming is **absent** — a genuine negative, not a search
-miss.
+SOAF uses a plain **3-tier Easy/Normal/Hard** difficulty for the `<Actor>`
+flags (with `Difficulty` / `DIFFICULTY` / `DIFFICULTY_SUBBOX` UI strings
+nearby).
+
+> **Corrected 2026-09-28.** This section originally recorded 0 hits for
+> Recruit/Veteran/Elite and called it "a genuine negative, not a search miss".
+> It was a search miss — the scanner bug above. The real counts are 8 / 4 / 7,
+> and they are the `unlocked_missions.xml` medal grid (5 ranks x {Mission,
+> Firefight, Recon}), registered at `0x00527090`+. Note this was *already*
+> contradicted by `knobs.md` §4, which documents `RecruitEnemyAimFactor` /
+> `VeteranEnemyDelayFactor` / `EliteEnemySkillAdjustment` in `CMBTMODL.XML` —
+> and those names are what `rstuning.soaf_cards()` already ships options for.
+> Two documents in this folder disagreed and neither was reconciled.
 
 ### Asset extensions (loader confirmation)
 
@@ -273,7 +304,7 @@ miss.
 | `.TOE` | 18 | real, **after filtering** — raw count was polluted by `RToe`/`LToe` (skeleton bone names); the literal `\.toe\b` search gives 12 clean hits: `avatar.toe` (x4), `Training.toe`, `\Company%d.toe`, `\Red_Avatar.toe`, `\Green_Avatar.toe`, `\Blue_Avatar.toe`, `\Gold_Avatar.toe`, `\coop_avatar.toe` |
 | `.OFF` | 10 | real — `Outfits\*.off` (plus `ScreenOffsetX/Y` false positives in the raw count) |
 | `.KIL` | 26 | real — `kits\*.kil`, `no_restrictions.kil` |
-| `.CHA` | 68 raw, **0 real** | **false positive** — every raw hit is `std::char_traits<...>` / `std::basic_*<wchar_t, ...>` STL RTTI strings. A literal `\.cha\b` search returns **zero** — `.CHA` is not a real asset extension in this build. |
+| `.CHA` | 68 raw | ~~**0 real** — not a real asset extension~~ **WRONG, corrected 2026-09-28: `.CHA` is real — 251 files in `SOAF.IMG`** (`ICA_US_DEMOLITION.CHA`, …). The raw ELF hits genuinely *are* STL RTTI noise and the ELF never names the extension, but the conclusion drawn from that — that the file type does not exist — was never checked against the archive, which lists 251 of them. A negative about **what is on the disc** has to be tested against the disc, not against the executable's string pool. |
 | `.POB` | 64 | real — `particle_effect*.pob` |
 | `.QOB` | 5 | real — `iw_brass.qob`, `muzzle_flash.qob`, `rainsplash.qob`, `sphere_billboard.qob` |
 
@@ -345,7 +376,17 @@ touch gameplay.
 
 ---
 
-## 3. Patch candidates
+## 3. Patch candidates — the string-driven pass
+
+> **Superseded in part, 2026-09-28.** The conclusion below ("none found") is
+> correct *for the method used in this section* — string scanning plus two
+> cross-reference scans — and the reasoning about name-driven registration
+> still holds for the option table. But the paragraph saying there is nothing
+> honest to offer was read too broadly. §4 recovers twelve patch sites by
+> signature-matching Ghost Recon's unstripped build into this one, which is the
+> approach this very section's "next probe" pointed at, and all twelve are now
+> shipping options. Read §3 as "the strings do not hand you the numbers" and §4
+> as what to do instead.
 
 **None found and machine-verified this pass.** Here's why, plainly: every
 mechanism uncovered in §2 turned out to be **name-driven, not
@@ -398,6 +439,323 @@ signature matches rather than a symbol table. That is real disassembly work
 `struct`-level ELF parsing and two hand-rolled cross-reference scans (a raw
 4-byte pointer scan and a `lui`/`addiu` immediate-pair scan), both included
 below for reuse.
+
+---
+
+## 4. Signature port from Ghost Recon (2026-09-28)
+
+This is §3's own "single next probe", answered a different way. Rather than
+decompiling SOAF's registration functions to find its defaults, take the
+defaults from the game that shipped its symbol table and find the *same
+compiled code* here.
+
+**Why it works.** Ghost Recon PS2 (`SLUS_206.13`) and SOAF are both Metrowerks
+MW MIPS C 2.4.1.01 builds of the same Red Storm "Ike" tree. `research/code/portsig.py`
+masks the fields a relocation legitimately changes — `lui` immediates, `j`/`jal`
+targets — and slides the result over the target image. SOAF matches Ghost Recon
+**more closely than Jungle Storm does**:
+
+| Ghost Recon symbol | words | SOAF VA | match |
+|---|---|---|---|
+| `__ct__20BulletHoleManagerPS2Fv` | 23 | `0x004FD410` | 23/23 (100%) |
+| `Clear__20BulletHoleManagerPS2Fv` | 18 | `0x004FD470` | 18/18 (100%) |
+| `AddOneBulletHole__20BulletHoleManagerPS2F…` | 87 | `0x004FD4C0` | 87/87 (100%) |
+| `Update__13BulletHolePS2Ff` | 12 | `0x004FD740` | 12/12 (100%) |
+| `DisplayBullethole__13IkeEffectsMgrF…` | 120 | `0x00240430` | 98% |
+| `__ct__13IkeRainEffectFv` | 45 | `0x0024E390` | 98% |
+| `__ct__13IkeSnowEffectFv` | 51 | `0x0024ECD0` | 99% |
+| `__ct__13RainEffectPS2Fv` | 25 | `0x004EF6B0` | 100% |
+| `SetParameters__18BillboardEffectPS2F…` | 155 | `0x004EC000` | 92% |
+| `ShouldIFrag__…` | 84 | `0x001A64C0` | 94% |
+
+The constructor was checked by eye, instruction for instruction: identical to
+Ghost Recon's apart from three `jal` targets. The array indexer
+(`RSArray<BulletHolePS2>::operator[]`, SOAF `0x004FD990`) is byte-identical to
+Ghost Recon's, giving a measured **48-byte** bullet-hole record here too.
+
+**The twelve decal, weather and blood sites**, every stock word re-read out of `SLES_511.80`
+and then confirmed a second time by applying them to a disc and reading the
+patched image back through its MODE2/2352 sectors:
+
+| SOAF VA | stock word | what |
+|---|---|---|
+| `0x004FD430` | `24050014` | bullet-hole ring size (20) |
+| `0x004FD44C` | `24020014` | its constructor's clear-loop bound |
+| `0x004FD498` | `24030014` | `Clear()`'s bound — the quick-load / restart wipe |
+| `0x00240458` | `3C0341F0` | 30.0f default decal lifetime |
+| `0x00240560` | `3C024000` | 2.0f short-lived surfaces |
+| `0x0024050C` | `1000001B` | branch: unknown surface → no decal |
+| `0x00539D4C` | `00000020` | hole vertex alpha (colour struct at `0x00539D40`) |
+| `0x0024E440` | `24050FA0` | `IkeRainEffect` 4,000 drops |
+| `0x0024ED9C` | `240509C4` | `IkeSnowEffect` 2,500 flakes |
+| `0x004EF710` | `2405012C` | `RainEffectPS2` 300 |
+| `0x004F17D0` | `24050064` | `SnowEffectPS2` 100 |
+| `0x004EC0BC` | `3C023F00` | blood spray lifetime, 0.5 s |
+
+`SuppressBehavior::ShouldIFrag` came over as a sixth option (five more words,
+applied and read back the same way). Ghost Recon's copy is at `0x001BD020`; this
+game's is at `0x001A64C0`, and it is **live** — one caller, at `0x001A61CC`,
+which sets up its arguments identically to Ghost Recon's
+(`a0` = this, `a1` = the target, `a2` = this+0x34) and tests the result with the
+same `beqz`:
+
+| SOAF VA | stock | what |
+|---|---|---|
+| `0x001A65C0` | `14400003` | thrower-must-be-outdoors test |
+| `0x001A65F0` | `14400004` | target-must-be-outdoors test |
+| `0x001A6610` | `3C024361` | minimum range, 225.0f = 15 m squared |
+| `0x001A6674` | `3C0244C8` | maximum range, 1600.0f = 40 m squared |
+| `0x001A66BC` | `3C023F40` | 0.75f throw roll |
+
+Worth recording precisely because it cuts against the pattern above:
+`SuppressBehavior::Process`, the behaviour that *calls* it, does **not** match
+at 0.85 — Metrowerks reallocated its registers (`s1`/`s0` in Ghost Recon,
+`s2`/`s1` here), which is exactly the failure mode `portsig` cannot see through.
+So a "no match" on a caller says nothing about the callee, and the three float
+constants being self-describing (15², 40², 0.75) is what makes these five safe
+without the enclosing function. It also means how often this game reaches the
+decision was not established, only what it answers.
+Jungle Storm, by contrast, dropped the decision entirely and needed injected
+code (`grfrag`) to get it back; SOAF kept it.
+
+The vertex colour was found by aligning the two copies of
+`BulletHolePS2::Render` (delta `0x8FA10`) and reading the pointer SOAF builds at
+`0x004FD8E8`: `lui $v0, 0x54` / `addiu $v0, $v0, -0x62C0` → `0x00539D40`, holding
+`{0x40, 0x40, 0x40, 0x20}`, byte-identical to Ghost Recon's at `0x0056FED0`.
+
+**Clean negatives from this pass** — real absences, not search misses, and each
+one blocks a Ghost Recon option from coming over:
+
+* `CheckingLoadingLoop__8IkeUIMgrFb` (Ghost Recon's frame-rate cap, 94 words):
+  **no candidate down to a 0.45 match ratio.** SOAF's main loop is not a
+  recognisable relative of it, so the 60 FPS patch needs its own research —
+  find this game's own vblank wait.
+* `ShowDeadBodies__10IkeOptionsCFv` is a **2-word** function. It is not that it
+  is missing; a 2-word signature cannot be matched at all. `ShowDeadBodies` is
+  entry #16 of the option table in §2, so this disc likely exposes it as a
+  normal game option anyway.
+* `SimCamera` (`ToggleCameraView`, `SetCurrentCameraView`, `__ct__`,
+  `CameraBeginScene`), `SimHuman::Update`, `HandleBloodPoolEffect`,
+  `HandleBloodyHumanEffect`, `CheckLineOfSight`, `CalculateTargetPoint` and the
+  total-war sites: **no match at 0.90**. These are the large, gameplay-heavy
+  functions where an earlier build genuinely differs. Third-person camera,
+  enemy sight and draw distance, total war and "blood always on" are therefore
+  *not* ported by this pass and should not be assumed portable.
+* Split screen: **not the total negative §2 called it.** See §5 — the engine's
+  split-screen mode state machine *is* compiled in and matches Ghost Recon
+  instruction for instruction. What is missing is everything above it.
+
+**Reusable harness:** `research/code/portmap.py` takes every VA in Ghost
+Recon's `STOCK` table, groups them by containing function, signature-matches
+each function into a target image and prints the ported VA plus whether the
+stock word survived (`exact`, `lui`/`jal` field differs, or `WORD DIFFERS`).
+
+```
+python research/code/portmap.py soaf [min_ratio]
+```
+
+It reports 1,023 of 3,615 Ghost Recon sites porting with the stock word intact,
+but that headline number is not meaningful on its own: most of it is one large
+`lzo1x_decompress_safe` region, and what matters is whether *every* site an
+individual option needs ported, which is why the twelve above were picked by
+hand and then verified one at a time.
+
+---
+
+## 5. Split screen: the engine has it, the game does not (2026-09-28)
+
+§2 read the zero string hits as "SOAF does not have local split screen at all",
+while noting in the same breath that Ghost Recon's own split-screen accessors
+carry no string literals either. That caveat was the right one and it was
+under-weighted. Checked properly by signature, **the engine-level state machine
+is present in SOAF**:
+
+| Ghost Recon symbol | GR VA | SOAF VA | match |
+|---|---|---|---|
+| `ActivateSplitScreenMode__14RSGameStateMgrFv` | `0x00131280` | `0x00363580` | 89% |
+| `DeactivateSplitScreenMode__14RSGameStateMgrFv` | `0x00131160` | `0x00363460` | 89% |
+| `InSplitScreenMode__14RSGameStateMgrCFv` | `0x00131D70` | `0x00364060` | (2 words; found via the flag) |
+| `SplitScreenMode__11IkeRulesMgrFv` | `0x0017FD30` | `0x0014A700` | 91% |
+
+`ActivateSplitScreenMode` was read side by side and is the same function
+instruction for instruction: same prologue, the same `addiu $v0, zero, 1` /
+`sb $v0` writing a flag byte into the state manager, the same
+`lw $t9,($a0)` / `lw $t9,0x50($t9)` / `jalr $t9` vtable dispatch through slot
+`0x50`. Three fields shifted, all consistent with an earlier build: the flag
+byte is at `this+0x1ED` (Ghost Recon `+0x1E9`, so the struct grew 4 bytes) and
+the message id passed is `0x4C` (Ghost Recon `0x4D`).
+
+The flag is read from exactly one instruction in each game —
+`lbu $v0, 0x1ED($a0)` at SOAF `0x00364064`, `lbu $v0, 0x1E9($a0)` at Ghost Recon
+`0x00131D74` — i.e. the accessor, with everything else going through the
+vtable. **Direct-caller counting therefore cannot measure how wired split screen
+is in either game**, and any conclusion drawn that way is worthless. Noted
+because it is an easy trap here.
+
+A useful negative control: **Jungle Storm scores worse than SOAF on these same
+signatures** (`none` below a 0.60 ratio) despite definitely having working split
+screen. That inversion is not a false positive in SOAF — it is Jungle Storm
+having reworked this area. It is a standing warning that a low portsig score
+means "this build diverged", never "this feature is absent".
+
+**What is missing is everything above the engine.** These are reliable, and the
+first is data rather than inference:
+
+* `MENU.IMG/SCREEN.TXT` lists the game's **entire** menu system — 19 screens:
+  `GAMEINFO_MAIN_PS2`, `GAMEINFO_PS2`, `MAIN_PS2`, `OPTIONSCONTROL_PS2`,
+  `OPTIONSGAME_PS2`, `OPTIONSSCREEN_PS2`, `OPTIONSSOUND_PS2`,
+  `PS2_PRESS_START`, `SELECTLANGUAGE_PS2`, `SF3DMODEL_PS2`, `SFMUSIC_PS2`,
+  `SFPICTURE_PS2`, `SINGLE_BRIEFING_PS2`, `SPECIALFEATURE_PS2`,
+  `NEW_CAMPAIGN_PS2`, `QUICK_MISSION_PS2`, `QUICK_MISSION_PARAMETER_PS2`,
+  `RESUMECAMPAIGN_PS2`, `TRAINING_PS2`. Every one is single player. There is no
+  multiplayer, co-op, split-screen, lobby or soldier-chooser screen on the disc.
+* `IkeRulesMgr::SplitScreenMode` ports but has **zero callers**.
+* `PS2MultiplayerSplitScreenChooseSoldier` — the whole second-player soldier
+  setup screen in Ghost Recon — does not match, nor do `ActionPanel::SetSplitNumber`
+  or `ReticuleDisplay::ReticuleSetSplitNumber`, the per-player HUD splitters.
+  Weak evidence on its own (these are large functions, see the warning above),
+  but it agrees with the menu list, which is not weak.
+* `ActionPanel::Rebuild` *does* match (`0x002237A0`, 94%), so the HUD class
+  itself is present — it is the split-number support that is not in evidence.
+
+**Verdict.** Split screen here would be *built*, not unlocked — but §5a
+narrows that a long way: the renderer already loops over two viewports, so the
+hardest part is present and the missing piece is the switch plus the game layer.
+The mode switch exists and nothing reaches it; there is no menu to reach it
+from, no second-player soldier setup and no per-player HUD path. For scale:
+Jungle Storm *shipped* working split screen and
+still needed substantial injected code (`grsquad`, per-viewport bullet holes,
+hit blur, orders, handoff) to fill its gaps; SOAF would need all of that plus
+the parts Jungle Storm already had, with no working reference in the same
+binary to copy offsets from.
+
+### 5a. The viewport probe, run — the renderer loops over two viewports
+
+The question §5 left open ("can the renderer draw the world twice in a frame?")
+is **answered: yes.** The probe did not need a scissor hunt. Ghost Recon's
+`EffMgrPS2::Render` has a full-screen block and a per-viewport split loop and
+calls `WaterRippleManagerPS2::Render` from *both* (`grsquad.py` documents this),
+so the call count is the test.
+
+| | Ghost Recon | SOAF |
+|---|---|---|
+| `EffMgrPS2::Render` | `0x0045E160` | `≈0x004ED338` |
+| graphics-system pointer | `0x00630B40` | `0x005B2270` |
+| split-screen render flag | `g_graphic_sys+0x2880` | `g_graphic_sys+0x18BC` |
+| `WaterRippleManagerPS2::Render` | `0x0046B4E0`, called **2x** | `0x004FB570`, called **2x** (`0x004ED3BC`, `0x004ED4B8`) |
+| `BulletHoleManagerPS2::Render` | `0x0046DC20`, called **1x** | `0x004FD620`, called **1x** (`0x004ED3C4`) |
+| per-viewport draw-area setup | `0x0044EBC0`, `0x0044F090` | `0x002D25D0`, `0x002D2C40` |
+
+SOAF's structure is Ghost Recon's:
+
+```
+004ed3a0  lui  at, 0x5b
+004ed3a4  lw   v0, 0x2270(at)      ; g_graphic_sys
+004ed3a8  lbu  v0, 0x18bc(v0)      ; the split-screen flag
+004ed3ac  bnez v0, 0x4ed488        ; set -> take the per-viewport path
+004ed3b0  move s1, zero            ;   (delay slot) viewport index = 0
+...
+004ed488  lui  at, 0x5b            ; <- top of the per-viewport block
+004ed48c  lw   a0, 0x2270(at)
+004ed490  jal  0x2d25d0            ; set THIS viewport's draw area
+004ed494  move a1, s1              ;   (index)
+...                                ; the effect renders, per viewport
+004ed580  addiu s1, s1, 1
+004ed584  slti  v0, s1, 2          ; while (i < 2)
+004ed588  bnez  v0, 0x4ed488       ; back-edge
+```
+
+A genuine loop over **exactly two** viewports, each with its own draw area. The
+render path is parameterised, not hard-wired — so split screen here is **not a
+renderer rewrite**. Ten instructions across the renderer, camera and HUD paths
+read that flag (`0x00243770`, `0x002D13C4`, `0x002D13F8`, `0x002D159C`,
+`0x002D25A0`, `0x002DF100`, `0x002E0340`, `0x004ED274`, `0x004ED3A8`,
+`0x004ED598`), so the awareness is spread through the engine rather than
+isolated in one function.
+
+**But nothing can turn it on.** The flag has exactly two writers in SOAF and
+both store zero:
+
+```
+0025fcac  sb zero, 0x18bc(a1)
+002d3448  sb zero, 0x18bc(v0)
+```
+
+Ghost Recon has four writers, one of them `RSDisplayMgr::EnableSplitScreen` at
+`0x0044EBB4` — `sb $a1, 0x2880($a0)`, i.e. the setter that can write 1. **SOAF
+has no such setter.** The flag is only ever cleared. That is the single reason
+the dormant machinery never runs, and it makes forcing the flag to 1 the obvious
+first experiment rather than a guess.
+
+Calibrate the optimism: Ghost Recon reads this flag at 26 sites, SOAF at 10. So
+roughly 40% of the paths that Ghost Recon teaches about split screen are
+present here, and the missing 60% is where a forced flag would show its seams
+(HUD, reticle, sound, pad). Together with §5's menu finding — no screen to
+select it from, no second-player soldier setup — the honest position is: the
+engine can draw it, nothing asks it to, and the game layer above is absent.
+
+**Tried, observed, withdrawn (2026-09-28).** A diagnostic option forced the
+flag on. It was applied to a disc and **booted in PCSX2**, and the answer to
+§5a's own question is: **the renderer really does split, and the two halves
+show different views — not a clone of one camera.** The world drew twice, top
+and bottom.
+
+It was then removed, because working is not the same as usable:
+
+* the HUD is laid out for one screen — the reticle sits on the boundary
+  between the halves, and the name, map, weapon and ammo panels run across the
+  bottom of the lower view rather than being drawn per player;
+* there is no second player, pad or soldier for the second view to belong to;
+* the game has no menu entry that could ever reach it (§5), so it is on
+  always or not at all, menus included.
+
+Shipping that as an option would have offered something that looks like split
+screen and is not one. The addresses stay here; the switch does not. Anyone
+reviving this should start from the HUD and a second avatar, not from the
+renderer — the renderer is the part that already works.
+
+For the record, the patch was: both initialisers rewritten to store 1, using
+the spare pointer reload that follows each store:
+
+```
+0025fca8  lw    a1, 0x10(sp)        kept: a1 is the object
+0025fcac  addiu at, zero, 1         was: sb zero, 0x18bc(a1)
+0025fcb0  sb    at, 0x18bc(a1)      was: lw v0, 0x10(sp)
+0025fcb4  sb    zero, 0x1910(a1)    was: sb zero, 0x1910(v0)   same pointer
+
+002d3440  lw    v0, 0x3c(sp)        kept
+002d3444  lui   v1, 0x3f80          kept: 1.0f, still read at 002d3458
+002d3448  addiu at, zero, 1         was: sb zero, 0x18bc(v0)
+002d344c  sb    at, 0x18bc(v0)      was: lw v0, 0x3c(sp)
+002d3450  sw    zero, 0x18c0(v0)    unchanged, v0 still the object
+```
+
+`$at` is unused in both windows, no field loses its initialisation
+(`+0x1910` and `+0x18C0` are still zeroed), and the register each rewrite drops
+is reloaded by the next field's own `lw` before it is read again. Both are
+patched because which initialiser runs last was not established; since the flag
+has no other writer, it is 1 from startup onwards either way.
+
+**Answered by the boot:** the second viewport draws a *different* view, so a
+second camera exists in this build and is positioned somewhere of its own. The
+renderer and the camera are therefore both further along than the string
+evidence in §2 suggested; what is absent is the game and UI layer above them.
+
+**A side finding worth keeping:** SOAF has Ghost Recon's split-screen
+bullet-hole gap too — holes render only in the full-screen block. If split
+screen is ever reached, `grsquad`'s fix ports directly: hook the ripple call at
+`0x004ED4B8` and have the cave also call `0x004FD620` with
+`lw a0, 0x2a3c(s0)` (bullet holes sit at manager slot `+0x2A3C`, ripples at
+`+0x2A38`).
+
+**Method warning, paid for here.** `portsig` put
+`BulletHoleManagerPS2::Render` at `0x004FC0F0` with a **98%** match. That was a
+false positive — a different effect manager's render, called from manager slot
+`+0x2A40`. The real one is `0x004FD620`, which is where the *layout order*
+(constructor, `Clear`, `AddOneBulletHole`, `Render`, `Generate`, `Update`,
+`TestVisible`) predicted it. A high score on a mid-sized function is not proof;
+cross-check it against the function's position in its own translation unit, or
+against who calls it and with which field.
 
 ---
 
