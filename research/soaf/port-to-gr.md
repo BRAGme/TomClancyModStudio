@@ -415,3 +415,65 @@ table and Jungle Storm does not, and Sum of All Fears' code matched Ghost
 Recon more closely than Jungle Storm (§4 of `code.md`), so its data is if
 anything less likely to load in Jungle Storm. Find why it will not load in
 Ghost Recon, fix that, then carry the fix across.
+
+## 11. Root cause of all three hangs: the `.ENV` names the map by path
+
+### 11a. The thread table, and a correction
+
+The EE kernel keeps its thread control blocks in the first 512 KB of RAM,
+which a savestate captures. Every Ghost Recon thread carries the same `$gp`
+(`0x005E6CF0`), so the table can be found by that signature without knowing
+the BIOS's address for it. Probe 3, slot 2:
+
+| thread | priority | state | stack |
+|---|---|---|---|
+| main | -- | running | the frame loop (§10a) |
+| 2 | 0 | `WaitSema` 2 | `topThread` |
+| 3 | 20 | `WaitSema` 10 | `LoadingPageThread` |
+
+**There is no loader thread.** §10a said "the loader runs on another thread
+and never signals"; that was wrong. The only other game threads are an idle
+thread and the one that animates the loading screen. The level loads **on the
+main thread**, one step per frame, as a chain of messages --
+`HandleLoadMission` -> `HandleLoadEnvironment` -> `HandleLoadMap` ->
+`HandleLoadSkybox` (all `IkeSimulationMgr`), each posting the next. A step that
+fails posts nothing, and the loading screen waits for good.
+
+(In these control blocks the word at `+0x0C` is where the thread is parked --
+`WaitSema+0x8` for the blocked ones -- not its entry point.)
+
+### 11b. What the `.ENV` actually says
+
+| | Ghost Recon `M01_CAVES.ENV` | Sum of All Fears `TRAINING.ENV` |
+|---|---|---|
+| `MapFileName` | `m01_caves\m01_caves.map` | `training\training.map` |
+| `SkyboxFileName` | `m01_caves.pob` | `m09_bank_skybox.pob` -- **absent from Ghost Recon** |
+| `CMBitmap`, `CMOffsetX/Y`, `CMBasePlanningLevel` | present (the command map) | **absent** |
+| fog | near 10, far 180, sand (249,239,205) | near 190, far 240, night (13,13,15) |
+
+The `.ENV` is the level's master pointer, and it names the map **by path**.
+Every probe so far swapped Sum of All Fears' `.ENV` in, which told Ghost
+Recon's loader to load a level called `training` -- whose files do not exist
+in `GR.IMG` under that name, because Sum of All Fears' data had been written
+under `M01_CAVES` names -- and a Bank skybox that is not on the disc.
+
+**So the geometry was never tested.** The loader never asked for the files the
+probes had replaced. Probes 1-3 say nothing about whether Sum of All Fears'
+`.MAZ` loads in Ghost Recon; they only say that an `.ENV` naming files that do
+not exist hangs the load. §7a's "hangs because the texture bundle was
+mismatched" and §10's "Sum of All Fears' level data is what will not load" are
+both withdrawn.
+
+### 11c. Probe 4
+
+`E:/PS2 Games/GR_SOAF_probe4 (throwaway).iso`. Sum of All Fears' `.MAZ`
+`.MOL` `.SHT` `.AOL` `.POL` `.BMZ` under the `M01_CAVES` names (`.POL`
+relocates, which §10 showed is harmless), and **Ghost Recon's own `.ENV` left
+as shipped**, so the loader asks for `m01_caves` and is handed Sum of All
+Fears' data. All six read back to their original lengths; `GR.IMG` still lists
+4,004 files. This is the first probe that actually tests the geometry.
+
+Expect Ghost Recon's sand-coloured fog, its cave skybox and its command map over
+Sum of All Fears' training ground -- all cosmetic, and all from the `.ENV`.
+If it loads, the next step is an `.ENV` carrying Sum of All Fears' fog and far
+plane with Ghost Recon's map name, skybox and command-map fields.
