@@ -234,6 +234,54 @@ def _settings():
                      "raindrops and 2,500 flakes in the general effect, 300 "
                      "and 100 in the PS2-specific one.",
                 caution="These are real allocations, not pools that grow."),
+        # ---- game types --------------------------------------------------
+        Setting("soaf_quick_gametypes", "Extra game types in Quick Mission",
+                CHOICE, "stock", "Game Types", confidence="experimental",
+                touches="data", enabled=False,
+                disabled_reason=
+                    "Held back because “Restore disc” cannot currently undo "
+                    "it. The edit itself is correct -- 22 files rewritten and "
+                    "verified, every one readable afterwards -- but reverting "
+                    "leaves 3 of the 11 game types unreadable in both "
+                    "archives ((SOLO) LAST MAN STANDING, (TEAM) DOMINATION, "
+                    "(TEAM) HAMBURGER HILL), while reporting success. These "
+                    "files outgrow their slot when repacked, so they relocate "
+                    "to the archive's pad and the homecoming pass does not "
+                    "put their bytes back. That is engine code this option "
+                    "only exercises, not a fault in the option, and it is "
+                    "fixed before this ships.",
+                choices=[
+                    Choice("stock", "As shipped (Firefight, Lone Wolf)", ""),
+                    Choice("coop", "Add the two co-op types",
+                           "Firefight and Recon, the modes the disc's own "
+                           "co-op was built around."),
+                    Choice("all", "Add every multiplayer type",
+                           "The four solo modes and the five team modes as "
+                           "well -- Domination, Siege, Search and Rescue, "
+                           "Hamburger Hill, Last Man Standing, Sharpshooter, "
+                           "Cat and Mouse."),
+                ],
+                help="Each game type carries a one-digit `LobbyCfg` saying "
+                     "which lobby it belongs to: 1 single player, 2 co-op, 3 "
+                     "solo multiplayer, 4 team. Exactly two of the thirteen "
+                     "are marked 1, which is what Quick Mission offers. This "
+                     "rewrites that digit to 1 on the others, so they are "
+                     "listed there too. One byte per file, in both archives, "
+                     "and the file length never moves.\n\n"
+                     "This game's multiplayer content is on the disc and "
+                     "unreachable -- there are no lobby screens and its "
+                     "network transport is i.Link, which needs two real "
+                     "consoles and a cable. Quick Mission is the one door "
+                     "into it that exists.",
+                caution="Never played. These modes were written for a lobby "
+                        "that set up teams, scores and respawns, and Quick "
+                        "Mission sets up none of that. A type may start with "
+                        "nobody to fight, end instantly, or not start at all. "
+                        "The multiplayer maps carry no soldiers of their own "
+                        "-- their populations come from the game type -- so a "
+                        "mode that cannot spawn will simply be empty. Data "
+                        "only: 'Restore disc' puts every digit back."),
+
         Setting("soaf_blood_spray", "Blood spray lasts", CHOICE, "stock",
                 "World", confidence="applied",
                 choices=[Choice("stock", "Half a second (as shipped)", ""),
@@ -458,6 +506,20 @@ def build_data(v: dict) -> list:
                             {"steps": skill},
                             "+%d to every hostile template's skills" % skill,
                             scope="enemy_templates"))
+    # Quick Mission lists the game types whose LobbyCfg is 1. Both archives
+    # carry all thirteen .GTF files, so the edit is left unscoped to the
+    # archive rather than aimed at SOAF.IMG: an empty `archive` matches every
+    # one this profile opens, and a menu reading its copy from MENU.IMG has to
+    # see the same digit as the mission that loads from SOAF.IMG.
+    gametypes = v.get("soaf_quick_gametypes", "stock")
+    if gametypes != "stock":
+        which = ("COOP" if gametypes == "coop" else "COOP|SOLO|TEAM")
+        out.append(FileEdit(
+            "xml_values", r"/\((%s)\)[^/]*\.GTF$" % which, "",
+            {"values": {"LobbyCfg": 1}},
+            "list the %s game types in Quick Mission"
+            % ("co-op" if gametypes == "coop" else "co-op, solo and team")))
+
     out += rseweapons.edits('soaf_', v, 'SOAF.IMG')
     out += rstuning.edits("soaf_", v, "SOAF.IMG")
     out += rstuning.soaf_edits(v)
