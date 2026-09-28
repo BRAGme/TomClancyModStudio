@@ -1,12 +1,11 @@
 # Tom Clancy Mod Studio
 
-Three tools that change 23 Tom Clancy games on **PlayStation 2**, **original
-Xbox** and **PC**. Point one at a game you already own, pick what you want, and
+Three tools that change 23 Tom Clancy games on **PlayStation 2**, original **Xbox** and **PC**. Point one at a game you already own, pick what you want, and
 it edits in place while keeping a full backup of everything it replaces.
 
 No game data is included. You supply your own games.
 
-| | games | source |
+| | Games | Source |
 |---|---|---|
 | **PS2** | Rainbow Six 3, Ghost Recon, Jungle Storm, Ghost Recon 2, Advanced Warfighter, Sum of All Fears, Lockdown | [`ps2/`](ps2/) |
 | **Xbox** | Rainbow Six 3, Black Arrow, Critical Hour, Ghost Recon, Island Thunder, Ghost Recon 2, Summit Strike, GRAW | [`xbox/`](xbox/) |
@@ -18,7 +17,7 @@ Downloads are on the [releases page](../../releases).
 
 This is the part worth reading, and it is why the tools look the way they do.
 
-| badge | what it means |
+| Badge | What it means |
 |---|---|
 | **VERIFIED IN GAME** | Someone watched it working. |
 | **NOT PLAY-TESTED** | The change was written and read back, so the bytes are known to land — but nobody has confirmed what it looks like in play. |
