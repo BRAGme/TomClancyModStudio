@@ -1020,10 +1020,45 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
             "changes": counts}
 
 
+def _outside(lo, hi, keep):
+    """[lo, hi) with every interval in `keep` cut out of it."""
+    spans = [(lo, hi)]
+    for klo, khi in sorted(keep):
+        out = []
+        for slo, shi in spans:
+            if khi <= slo or klo >= shi:
+                out.append((slo, shi))
+                continue
+            if slo < klo:
+                out.append((slo, klo))
+            if khi < shi:
+                out.append((khi, shi))
+        spans = out
+        if not spans:
+            break
+    return spans
+
+
 def revert_data(iso, profile, store, progress=None):
-    """Put every remembered file back, at the offset it came from."""
+    """Put every remembered file back, at the offset it came from.
+
+    Three passes, because one is not safe. An edit that outgrew its slot moved
+    to the archive's pad, and the allocator then handed the slot it vacated to
+    the NEXT file that outgrew its own, so the exiles interlock -- each sitting
+    in another's home. Restoring them one at a time, each "blank where I sit
+    now, then write me home", makes them destroy each other: A writes itself
+    home over B, which is living there, and B then blanks that very stretch on
+    its way out. `apply_data` already knows about interlocking and unwinds it
+    with a repeated homecoming loop; this function did not, and the result was
+    silent. On Sum of All Fears, reverting eleven edited `.GTF` files left
+    three of them unreadable in both archives -- two blanked, one truncated --
+    while the call reported success.
+
+    So: work out where everything is going first, never blank a byte that
+    belongs to some file's home, and read the lot back before saying it worked.
+    """
     arcs = _archives(iso, profile)
-    done = 0
+    jobs = []
     for rec in store.entries():
         arc = arcs.get(rec["archive"].upper())
         if arc is None:
@@ -1035,16 +1070,47 @@ def revert_data(iso, profile, store, progress=None):
         ent = arc.files.get(rec["path"].upper())
         if ent is None:
             continue
-        # clear wherever it sits now, then put it back exactly where it was
-        if ent.offset != offset:
-            arc.r.write(ent.offset, b"\x00" * ent.size)
+        jobs.append((arc, ent, data, offset))
+
+    # every byte about to hold a restored file, per archive
+    homes = {}
+    for arc, _ent, data, offset in jobs:
+        homes.setdefault(id(arc), []).append((offset, offset + len(data)))
+
+    # 1. blank the slots the exiles are vacating -- minus anything that is
+    #    some file's home, which is the part the old code got wrong
+    for arc, ent, data, offset in jobs:
+        if ent.offset == offset:
+            continue
+        for lo, hi in _outside(ent.offset, ent.offset + ent.size,
+                               homes[id(arc)]):
+            arc.r.write(lo, b"\x00" * (hi - lo))
+
+    # 2. put every file back where it shipped
+    done = 0
+    for arc, ent, data, offset in jobs:
         arc.r.write(offset, data)
         arc._set_entry(ent, offset, len(data))
         done += 1
         if progress and done % 10 == 0:
             progress("  %d files restored" % done)
+
+    # 3. read them back. A restore that quietly leaves a file undecodable is
+    #    worse than one that fails, because the disc looks fine until the game
+    #    reaches that file.
+    broken = []
+    for arc, ent, _data, _offset in jobs:
+        try:
+            _unpack(arc.read_entry(ent), ent.path)
+        except Exception:                          # noqa: BLE001
+            broken.append(ent.path)
+    if broken:
+        raise DataEditError(
+            "restore left %d file(s) unreadable: %s"
+            % (len(broken), ", ".join(sorted(broken)[:6])))
+
     store.forget_all()
-    return {"files": done}
+    return {"files": done, "broken": len(broken)}
 
 
 def verify_data(iso, profile, store):

@@ -237,19 +237,7 @@ def _settings():
         # ---- game types --------------------------------------------------
         Setting("soaf_quick_gametypes", "Extra game types in Quick Mission",
                 CHOICE, "stock", "Game Types", confidence="experimental",
-                touches="data", enabled=False,
-                disabled_reason=
-                    "Held back because “Restore disc” cannot currently undo "
-                    "it. The edit itself is correct -- 22 files rewritten and "
-                    "verified, every one readable afterwards -- but reverting "
-                    "leaves 3 of the 11 game types unreadable in both "
-                    "archives ((SOLO) LAST MAN STANDING, (TEAM) DOMINATION, "
-                    "(TEAM) HAMBURGER HILL), while reporting success. These "
-                    "files outgrow their slot when repacked, so they relocate "
-                    "to the archive's pad and the homecoming pass does not "
-                    "put their bytes back. That is engine code this option "
-                    "only exercises, not a fault in the option, and it is "
-                    "fixed before this ships.",
+                touches="data",
                 choices=[
                     Choice("stock", "As shipped (Firefight, Lone Wolf)", ""),
                     Choice("coop", "Add the two co-op types",
