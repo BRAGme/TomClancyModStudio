@@ -40,27 +40,46 @@ reverse file order.
 
 ## Files
 
-### `SLUS-20613_3E571E95.json`: Ghost Recon, SOAF level-port load steps
+### `SLUS-20613_3E571E95.json`: Ghost Recon, SOAF level-port `.MOL` load
 
-Seven execute breakpoints, all enabled, one per step of Ghost Recon's map load.
-Each address was checked against Ghost Recon's symbol table, and PCSX2's
-debugger resolved the same function names when the file loaded. Used to find
-where a ported Sum of All Fears level fails. See
-`research/soaf/port-to-gr.md` §15.
+Fourteen execute breakpoints, all enabled, inside `MAPLoader::LoadFromMol` and
+the `LoadWithSim` code around it. Used to find where a ported Sum of All Fears
+level fails. See `research/soaf/port-to-gr.md` §15 and §16.
 
-| # | address | function |
-|---|---|---|
-| 1 | `00388D60` | `IkeSimulationMgr::HandleLoadMap` |
-| 2 | `0047C9F0` | `MAPLoader::LoadWithSim` |
-| 3 | `0047C340` | `MAPLoader::LoadFromMol` |
-| 4 | `0047C020` | `MAPLoader::LoadPortals` |
-| 5 | `0044D890` | `CGraphicSystem::LoadMissionMap` |
-| 6 | `0047B730` | `MAPLoader::LoadObjects` |
-| 7 | `003991E0` | `IkeSimulationMgr::HandleLoadSkybox` |
+| label | address | condition | fires when |
+|---|---|---|---|
+| MOL 01 | `0047C340` | | `LoadFromMol` is entered |
+| MOL 02 | `0047C47C` | `s0 == 0x0` | model 1 of 57 starts |
+| MOL 03 | `0047C494` | `s0 == 0xc` | model 13 starts |
+| MOL 04 | `0047C4A0` | `s0 == 0x18` | model 25 starts |
+| MOL 05 | `0047C4BC` | `s0 == 0x24` | model 37 starts (all 36 rooms done) |
+| MOL 06 | `0047C4C4` | `s0 == 0x2e` | model 47 starts |
+| MOL 07 | `0047C4D4` | `s0 == 0x38` | model 57, the last, starts |
+| MOL 08 | `0047C880` | | the model loop finished |
+| MOL FAIL A | `0047C3D8` | | the `.MOL` would not open |
+| MOL FAIL B | `0047C44C` | | the top chunk is not type 7 |
+| MOL FAIL C | `0047C628` | | a model's geometry load returned 0 |
+| MOL 09 | `0047CB04` | | `LoadWithSim`: `LoadFromMol` succeeded |
+| MOL FAIL D | `0047CCE8` | | `LoadWithSim` abandons the map |
+| MOL 10 | `0047C020` | | `LoadPortals` is reached |
+
+`s0` is `LoadFromMol`'s model index for the whole loop body, so the six model
+checkpoints sit on six different instructions of it. PCSX2 allows one
+breakpoint per address. No address is in a branch delay slot. Conditions are
+parsed by PCSX2's expression parser, which reads bare numbers as **hex**, so
+they are written with `0x`. The model numbers assume Sum of All Fears'
+57-model `TRAINING.MOL`.
+
+The earlier set, seven stops at the entry of each map-load step
+(`HandleLoadMap`, `LoadWithSim`, `LoadFromMol`, `LoadPortals`,
+`LoadMissionMap`, `LoadObjects`, `HandleLoadSkybox`), is in git history.
 
 **These also stop stock Ghost Recon.** The SOAF probe discs keep Ghost Recon's
 boot ELF, so they share its CRC, and every mission load on a normal disc will
-stop seven times. Untick them or remove the file when not in use.
+stop at them. Untick them or remove the file when not in use.
+
+"Load from Settings" clears the list before loading, and PCSX2 writes this file
+back only on "Save to Settings".
 
 ### `SLUS-20883_21CC1EC3.json`: Rainbow Six 3, first-person weapon and zone waves
 

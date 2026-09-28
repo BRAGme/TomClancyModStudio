@@ -135,6 +135,7 @@ def main():
         run_uscode_units()
         run_vokes_regrow(args)
         run_vokes_stay_home(args)
+        run_vokes_unpacked_size(args)
         run_mem_size_preserved(args)
         run_chunks_fill_exactly(args)
         run_switch_off_restores(args, work)
@@ -9663,6 +9664,63 @@ def run_vokes_stay_home(args):
                 check("%s: no file claims more padding than the alignment"
                       % real.r.name, not bad, str(bad[:3]))
                 break
+
+
+def run_vokes_unpacked_size(args):
+    """A packed file's second size must follow its UNPACKED length.
+
+    In Ghost Recon, Jungle Storm and Sum of All Fears the record's second size
+    is the unpacked length of an LZO container, and the game reads it as where
+    the file ends. The writer used to keep the old value unless told otherwise
+    -- and the in-place path ignored it even when told -- so a replacement that
+    unpacked to more bytes was cut short as the game saw it. Every swapped file
+    in the Sum of All Fears level-port probes carried Ghost Recon's old length;
+    the .MOL stream ended inside its 18th model.
+    """
+    import hashlib as _hashlib
+    from tcps2 import rselzo
+
+    print("\n[vokes -- a packed file's recorded size follows what it unpacks to]")
+
+    def noise(n):
+        out, i = bytearray(), 0
+        while len(out) < n:
+            out += _hashlib.sha256(b"%d" % i).digest(); i += 1
+        return bytes(out[:n])
+
+    plain = (b"room geometry " * 400)[:5000]
+    packed = rselzo.compress(plain)
+    arc = _fake_vokes([("P.MOL", len(packed)), ("Q.TXT", 256)], 64)
+    p = arc.files["/P.MOL"]
+    home = (p.offset, p.size)
+    arc.r.write(p.offset, packed)
+    arc._set_entry(p, p.offset, len(packed), raw_size=len(plain))
+
+    def second(key):
+        return arc.rec(arc.files[key].index)[7]
+
+    check("the stock packed file records its unpacked length",
+          arc.read_file("/P.MOL") == packed and second("/P.MOL") == len(plain))
+
+    arc.write("/P.MOL", rselzo.compress(plain[:3000]), home=home)
+    check("rewritten in place, it records the new unpacked length",
+          arc.files["/P.MOL"].offset == home[0] and second("/P.MOL") == 3000,
+          "offset 0x%x, second size %d" % (arc.files["/P.MOL"].offset, second("/P.MOL")))
+
+    arc.write("/P.MOL", rselzo.compress(plain + noise(4000)), home=home)
+    check("relocated, it does too",
+          arc.files["/P.MOL"].offset != home[0] and second("/P.MOL") == 9000,
+          "offset 0x%x, second size %d" % (arc.files["/P.MOL"].offset, second("/P.MOL")))
+
+    arc.write("/P.MOL", packed, home=home)
+    check("and sent home as stock, the stock length comes back",
+          arc.files["/P.MOL"].offset == home[0] and second("/P.MOL") == len(plain),
+          "offset 0x%x, second size %d" % (arc.files["/P.MOL"].offset, second("/P.MOL")))
+
+    arc.write("/Q.TXT", b"q" * 200)
+    check("a plain file keeps its two sizes equal",
+          arc.files["/Q.TXT"].size == 200 and second("/Q.TXT") == 200,
+          "%d / %d" % (arc.files["/Q.TXT"].size, second("/Q.TXT")))
 
 
 def run_mem_size_preserved(args):

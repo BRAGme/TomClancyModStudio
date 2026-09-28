@@ -727,6 +727,10 @@ suspect for a handler Ghost Recon's loader lacks, which is how a call through
 never-written memory (`0xCDCDCDCD`) would arise. No result is recorded here
 until it finishes.
 
+**Resolved in §16c:** Sum of All Fears uses no chunk type or version that
+Ghost Recon does not, and the whole file parses exactly under Ghost Recon's
+reader.
+
 ### 15e. Tooling note
 
 PCSX2 1.7.5641 reads debugger settings from **`inis\debuggersettings\`**, not
@@ -735,3 +739,151 @@ to the wrong folder, following an existing Rainbow Six 3 file that had never
 been loaded from there. `research/pcsx2-debugger/README.md` has the format,
 checked against PCSX2's source (`X` is the enabled flag, `TYPE 8` is an
 execute breakpoint).
+
+## 16. Probe 6, and the defect under every probe: stale unpacked sizes
+
+### 16a. Probe 6: the helper-name renames change nothing
+
+Probe 6 is probe 5 with 24 `lighthalo` helpers renamed `xighthalo` and 58
+`pathpoint` helpers renamed `xathpoint` (same length, structure re-checked).
+Booted with the §15 breakpoints it stopped at 1, 2 and 3 and never reached 4,
+exactly like probe 5, then froze. Neither helper kind is the cause.
+
+### 16b. How `LoadFromMol` really reads a model (corrects §15c)
+
+§15c said each chunk is wrapped in a `strstreambuf` and handed to
+`ROBLoader::LoadGeometryChunk`. The call is real, but it reads nothing:
+
+* The `strstreambuf` is a **20-byte dummy**. `LoadGeometryChunk` is called with
+  version **9**, and at 9 it only calls the sim-load callback
+  (`RSSimModel::LoadSimModel`, `0x004EABA0`), which builds an empty
+  `RSSimModel` and returns before touching the stream.
+* The chunk is read by **`RSModel::ReadCollisionBinary`** (`0x004B86D0`,
+  model vtable `+0x5C`) off the **file** stream, which then hands the rest to
+  `RSSimModel::ReadBinary` (`0x004EB2C0`) through
+  `mSimModelReadBinaryCallback`.
+* `LoadFromMol` then reads the next chunk header **directly**. It never seeks
+  to the end of the chunk, so one field of drift corrupts every model after it.
+
+So the plan to mirror `RSQOBLoader::LoadGeometryChunk` / `LoadMesh` had the
+wrong target. The full layout of what is actually read is in the docstring of
+`research/code/molcheck.py`.
+
+Also a correction to §15a: PCSX2 keeps **no hit count for execute
+breakpoints** (its Hits column shows `--`). The "hits" there are the stops
+observed, which is the same information.
+
+### 16c. The .MOL is valid by the reader's own rules
+
+`molcheck.py` mirrors that reader. Run over all 36 Ghost Recon `.MOL` files
+and Sum of All Fears' `TRAINING.MOL`:
+
+| check | Ghost Recon | Sum of All Fears |
+|---|---|---|
+| models whose parse consumes exactly the declared chunk size | 864 / 864 | 57 / 57 |
+| collision faces whose group, mesh, face and vertex all resolve | 966,106 / 966,106 | 17,472 / 17,472 |
+| render faces whose vertices are in range | all | all |
+
+Every total (vertices, faces, sim vertices, groups, helpers, room numbers) is
+inside Ghost Recon's range. The one outlier is the model count, 57 against
+Ghost Recon's 55 (`M13_AIRBASE`), and it does not matter: `RSModelManager`
+keeps models in a 223-bucket string hash of growable arrays. No name repeats
+within the file. A map with no `general_type_49` (bird) helper, which every
+Ghost Recon map has exactly one of, is guarded: the only reader checks for a
+count of zero, and it runs during play, not load.
+
+The file is not the problem. What the game is **told about** the file is.
+
+### 16d. Root cause: the record's second size
+
+Every archive record carries two sizes. For an LZO-packed file the second is
+the **unpacked** length. Checked on every record of the stock discs:
+
+| archive | packed files with size2 = unpacked length | plain files with size2 = size |
+|---|---|---|
+| Ghost Recon `GR.IMG` | 1,452 / 1,452 | 2,552 / 2,552 |
+| Ghost Recon `MENU.IMG` | 212 / 212 | 474 / 474 |
+| Jungle Storm `GR.IMG` | 1,197 / 1,197 | 1,819 / 1,819 |
+| Sum of All Fears `SOAF.IMG` | 1,487 / 1,487 | 933 / 933 |
+| Sum of All Fears `MENU.IMG` | 187 / 187 | 144 / 144 |
+
+**The game uses it as the end of the file.** `idistream`'s constructor
+(`0x0054D0F0`) asks the IOP for the file's info (`diGetFileInfo`, RPC
+`0x80010015`) and keeps a length at `+0x28`. `diinputbuf::underflow`
+(`0x0054D5A0`) compares that against the unpacked bytes produced so far and
+returns EOF when they meet, decoding whole 16 KiB chunks.
+
+`tcps2/vokes.py` kept the old second size unless the caller passed one, and
+its in-place path ignored it even then. Its comment claimed the two sizes are
+equal in the Ghost Recons, which is only true of plain files. Every swapped
+packed file on probes 5 and 6 carried Ghost Recon's old length:
+
+| file | size2 on the probe | real unpacked size |
+|---|---|---|
+| `TRAINING.MOL` | 506,088 | 664,756 |
+| `TRAINING.POL` | 5,198 | 7,178 |
+| `TRAINING.MAZ` | 893,552 | 1,048,508 |
+| `TRAINING.SHT` | 615,686 | 817,978 |
+| `TRAINING.BMZ` | 2,381,824 | 2,638,992 |
+| `TRAINING.AOL` | 35,816 | 59,538 |
+
+The game therefore sees the `.MOL` end after 31 chunks, **507,904 of 664,756
+bytes**, 8,805 bytes into model 18 of 57 (room `224`). `istream::read` at EOF
+leaves its destination untouched, so from there every count `LoadFromMol` reads
+is whatever was on the stack. That fits both symptoms: a runaway loop (the hang
+under the debugger) and a call through never-written memory (`0xCDCDCDCD`
+without it). **This is reasoned from the code, not yet observed at run time.**
+
+Probes 1 to 4 swapped packed files the same way, so they carried the same
+fault. The `.ENV` path mismatch of §11 was a separate, real defect: the
+`.ENV` is a plain file and its sizes were right.
+
+**Shipped options were not affected.** `dataedit.apply_data` refuses any
+edit that changes a packed container's length (the only exceptions are two
+Rainbow Six 3 `.LIN` ops), and it is the only code that writes archive
+entries. Only the probe builds, which call `Vokes.write` directly, and the
+planned "patch SOAF into GR" feature could hit this.
+
+**Fixed.** `Vokes._set_entry` now takes the second size from the data
+whenever the record already holds a packed file, and all five callers pass it.
+Rainbow Six 3, whose two sizes are always equal, takes the unchanged path.
+`tests/run_tests.py` gains `run_vokes_unpacked_size`. It **fails on the old
+code** (in place and relocated both kept the stale length) and passes on the
+new.
+
+### 16e. Probe 7
+
+`E:/PS2 Games/GR_SOAF_probe7_sizes (throwaway).iso` is probe 5 (Sum of All
+Fears' files unmodified, no renames) with **only the six size2 words
+corrected**. Re-read from disc: every swapped file's second size equals its
+unpacked length, and the six packed files are byte-identical to probe 5's.
+
+If Training `T01` loads, §16d was the cause. If it still fails, the breakpoint
+file now holds 14 stops inside `LoadFromMol` and `LoadWithSim` (see
+`research/pcsx2-debugger/README.md`), which show whether the model loop
+finishes, which failure exit is taken, and roughly which model it stops on.
+
+### 16f. Probe 7 result: the load completes; a new crash after it
+
+Booted into Training `T01` with the 14 `.MOL` breakpoints. The screenshots show
+MOL 01 to MOL 05 stopping, with `s0 = 0x24` in the registers at MOL 05. The
+user continued through every stop and reports that loading finished, then a
+black screen, a freeze, and the emulator closing. `emulog.txt` agrees:
+
+* **Ten pause/resume pairs** between 2056 s and 2113 s. The success path has
+  exactly ten stops (MOL 01 to MOL 10); a failure path cannot reach ten. So
+  the model loop finished, `LoadFromMol` returned success and `LoadPortals`
+  was reached. This is inferred from the count; only 01 to 05 are on screen.
+* **The mission started.** At 2117.02 the game ran
+  `RSGameStateMgr::SaveGame` with `map name = t01.mis`, and at 2118.36
+  `SetListenerEnvironment: type=open space`.
+* **60 ms later the EE ran data as code.** At 2118.42 the recompiler reports
+  56 unknown opcodes, almost all floats near 1000.0 (`0x447A0000`,
+  `0x4479FB74`, `0x447A1B80`, ...), plus `0xC9472CAA` and `0xC15B3332`. A jump
+  landed in a float array. The run does not appear in any of the swapped
+  files, so it is runtime memory, not level data copied verbatim.
+
+Probe 7 differs from probe 5 only in the six size2 words. Probe 5 never
+reached `LoadPortals`; probe 7 loads through to mission start. **§16d was the
+cause of the load failure.** What remains is a separate fault in the first
+moments of the mission, and it has not been located yet.

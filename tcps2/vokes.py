@@ -15,6 +15,14 @@ then 48-byte records, all u32:
     +0x10 ?            +0x14 isFile    +0x18 size     +0x1c size2
     +0x20 dataOffset   +0x24..0x2c ?
 
+`size2` is the file's UNPACKED length when it is an LZO container (`rselzo`),
+and equal to `size` otherwise -- checked on every record of stock Ghost Recon,
+Jungle Storm and Sum of All Fears. The game reads it: `idistream` gets it from
+the IOP when a file is opened and treats it as where the stream ends. Writing a
+container whose unpacked length changed without updating it truncates the file
+as the game sees it; every read past that point fails and leaves its
+destination untouched, so counts come back as stack garbage.
+
 THE TRAP, and it is a costly one: `next` at +0x04 is **not** a sibling pointer.
 It is the link of a single globally name-sorted list spanning every record in
 the archive. Walking it from record 1 silently drops everything that sorts
@@ -26,6 +34,8 @@ each path by climbing the `parent` chain, which is what this module does.
 from __future__ import annotations
 
 import struct
+
+from . import rselzo
 
 #: record sizes seen in the wild, tried in this order. Rainbow Six 3, Ghost
 #: Recon and Jungle Storm use 48-byte records; Sum of All Fears uses 40, with
@@ -176,17 +186,21 @@ class Vokes:
     # -- writing -----------------------------------------------------------
     ALIGN = 16
 
-    def _set_entry(self, e, offset, size, raw_size=None):
+    def _set_entry(self, e, offset, size, raw_size=None, data=None):
         """Rewrite one record's size, second size and data offset.
 
-        The two size fields are equal in Rainbow Six 3 and the two Ghost Recons.
-        Sum of All Fears uses the second as the DECOMPRESSED length of a
-        per-entry-compressed file, so it is only overwritten when the caller
-        says what the new decompressed length is, or when the pair was equal to
-        begin with.
+        The second size is the unpacked length of an LZO-packed file (see the
+        module docstring) and equal to the first otherwise. It is taken from
+        `raw_size` when given; else, for a record that already holds a packed
+        file, from unpacking `data`; else it follows the first size when the
+        pair was equal to begin with, and is left alone when it was not and
+        there is nothing to measure.
         """
         base = e.index * self.rec_size
         old_size, old_raw = self.rec(e.index)[6], self.rec(e.index)[7]
+        if raw_size is None and data is not None and old_size != old_raw \
+                and rselzo.is_compressed(data):
+            raw_size = len(rselzo.decompress(data))
         second = raw_size if raw_size is not None else (
             size if old_size == old_raw else old_raw)
         struct.pack_into("<I", self.ent, base + 0x18, size)
@@ -360,7 +374,7 @@ class Vokes:
         self.r.write(off, data)
         if len(data) < size:
             self.r.write(off + len(data), b"\x00" * (size - len(data)))
-        self._set_entry(e, off, len(data))
+        self._set_entry(e, off, len(data), data=data)
         self.r.write(old_off, b"\x00" * old_size)
         return True
 
@@ -420,13 +434,13 @@ class Vokes:
             self.r.write(e.offset, data)
             if len(data) < e.size:
                 self.r.write(e.offset + len(data), b"\x00" * (e.size - len(data)))
-            self._set_entry(e, e.offset, len(data))
+            self._set_entry(e, e.offset, len(data), raw_size, data)
             return e.offset
         old_off, old_size = e.offset, e.size
         dest = self.allocate(len(data), exclude=e,
                              near=home[0] if home else e.offset)
         self.r.write(dest, data)
-        self._set_entry(e, dest, len(data), raw_size)
+        self._set_entry(e, dest, len(data), raw_size, data)
         # Release the old run -- but only the part of it the new one does not
         # occupy. The allocator is allowed to grow a file into its own slot plus
         # the gap next to it, and blindly zeroing the old range would then wipe

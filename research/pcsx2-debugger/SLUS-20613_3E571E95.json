@@ -3,68 +3,138 @@
         {
             "X": "1",
             "TYPE": "8",
-            "OFFSET": "003991e0",
-            "DESCRIPTION": "SOAF PORT 7/7 - HandleLoadSkybox: map load finished, sky next. Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047b730",
-            "DESCRIPTION": "SOAF PORT 6/7 - LoadObjects: reading .AOL (placed objects). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0044d890",
-            "DESCRIPTION": "SOAF PORT 5/7 - CGraphicSystem::LoadMissionMap: reading .MAZ/.SHT/.BMZ. Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
             "OFFSET": "0047c020",
-            "DESCRIPTION": "SOAF PORT 4/7 - LoadPortals: reading .POL (portals between rooms). Continue.",
+            "DESCRIPTION": "MOL 10 - LoadPortals reached: the .MOL is done. Continue.",
             "SIZE / LABEL": "",
             "INSTRUCTION": "",
             "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047cce8",
+            "DESCRIPTION": "MOL FAIL D - LoadWithSim is abandoning the map (deletes the scene). Screenshot, then Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047cb04",
+            "DESCRIPTION": "MOL 09 - LoadWithSim: LoadFromMol succeeded. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c628",
+            "DESCRIPTION": "MOL FAIL C - a model's geometry load returned 0. Screenshot, then Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c44c",
+            "DESCRIPTION": "MOL FAIL B - the .MOL top chunk is not type 7. Screenshot, then Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c3d8",
+            "DESCRIPTION": "MOL FAIL A - the .MOL file would not open. Screenshot, then Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c880",
+            "DESCRIPTION": "MOL 08 - all 57 models loaded, LoadFromMol returning OK. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c4d4",
+            "DESCRIPTION": "MOL 07 - model 57 of 57 starting, the last (stairdoor). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "s0 == 0x38",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c4c4",
+            "DESCRIPTION": "MOL 06 - model 47 of 57 starting (108_<n><glass>02). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "s0 == 0x2e",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c4bc",
+            "DESCRIPTION": "MOL 05 - model 37 of 57 starting: all 36 rooms done, first object (pinedrooping). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "s0 == 0x24",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c4a0",
+            "DESCRIPTION": "MOL 04 - model 25 of 57 starting (room 212). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "s0 == 0x18",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c494",
+            "DESCRIPTION": "MOL 03 - model 13 of 57 starting (room 108). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "s0 == 0xc",
+            "HITS": "0"
+        },
+        {
+            "X": "1",
+            "TYPE": "8",
+            "OFFSET": "0047c47c",
+            "DESCRIPTION": "MOL 02 - model 1 of 57 starting (room 104). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "s0 == 0x0",
             "HITS": "0"
         },
         {
             "X": "1",
             "TYPE": "8",
             "OFFSET": "0047c340",
-            "DESCRIPTION": "SOAF PORT 3/7 - LoadFromMol: reading .MOL (models + rooms). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c9f0",
-            "DESCRIPTION": "SOAF PORT 2/7 - MAPLoader::LoadWithSim: the map loader starts. Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "00388d60",
-            "DESCRIPTION": "SOAF PORT 1/7 - HandleLoadMap: the map-load message arrived. Continue.",
+            "DESCRIPTION": "MOL 01 - LoadFromMol entered. Continue.",
             "SIZE / LABEL": "",
             "INSTRUCTION": "",
             "CONDITION": "",

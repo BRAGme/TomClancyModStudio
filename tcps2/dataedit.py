@@ -902,7 +902,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
             if ent.offset != offset:
                 arc.r.write(ent.offset, b"\x00" * ent.size)
             arc.r.write(offset, data)
-            arc._set_entry(ent, offset, len(data))
+            arc._set_entry(ent, offset, len(data), data=data)
             restored += 1
         if restored:
             say("Put back %d file%s an earlier run had edited"
@@ -1090,7 +1090,7 @@ def revert_data(iso, profile, store, progress=None):
     done = 0
     for arc, ent, data, offset in jobs:
         arc.r.write(offset, data)
-        arc._set_entry(ent, offset, len(data))
+        arc._set_entry(ent, offset, len(data), data=data)
         done += 1
         if progress and done % 10 == 0:
             progress("  %d files restored" % done)
