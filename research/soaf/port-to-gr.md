@@ -1,0 +1,131 @@
+# Porting Sum of All Fears content into Ghost Recon (PS2)
+
+**Verdict: plausible, and better founded than any other route to multiplayer
+SOAF content.** The two discs are the same engine with the same asset formats;
+248 files are already byte-identical between them. The work is repacking and
+one texture-version conversion, not reverse engineering.
+
+This supersedes LAN as the thing to chase — see §4.
+
+---
+
+## 1. Why this came up
+
+SOAF has co-op and multiplayer *content* (6 `MP*.MIS` maps, 13 `.GTF` game
+types, `MP Actor Files`, `.KIL` kit restrictions) and no way to reach it: no
+lobby screens exist as data, and its transport is i.Link, which needs two real
+PS2s and a FireWire cable (`network.md`). On PCSX2 that is unreachable in
+principle, not merely hard.
+
+Ghost Recon and Jungle Storm, on the same engine, already have working split
+screen and (Jungle Storm) online, and this project already patches both
+heavily. So: move the content to the engine that can play it.
+
+## 2. The formats are the same
+
+File-type census across the two archives — **every type is shared, none is
+exclusive to either disc**:
+
+| ext | SOAF | GR | | ext | SOAF | GR |
+|---|---|---|---|---|---|---|
+| `.ATR` | 479 | 1193 | | `.MIS` | 23 | 46 |
+| `.RSB` | 218 | 638 | | `.MAZ` | 12 | 38 |
+| `.BMZ` | 331 | 307 | | `.ENV` | 12 | 39 |
+| `.CHA` | 251 | 321 | | `.AOL` | 12 | 36 |
+| `.KIT` | 132 | 141 | | `.MOL` | 12 | 36 |
+| `.POB` | 131 | 141 | | `.POL` | 12 | 36 |
+| `.QOB` | 121 | 148 | | `.SHT` | 12 | 36 |
+
+SOAF holding exactly 12 of `.MAZ` / `.ENV` / `.AOL` / `.MOL` / `.POL` / `.SHT`
+says a level is a named set of those files, one set per level, 12 levels.
+
+**Header comparison, with Ghost Recon's files LZO-decompressed first:**
+
+| ext | verdict |
+|---|---|
+| `.MAZ` | **same** — both start `f6 ff ff ff`, then per-level counts |
+| `.ENV` | **same** — both plain `<EnvironmentFile` |
+| `.MOL` | **same** — `04 00 00 00 01 00 00 00`, then a size |
+| `.SHT` | **same** — `4a 0c 3a 40 00 00 80 3f`, then a size |
+| `.MIS` | **same** — both plain `<MissionFile>\r\n\t` |
+| `.QOB` | **same** — `0b 00 00 00 "BeginModel"` |
+| `.CHA` | **same** — `15 00 00 00 01 00 00 00 ...` |
+| `.AOL`, `.POL` | **same format** — only the leading size word differs, then `0a/09 00 00 00  08 00 00 00 "Vers..."` identically |
+
+> **Trap worth recording.** Compared naively this table reads "everything
+> differs". Ghost Recon stores most archive members LZO-compressed behind a
+> 9-byte header (`u32 packed size`, `u32 chunk size` — `0x4000` throughout —
+> and a byte), while `soafimg.read_file` already decompresses. The first pass
+> compared SOAF's *decompressed* bytes against Ghost Recon's *raw* bytes and
+> concluded the formats were incompatible. They are not. Decompress with
+> `tcps2.rselzo` before comparing anything across these two discs.
+
+## 3. They already share assets
+
+Of 2,420 SOAF files and 4,004 Ghost Recon files, **677 share a filename and 248
+are byte-for-byte identical**, including `203_ROUND.QOB`, `AKMS.QOB`,
+`BEERCAN.QOB`, `ARROW.RSB`, `AT4_BLAST.POB` and the `BILLBOARD_EFFECT*.BMZ`
+family. Red Storm shipped one asset library across both titles.
+
+So a SOAF level dropped into `GR.IMG` would already find a large part of its
+supporting cast present.
+
+## 4. What the port actually requires
+
+Known and tractable:
+
+1. **Texture version.** SOAF ships `.RSB` **version 8**, Ghost Recon version 6;
+   v8 is v6 with seven bytes inserted after the height, putting pixels at
+   `+35`. The tool already decodes both (`tcps2/rsb.py`, `research/soaf/soafart.py`),
+   so this is a rewrite of a header, not a decode problem.
+2. **Archive record size.** SOAF uses 40-byte records, Ghost Recon 48.
+   `tcps2/vokes.py` handles both already (`REC_SIZES`).
+3. **Compression.** Members must go into `GR.IMG` LZO-packed with the 9-byte
+   header. `tcps2/rselzo.py` has `compress` and `repack`.
+4. **Registration.** The level has to be reachable — Ghost Recon's mission list
+   and whatever indexes `.MAZ`/`.ENV` by name.
+
+Not yet established, and each could sink it:
+
+* Whether the `.MAZ` payload past the shared magic is version-compatible, or
+  merely the same *shape*. Same first words is necessary, not sufficient.
+* Whether SOAF levels reference shaders, materials or effect ids that Ghost
+  Recon's build does not define.
+* Whether Ghost Recon's level loader hard-codes its own level names.
+* Whether the 429 same-named-but-differing files are benign (different content,
+  same format) or represent incompatible revisions of shared assets. That
+  number is worth an afternoon on its own: if `ICA_US_DEMOLITION.CHA` is
+  identical but some other shared name is not, the differences tell you what
+  changed between the two builds.
+
+## 5. The first probe
+
+Take the smallest SOAF level set, convert its `.RSB`s to v6, LZO-pack the set,
+add it to a copy of `GR.IMG` under a Ghost-Recon-style name, and point one
+existing Ghost Recon mission at it. If it loads at all — even to a broken or
+untextured scene — the format question is answered and everything after that is
+detail. If the loader rejects it, the `.MAZ` payload is where to look first.
+
+Do this on a copy. `GR.IMG` is 1.5 GB and the tool's revert only restores what
+it wrote.
+
+## 6. The cheap adjacent win, unrelated to porting
+
+SOAF's own `.GTF` game types are gated by a single digit:
+
+| `LobbyCfg` | meaning | files |
+|---|---|---|
+| 1 | single player | `(SP) FIREFIGHT`, `(SP) LONE WOLF` |
+| 2 | co-op | `(COOP) FIREFIGHT`, `(COOP) RECON` |
+| 3 | solo multiplayer | `(SOLO) CATS_AND_MOUSE`, `HAMBURGER HILL`, `LAST MAN STANDING`, `SHARPSHOOTER` |
+| 4 | team | `(TEAM) DOMINATION`, `HAMBURGER HILL`, `LAST MAN STANDING`, `SEARCH AND RESCUE`, `SIEGE` |
+
+Exactly two game types carry `LobbyCfg` 1, and the shell has
+`QUICK_MISSION_PS2` and `QUICK_MISSION_PARAMETER_PS2` screens — consistent with
+Quick Mission listing the `LobbyCfg == 1` types. If that is the filter, rewriting
+another type's digit to `1` should make it appear there: a single character,
+length-preserving, exactly the kind of edit `tcps2.transforms` already does
+safely.
+
+**Untested.** It assumes the filter is `LobbyCfg` and that a co-op game type
+can run with one player. Both are cheap to find out and neither risks the disc.
