@@ -298,3 +298,76 @@ Recon's `M01_CAVES.RSB`, `.POB`, `_GRASS.BMZ`, `_SKY.BMZ` and `_SKY.POZ`, none
 of which Sum of All Fears' `TRAINING` has a counterpart for, and Sum of All
 Fears' `.BMB`, `.BMH`, `.COZ`, `.SDP`, `.TOE` and `.XML`, which have nowhere to
 go in a Ghost Recon level.
+
+## 9. Probe 2 also hangs -- what the savestate says, and a controlled test
+
+### 9a. Probe 2 result
+
+Adding the texture bundle changed nothing: **still stuck on the loading
+screen.**
+
+### 9b. The savestate, read properly
+
+`PCSX2 Internal Structures.dat` is a tagged stream. The `cpuRegs` tag sits at
+`0x142` in a 32-byte field; the GPRs follow at `+0x20`, sixteen bytes each, then
+`HI`, `LO`, 32 `CP0` words (confirmed by `Status=70030c11`, `PRId=2e20` -- the
+R5900), then `sa`, `IsDelaySlot`, and the **PC at tag+`0x2C8`**. (The next tag,
+`Cycles`, is at `0x117C`.) This replaces the scan in §7a, which read
+recompiler bookkeeping.
+
+The snapshot is self-consistent -- `$t9` is the callee, `$ra` and the PC are
+both its return point:
+
+    main+0x3a0
+     > IkeGameMgr::Update+0x34
+        > RSInputMgr::Update+0x6c
+           > RSInputImpl::Update+0x3dc          PC = 0x0054E52C
+              > IkeStateMgr::InSplitScreenMode  (vtable slot 0xA0, just returned)
+
+**The main loop is alive,** polling input every frame on the loading screen.
+Nothing crashed and nothing is spinning inside a level parser. The load is
+waiting on something that never completes. One snapshot is one thread at one
+instant, so the loader may be blocked on another thread -- but this rules out
+the simplest reading of "the format is wrong".
+
+Also visible: `$sp = 0x07FFFB20`, above 32 MB, so this PCSX2 has
+**128 MB RAM mode** enabled. Stock Ghost Recon boots under it; noted as an
+uncontrolled variable, not a suspect.
+
+### 9c. A concern that was checked and refuted
+
+The control disc showed `M01_CAVES.POL` stored **raw**, and the probes had
+LZO-packed every file written. If the loader did not sniff per file, a packed
+`.ENV` or `.POL` would be garbage to it. Across every Ghost Recon level:
+
+| | LZO | raw |
+|---|---|---|
+| `.MAZ` `.MOL` `.SHT` `.AOL` `.BMZ` | all | none |
+| `.POL` | 16 | 20 |
+| `.ENV` | 8 | 31 |
+
+Both `.POL` and `.ENV` ship both ways, so the loader must detect compression
+per file. Packing them was harmless; the rest are always LZO, so packing was
+correct. Not the cause.
+
+### 9d. The controlled experiment
+
+The one thing probes 1 and 2 had in common that stock discs never do: **a
+relocated level file** -- `.POL` did not fit and moved. If the engine locates
+level files through anything but the archive records at runtime, it would read
+`.POL`'s old slot, which the writer zeroes. Two discs separate that from "the
+SOAF data does not load":
+
+* **A -- `GR_control_POLmoved (throwaway).iso`.** Stock Ghost Recon, stock
+  data. Only `M01_CAVES.POL` moved (`0x389CBD0 -> 0x28F8A810`, 1,019 bytes,
+  identical content, old slot zeroed). Tests relocation alone.
+* **B -- `GR_SOAF_probe3 (throwaway).iso`.** Probe 2 without the `.POL` swap:
+  SOAF's `.MAZ` `.MOL` `.SHT` `.AOL` `.ENV` `.BMZ`, all in place, Ghost
+  Recon's own `.POL` untouched. **Nothing relocated.** Differs from probe 2 in
+  that one file.
+
+| A | B | reading |
+|---|---|---|
+| loads | loads | relocation (or SOAF's `.POL`) was the problem |
+| loads | hangs | the SOAF level data itself does not load in Ghost Recon |
+| hangs | -- | Ghost Recon cannot take a relocated level file; every port must fit in place |
