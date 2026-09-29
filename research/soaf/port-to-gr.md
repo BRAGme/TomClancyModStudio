@@ -887,3 +887,151 @@ Probe 7 differs from probe 5 only in the six size2 words. Probe 5 never
 reached `LoadPortals`; probe 7 loads through to mission start. **§16d was the
 cause of the load failure.** What remains is a separate fault in the first
 moments of the mission, and it has not been located yet.
+
+### 16g. What runs after the load, and the breakpoints for it
+
+**The last log line is not an error.** `+++SetListenerEnvironment: type=open
+space, id=19` comes from `IkeSoundMgr::UpdateListener` (`0x00263C70`), run
+when the camera reports a new position. It looks the listener's room up **by
+value** in the mission's `SetupFileRoomEntry` list and falls back to
+environment `0x13` (19, open space) when the room is not listed. Ghost Recon's
+T01 setup does not list Sum of All Fears' rooms, so the fallback is expected
+and handled.
+
+**The frame loop** is in `main` (`0x003F996C` to `0x003F9B64`). Each frame
+calls `CGraphicSystem::Render`, then `IkeGameMgr::Update`, which calls every
+"runnable" (`this+0x38`, count at `+0xB8`, vtable `+0x0C`). Only when
+`IkeStateMgr::InActionPhase()` is true does it go on to
+`SceneCamera::DetermineVisibility`, `PreMainFrame`, the effects pre-render,
+`MainFrame`, the effects render and `EndOneFrame`.
+
+**The mission gate.** `InActionPhase` is true when the top byte of the
+game-state word, `[[0x005DFF48] + 0x1DC]`, is 6. On nine savestates every
+in-mission one reads 6 and every stuck-loading one reads 5.
+
+**The run.** `EndLoading` logged at 2117.04 and the crash came at 2118.42,
+about 80 frames later, so the stops cannot simply sit in the frame loop.
+POST 0 is on `SetListenerEnvironment`, 60 ms before the crash. At that stop,
+save a state and tick POST 1 to 5, the frame loop's call sites. The last one
+to stop before the crash names the stage that crashed. POST 6 splits
+`IkeGameMgr::Update` by runnable, for a second pass. The full table is in
+`research/pcsx2-debugger/README.md`.
+
+The state saved at POST 0 is taken in the game thread before the fault, so,
+unlike §14a's, it can be searched for the float run the CPU jumped into and for
+whatever points at it.
+
+### 16h. The first-frame crash: a character outside every room
+
+The run with the §16g breakpoints stopped at POST 0 and then POST 1 to 4 as
+expected, and the user reports POST 4 as the last stop. It then failed with
+"Jump to unmapped recLUT page (PC: 0x1a820000)". The slot 7 state was saved at
+that dialog, not at POST 0. Its registers are garbage with the low 16 bits
+clear (`ra = 0x1D940000`, `sp = 0x62500000`), which is what `lui` produces:
+floats between about 0.008 and 2.0 decode as `lui`. So the CPU ran through
+float data before landing on `0x1A820000`, as in §16f.
+
+**The stack says the simulation, not drawing.** Memory is intact, so the
+stale frames were unwound level by level. At each level the step is accepted
+only when the callee's frame size puts its return-address slot exactly on a
+word holding a return into the caller, and the callee's saved registers are
+checked against the caller's live values.
+
+| level | function | check |
+|---|---|---|
+| 0 | `main` frame loop | slot `0x07FFFD00` = return after `IkeGameMgr::Update` |
+| 1 | `IkeGameMgr::Update` | |
+| 2 | runnable #3, `IkeSimulationMgr::Update` | saved `s0 = 3`, `s1 = 0x00773F40` (the game manager) |
+| 3 | `SimHuman::Update` | saved `s0 = 0x00797E80`, the object being updated |
+| 4 | `SimHuman::UpdateCameraLocation` | saved `s0` = the same `SimHuman` |
+| 5 | `SimHuman::FindRoom` | saved `s0` = the same `SimHuman` |
+| 6 | `RSSimRoom::FindLineCollisionWithPortal` (`0x004D7980`) | saved `s0`, `s1`, `s2` = `FindRoom`'s live values |
+| 7 | the inner overload (`0x004D7570`) | saved `s4` = the room = **0** |
+
+Nearly every function `main` calls in its frame loop saves its return address
+in slot `0x07FFFD00`, including `DetermineVisibility`, `MainFrame` and
+`EndOneFrame`. It holds the return from `Update`, so none of them ran after the
+last `Update`. That contradicts "last stop POST 4", unless POST 1 and 2 did not
+stop in the crashing frame; the memory evidence is the stronger of the two.
+Level 7 never got past its first virtual call. The local it writes right after
+(`sp+0xC0`) still holds stale data.
+
+**The fault.** `SimHuman 0x00797E80` has no room (`[+0x38] = 0`) and stands at
+**(1000.0, 1000.0, 1000.0)**. `FindRoom` casts a line from it toward its camera
+through the current room's portals, so the portal code runs on a NULL room. It
+reads `room->0xA8` from low kernel memory and calls a virtual method through
+it. 1000.0 is `0x447A0000`, the float that dominated the executed data in
+§16f.
+
+Of the 86 sim objects, it is the only one without a room. The 41 doors, 31
+targets, 8 panes of glass, 2 guns and the other three humans are all in SOAF
+rooms. The player stands in T01's insertion zone at (-11.40, -14.77), and two
+more humans are at (-12.08, 1.90) and (-12.28, -0.50).
+
+Checked and ruled out:
+
+* **A missing room number.** SOAF's training ground is Ghost Recon's Ft. Bragg
+  course, extended. All 21 of Ghost Recon's room numbers exist in SOAF's map,
+  which adds 120-124 and 300-309.
+* **A holding room at 1000.** No room in any of the 37 maps (36 Ghost Recon
+  plus SOAF's) contains that point.
+* **Map-side spawn markers.** Ghost Recon's `TRAINING.MOL` has no helper points
+  at all, and its `.AOL` has no character markers. `T01.MIS` lists zones,
+  rooms, two objects and a compiled script, but no characters.
+* **A NULL room always crashing.** A stock mission save (`1458AB4E`, modded
+  ELF) has six active humans with no room at real positions. `FindRoom` only
+  runs the portal test when the camera is offset from the character, and
+  otherwise returns the room directly.
+
+**Open:** who the fourth human is, and where stock Ghost Recon's T01 puts it.
+A stock T01 savestate taken just after the mission starts would answer that.
+
+### 16i. Root cause of the first-frame crash: a rifleman 0.0000017 too low
+
+A stock T01 savestate (slot 8) has the same four humans. The player is at the
+insertion zone, and three riflemen stand in room 113 at (-12.08, 1.90),
+(-12.28, -0.50) and **(-13.88, 1.90)**. In the port, the first two were placed
+(at z 0.1) and the third was left at the default (1000, 1000, 1000).
+
+**Where they come from.** `TRAINING.TOE`, Ghost Recon's actor setup for the
+map, which the port keeps. Team `_Bravo` has three riflemen with fixed
+positions, all at z `-0.00`. The unplaced one is `_Trent Norris` (IgorId 8).
+
+**How placement fails.** `SimHuman::InitializeFromMessage` (`0x003C88C0`)
+loads the character, then calls `RSSimScene::FindRoom(position)`. **If that
+returns NULL it returns early**, skipping `SetActorPosition` and the room
+setup. The character stays active, at the default position, with no room, and
+its first camera update (§16h) crashes. `FindRoom` takes each room whose box
+contains the point and asks `RSSimRoom::FindLevelPointIsOver` for a floor.
+That goes through `RSVoxel2dManager::GetFloorHeight` (`0x004F27D0`), which
+accepts a floor face only if **floor − point.z < 0.1f** (`0x3DCCCCCD`): an
+actor may step up at most 10 cm. `RSFloorFace::GetFloorHeight` computes the
+height from the collision face's stored plane, −(nx·x + ny·y + d)/nz, with the
+normal quantised to 1/4096.
+
+**Why it differs.** In Ghost Recon all three spots are room 113's open floor at
+z 0.0. SOAF built its killhouse there: a ground floor at z 0.1 in rooms 302
+and 303, a second storey at 3.4 (306, 307), and room 113 at 6.6 as the roof.
+With the TOE's z = 0, the ground floor sits exactly on the 10 cm limit.
+Emulated from the planes in SOAF's `.MOL` (same result with nearest and
+toward-zero rounding):
+
+| rifleman | floor | stored height | floor − z < 0.1? |
+|---|---|---|---|
+| A (-12.08, 1.90) | room 302 | 0.09999876 | yes, placed |
+| B (-12.28, -0.50) | room 302 | 0.09999978 | yes, placed |
+| C (-13.88, 1.90) | room 303 | **0.10000172** | **no**, unplaced |
+
+This matches both savestates exactly.
+
+**Probe 8** (`E:/PS2 Games/GR_SOAF_probe8_toe (throwaway).iso`) is probe 7
+with only the three TOE positions raised from `-0.00` to `0.100`. That is the
+same unpacked length, and the file stayed in its slot. Emulated at z = 0.1,
+all three accept the ground floor (floor − z ≤ 0.0000017) and reject the
+second storey and roof. Only `TRAINING.TOE` differs from probe 7 in `GR.IMG`.
+
+**For a real port tool.** A SOAF map keeps Ghost Recon's `.TOE` and missions,
+whose positions assume Ghost Recon's floors. Every fixed actor position should
+be checked with this exact floor test against the ported map, and raised onto
+the floor where it fails. The ports' `.MOL` planes are enough to do that
+offline.

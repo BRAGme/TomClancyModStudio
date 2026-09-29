@@ -1,10 +1,60 @@
 {
     "Breakpoints": [
         {
-            "X": "1",
+            "X": "0",
             "TYPE": "8",
-            "OFFSET": "0047c020",
-            "DESCRIPTION": "MOL 10 - LoadPortals reached: the .MOL is done. Continue.",
+            "OFFSET": "0014655c",
+            "DESCRIPTION": "POST 6 - second pass only: about to update runnable number s0 (object in a0) inside IkeGameMgr::Update. Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "([[0x005dff48]+0x1dc] >> 0x18) == 0x6",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f9b4c",
+            "DESCRIPTION": "POST 5 - about to call CGraphicSystem::EndOneFrame (frame done). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f9ac8",
+            "DESCRIPTION": "POST 4 - about to call CGraphicSystem::MainFrame (draws the level). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f9a30",
+            "DESCRIPTION": "POST 3 - about to call SceneCamera::DetermineVisibility (portals and rooms). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f99e8",
+            "DESCRIPTION": "POST 2 - about to call IkeGameMgr::Update (simulation, scripts, AI, sound). Continue.",
+            "SIZE / LABEL": "",
+            "INSTRUCTION": "",
+            "CONDITION": "",
+            "HITS": "0"
+        },
+        {
+            "X": "0",
+            "TYPE": "8",
+            "OFFSET": "003f9998",
+            "DESCRIPTION": "POST 1 - frame start: about to call CGraphicSystem::Render (sends the last frame to the GS). Continue.",
             "SIZE / LABEL": "",
             "INSTRUCTION": "",
             "CONDITION": "",
@@ -13,128 +63,8 @@
         {
             "X": "1",
             "TYPE": "8",
-            "OFFSET": "0047cce8",
-            "DESCRIPTION": "MOL FAIL D - LoadWithSim is abandoning the map (deletes the scene). Screenshot, then Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047cb04",
-            "DESCRIPTION": "MOL 09 - LoadWithSim: LoadFromMol succeeded. Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c628",
-            "DESCRIPTION": "MOL FAIL C - a model's geometry load returned 0. Screenshot, then Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c44c",
-            "DESCRIPTION": "MOL FAIL B - the .MOL top chunk is not type 7. Screenshot, then Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c3d8",
-            "DESCRIPTION": "MOL FAIL A - the .MOL file would not open. Screenshot, then Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c880",
-            "DESCRIPTION": "MOL 08 - all 57 models loaded, LoadFromMol returning OK. Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c4d4",
-            "DESCRIPTION": "MOL 07 - model 57 of 57 starting, the last (stairdoor). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "s0 == 0x38",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c4c4",
-            "DESCRIPTION": "MOL 06 - model 47 of 57 starting (108_<n><glass>02). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "s0 == 0x2e",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c4bc",
-            "DESCRIPTION": "MOL 05 - model 37 of 57 starting: all 36 rooms done, first object (pinedrooping). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "s0 == 0x24",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c4a0",
-            "DESCRIPTION": "MOL 04 - model 25 of 57 starting (room 212). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "s0 == 0x18",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c494",
-            "DESCRIPTION": "MOL 03 - model 13 of 57 starting (room 108). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "s0 == 0xc",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c47c",
-            "DESCRIPTION": "MOL 02 - model 1 of 57 starting (room 104). Continue.",
-            "SIZE / LABEL": "",
-            "INSTRUCTION": "",
-            "CONDITION": "s0 == 0x0",
-            "HITS": "0"
-        },
-        {
-            "X": "1",
-            "TYPE": "8",
-            "OFFSET": "0047c340",
-            "DESCRIPTION": "MOL 01 - LoadFromMol entered. Continue.",
+            "OFFSET": "0050a210",
+            "DESCRIPTION": "POST 0 - SetListenerEnvironment: the last log line, ~60 ms before the crash. Save state to slot 7, tick POST 1-5, then Continue.",
             "SIZE / LABEL": "",
             "INSTRUCTION": "",
             "CONDITION": "",

@@ -40,43 +40,42 @@ reverse file order.
 
 ## Files
 
-### `SLUS-20613_3E571E95.json`: Ghost Recon, SOAF level-port `.MOL` load
+### `SLUS-20613_3E571E95.json`: Ghost Recon, SOAF level-port first frames
 
-Fourteen execute breakpoints, all enabled, inside `MAPLoader::LoadFromMol` and
-the `LoadWithSim` code around it. Used to find where a ported Sum of All Fears
-level fails. See `research/soaf/port-to-gr.md` §15 and §16.
+Seven execute breakpoints for the crash that follows a completed load of a
+ported Sum of All Fears level. See `research/soaf/port-to-gr.md` §16f and
+§16g. Only POST 0 is ticked when the file loads.
 
-| label | address | condition | fires when |
+| label | address | ticked | fires when |
 |---|---|---|---|
-| MOL 01 | `0047C340` | | `LoadFromMol` is entered |
-| MOL 02 | `0047C47C` | `s0 == 0x0` | model 1 of 57 starts |
-| MOL 03 | `0047C494` | `s0 == 0xc` | model 13 starts |
-| MOL 04 | `0047C4A0` | `s0 == 0x18` | model 25 starts |
-| MOL 05 | `0047C4BC` | `s0 == 0x24` | model 37 starts (all 36 rooms done) |
-| MOL 06 | `0047C4C4` | `s0 == 0x2e` | model 47 starts |
-| MOL 07 | `0047C4D4` | `s0 == 0x38` | model 57, the last, starts |
-| MOL 08 | `0047C880` | | the model loop finished |
-| MOL FAIL A | `0047C3D8` | | the `.MOL` would not open |
-| MOL FAIL B | `0047C44C` | | the top chunk is not type 7 |
-| MOL FAIL C | `0047C628` | | a model's geometry load returned 0 |
-| MOL 09 | `0047CB04` | | `LoadWithSim`: `LoadFromMol` succeeded |
-| MOL FAIL D | `0047CCE8` | | `LoadWithSim` abandons the map |
-| MOL 10 | `0047C020` | | `LoadPortals` is reached |
+| POST 0 | `0050A210` | yes | `RSSoundMgrPS2::SetListenerEnvironment`: the last log line, ~60 ms before the crash |
+| POST 1 | `003F9998` | no | frame start, about to call `CGraphicSystem::Render` |
+| POST 2 | `003F99E8` | no | about to call `IkeGameMgr::Update` (simulation, scripts, AI, sound) |
+| POST 3 | `003F9A30` | no | about to call `SceneCamera::DetermineVisibility` |
+| POST 4 | `003F9AC8` | no | about to call `CGraphicSystem::MainFrame` |
+| POST 5 | `003F9B4C` | no | about to call `CGraphicSystem::EndOneFrame` |
+| POST 6 | `0014655C` | no | inside `IkeGameMgr::Update`, about to update runnable `s0` (object in `a0`) |
 
-`s0` is `LoadFromMol`'s model index for the whole loop body, so the six model
-checkpoints sit on six different instructions of it. PCSX2 allows one
-breakpoint per address. No address is in a branch delay slot. Conditions are
-parsed by PCSX2's expression parser, which reads bare numbers as **hex**, so
-they are written with `0x`. The model numbers assume Sum of All Fears'
-57-model `TRAINING.MOL`.
+POST 1 to 5 are the call sites in `main`'s frame loop, in the order a frame
+runs them. The loop runs in menus and on the loading screen too, so they start
+unticked: tick them at the POST 0 stop, and each frame then stops five times.
+The last one to stop before the crash names the stage that crashed.
 
-The earlier set, seven stops at the entry of each map-load step
-(`HandleLoadMap`, `LoadWithSim`, `LoadFromMol`, `LoadPortals`,
-`LoadMissionMap`, `LoadObjects`, `HandleLoadSkybox`), is in git history.
+POST 6 carries the condition `([[0x005dff48]+0x1dc] >> 0x18) == 0x6`, which
+is `RSGameStateMgr::InActionPhase`: the top byte of the game-state word is 6
+during a mission. Checked on nine Ghost Recon savestates: every in-mission
+state reads 6 (`0x06011A00`) and every loading state reads 5 (`0x05010000`).
+The pointer is read through the global because the object moves between runs
+(`0x0065EA30`, `0x0065B710`).
+
+None of the addresses is in a branch delay slot. The two earlier sets are in
+git history: the seven map-load steps, and the fourteen `.MOL` stops (commit
+`fdf65a8`).
 
 **These also stop stock Ghost Recon.** The SOAF probe discs keep Ghost Recon's
-boot ELF, so they share its CRC, and every mission load on a normal disc will
-stop at them. Untick them or remove the file when not in use.
+boot ELF, so they share its CRC, and POST 0 will stop in any mission whenever
+the listener's sound environment changes. Untick it or remove the file when
+not in use.
 
 "Load from Settings" clears the list before loading, and PCSX2 writes this file
 back only on "Save to Settings".
