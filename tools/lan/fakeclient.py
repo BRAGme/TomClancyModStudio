@@ -110,6 +110,13 @@ class Conn:
             return first == sub
         return self.recv(f)
 
+    def member_join(self, group):
+        """the MEMBER_JOIN notification naming `group` (lobby introductions and room joins both arrive as 50)"""
+        def f(m):
+            return (m.type == MSG['LOBBY_MSG'] and m.items and int(m.items[0]) == LOBBY['MEMBER_JOIN']
+                    and U32(m.items[1][2]) == group)
+        return self.recv(f)
+
     def close(self):
         self.s.close()
 
@@ -314,6 +321,13 @@ def run(http, verbose=True):
     hw, hl, lobby_id, srv, _ = login_and_enter_lobby(host)
     print('== joiner logs in and enters the lobby')
     jw, jl, _, _, _ = login_and_enter_lobby(join)
+    # A console creates a member record only for a player it was told joined the LOBBY (ELF 0x001A1130 ->
+    # 0x001A1020); without one, adding that player to a room (0x001A0BE0) fails. Found on a real PS2: a
+    # room where each console listed only itself, and the host never sent its peer message.
+    mj = hl.member_join(lobby_id)
+    check(mj.items[1][0] == 'JOINER', 'host is told JOINER entered the lobby: MEMBER_JOIN [JOINER, .., %d]' % lobby_id)
+    mj = jl.member_join(lobby_id)
+    check(mj.items[1][0] == 'HOST', 'joiner is told HOST is already in the lobby: MEMBER_JOIN [HOST, .., %d]' % lobby_id)
 
     print('== heartbeat: STILLALIVE 4->1 on the wait module and 4->2 on the lobby (client timer online.bin 0x006E93A0)')
     hw.send(MSG['STILLALIVE'], [])
@@ -354,7 +368,7 @@ def run(http, verbose=True):
     # it (ELF 0x0019FF90) and only MEMBER_JOIN/LEAVE naming the room move it (0x001A1130 -> 0x001A0AF0).
     # The Join Game filter hides a room below Min Players (0x00315938) -- found on a real PS2, where a
     # lobby member saw "0 Game(s)" with the room in its list at count 0.
-    mj = jl.lobby(LOBBY['MEMBER_JOIN'])
+    mj = jl.member_join(room)
     check(mj.items[1][0] == 'HOST' and U32(mj.items[1][2]) == room,
           'lobby member outside the room gets MEMBER_JOIN [HOST, .., room %d], so its count for the room is 1' % room)
 
@@ -363,7 +377,7 @@ def run(http, verbose=True):
     jl.lobby(LOBBY['JOIN_LOBBY'])
     gi = jl.lobby(LOBBY['GROUP_INFO'])
     check(any(U32(k[2]) == room for k in gi.items[1][3]), 'the lobby listing carries room %d' % room)
-    mj = jl.lobby(LOBBY['MEMBER_JOIN'])
+    mj = jl.member_join(room)
     check(mj.items[1][0] == 'HOST' and U32(mj.items[1][2]) == room,
           'and is followed by MEMBER_JOIN [HOST, .., room %d] replaying the occupant' % room)
 
@@ -371,10 +385,15 @@ def run(http, verbose=True):
     hblk = struct.pack('<Ii', 1, room) + host_ip.encode().ljust(20, b'\0') + info[0x1C:0x4B] + bytes([3, 1, 2]) + info[0x4E:]
     hl.send(MSG['LOBBY_MSG'], [31, [room, 64, Bin(hblk)]], rcv=G.T_SERVER)
     check(int(hl.lobby(31).items[0]) == 38, 'host 31 -> 38 (ELF 0x001A4770 ignores the reply)')
+    # the server writes the host's name into +0x68 (Room Info's host line, copied by ELF 0x00316ADC);
+    # everything else goes out exactly as the host sent it
+    hblk = hblk[:0x68] + b'HOST'.ljust(15, b'\0') + hblk[0x77:]
     up = jl.lobby(LOBBY['GROUP_INFO'])
     L = up.items[1]
     check(U32(L[0]) == room and int(L[1]) == 0x40 and bytes(L[2][10]) == hblk,
           'lobby member gets GROUP_INFO [room, 0x40, record] with the host block (ELF 0x0019F2C0 updates its list)')
+    check(bytes(L[2][10])[0x68:0x77].split(b'\0')[0] == b'HOST',
+          'and its +0x68 names the host, not the uninitialised bytes a real host sends there')
 
     print('== joiner joins the room')
     jl.send(MSG['LOBBY_MSG'], [LOBBY['JOIN_ROOM'], [room, '', 0x1C0, 0, '']], rcv=G.T_SERVER)
@@ -389,7 +408,7 @@ def run(http, verbose=True):
     hostm = L[4][0]
     check(len(hostm) >= 7 and isinstance(hostm[4], Bin) and isinstance(hostm[5], list) and hostm[2] == host_ip,
           'member record = [name, visitor, ip, altip, Bin, [groups], ping, status] with host ip %s' % hostm[2])
-    mj = hl.lobby(LOBBY['MEMBER_JOIN'])
+    mj = hl.member_join(room)
     check(mj.items[1][0] == 'JOINER' and U32(mj.items[1][2]) == room, 'host gets MEMBER_JOIN for the joiner (0x007149B0)')
 
     print('== both press READY: SET_PLAYER_INFO(42) with blob[1]=1 -> PLAYER_INFO_UPDATE(66) to the other member')

@@ -161,7 +161,7 @@ def as_int(x, default=0):
         return default
 
 
-def fix_room_info(info, gid, host_ip, srv, mode):
+def fix_room_info(info, gid, host_ip, srv, mode, host_name=''):
     """Make a room's 124-byte game-info block consistent with the room it belongs to.
 
     Layout (ELF copy helpers 0x00316BE0 / 0x003168F0 / 0x00316AB0; the host fills it, ELF 0x0019F430 sends it):
@@ -172,8 +172,11 @@ def fix_room_info(info, gid, host_ip, srv, mode):
     Any GROUP_INFO carrying a type-5 room record goes to ELF 0x0019F2C0, which copies +0x00/+0x04 of this
     block over the client's local room entry (and over its current-game block 0x0062ACD0 when the ids match).
     An untouched CREATE_ROOM block therefore rewrites the room id to -1 on the client; the next 31 then goes
-    out with group -1.  mode: 'full' = set +4 to the room id, +0 to the server id if it is -1, and +8 to the
-    host IP if empty; 'id' = only +4; 'off' = leave the block alone."""
+    out with group -1.  mode: 'full' = set +4 to the room id, +0 to the server id if it is -1, +8 to the
+    host IP if empty, and +0x68 to the host's name; 'id' = only +4; 'off' = leave the block alone.
+    +0x68 is the host-name line of the Games List's Room Info panel. The add handler fills it from the
+    record (ELF 0x0019FF8C) but every update copies it from this block (ELF 0x00316ADC, 14 bytes), and in
+    the host's own block it is uninitialised memory -- seen on a real PS2 as "kA__EL__..." in Room Info."""
     if mode == 'off' or len(info) != ROOM_INFO_LEN:
         return info
     b = bytearray(info)
@@ -184,6 +187,9 @@ def fix_room_info(info, gid, host_ip, srv, mode):
         if b[8] in (0, 0xFF) and host_ip:
             ipb = host_ip.encode('latin1')[:19]
             b[8:0x1C] = ipb + bytes(20 - len(ipb))
+        if host_name:
+            nb = host_name.encode('latin1', 'replace')[:14]
+            b[0x68:0x77] = nb + bytes(15 - len(nb))
     return bytes(b)
 
 
@@ -616,6 +622,15 @@ class GSConnection:
         p.groups.add(gid)
         self.lobby_reply(m, sub, [gid])
         self.lobby_notify(LOBBY['GROUP_INFO'], self.group_info(g, 0x140))
+        # A console keeps a member record only for players it was told joined the LOBBY: the MEMBER_JOIN
+        # callback (ELF 0x001A1130) creates one (0x001A1020) only when the group named is the lobby
+        # (+0x148), and adding a player to a room (0x001A0BE0) fails without one. Seen on a real PS2 as a
+        # room in which each console listed only itself and the host never sent its peer message.
+        # So introduce the newcomer to everyone here, and everyone here to the newcomer.
+        self.to_group(g, LOBBY['MEMBER_JOIN'], self.member_join(self.name, gid), exclude=self.name)
+        for n in list(g.members):
+            if n != self.name:
+                self.lobby_notify(LOBBY['MEMBER_JOIN'], self.member_join(n, gid))
         # the listing above adds each room with a player count of zero; replay who is in them
         for c in list(self.st.groups.values()):
             if c.parent == gid and c.is_room():
@@ -644,7 +659,8 @@ class GSConnection:
         g.config = 0x1C0 | (1 if g.password else 0)
         if len(g.info) != ROOM_INFO_LEN:
             log(self.tag, 'WARNING room info is %d bytes, the JS menu only lists 124-byte rooms' % len(g.info))
-        g.info = fix_room_info(g.info, g.id, self.st.player_ip(g.master), st.srv_id, st.args.room_info_fix)
+        g.info = fix_room_info(g.info, g.id, self.st.player_ip(g.master), st.srv_id, st.args.room_info_fix,
+                               g.master)
         st.groups[g.id] = g
         log(self.tag, 'ROOM %d %r created by %s (type %d, max %d, info %s)' % (
             g.id, g.name, g.master, g.type, g.max_players, g.info.hex()))
@@ -825,7 +841,7 @@ class GSConnection:
             new = bytes(blob)
             if len(new) == ROOM_INFO_LEN and new[8] in (0, 0xFF) and len(g.info) == ROOM_INFO_LEN:
                 new = new[:8] + g.info[8:0x1C] + new[0x1C:]          # keep the host IP we already had
-            new = fix_room_info(new, g.id, st.player_ip(g.master), st.srv_id, a.room_info_fix)
+            new = fix_room_info(new, g.id, st.player_ip(g.master), st.srv_id, a.room_info_fix, g.master)
             changed = new != g.info
             g.info = new
             log(self.tag, 'ROOM %d game info %s (%s)' % (g.id, room_info_desc(new), 'changed' if changed else 'same'))
