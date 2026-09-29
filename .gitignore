@@ -19,3 +19,6 @@ private-art/
 *.before-*
 *.bak-*
 *.stale-*
+
+# lobby server session logs: frame-by-frame, including login names and passwords
+tools/lan/ubilobby-*.log

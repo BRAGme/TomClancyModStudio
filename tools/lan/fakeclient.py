@@ -350,6 +350,22 @@ def run(http, verbose=True):
     gi = hl.lobby(LOBBY['GROUP_INFO'])
     check(len(gi.items[1][4]) == 1 and gi.items[1][4][0][0] == 'HOST', 'host room GROUP_INFO lists itself as member')
     check(block_id(bytes(gi.items[1][2][10])) == room, 'host room GROUP_INFO block has id %d, not -1' % room)
+    # A console counts each room's players itself (+0x5C of its room entry): the add handler zeroes
+    # it (ELF 0x0019FF90) and only MEMBER_JOIN/LEAVE naming the room move it (0x001A1130 -> 0x001A0AF0).
+    # The Join Game filter hides a room below Min Players (0x00315938) -- found on a real PS2, where a
+    # lobby member saw "0 Game(s)" with the room in its list at count 0.
+    mj = jl.lobby(LOBBY['MEMBER_JOIN'])
+    check(mj.items[1][0] == 'HOST' and U32(mj.items[1][2]) == room,
+          'lobby member outside the room gets MEMBER_JOIN [HOST, .., room %d], so its count for the room is 1' % room)
+
+    print('== a lobby member arriving late is told who is already in each room')
+    jl.send(MSG['LOBBY_MSG'], [LOBBY['JOIN_LOBBY'], [lobby_id, '', 0x1C0]], rcv=G.T_SERVER)
+    jl.lobby(LOBBY['JOIN_LOBBY'])
+    gi = jl.lobby(LOBBY['GROUP_INFO'])
+    check(any(U32(k[2]) == room for k in gi.items[1][3]), 'the lobby listing carries room %d' % room)
+    mj = jl.lobby(LOBBY['MEMBER_JOIN'])
+    check(mj.items[1][0] == 'HOST' and U32(mj.items[1][2]) == room,
+          'and is followed by MEMBER_JOIN [HOST, .., room %d] replaying the occupant' % room)
 
     print('== host publishes its game block: 31 [room, 64, Bin(124)] (ELF 0x0019F430), as live: id + IP filled')
     hblk = struct.pack('<Ii', 1, room) + host_ip.encode().ljust(20, b'\0') + info[0x1C:0x4B] + bytes([3, 1, 2]) + info[0x4E:]

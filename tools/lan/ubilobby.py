@@ -578,6 +578,31 @@ class GSConnection:
             if p and p.lobby and p.lobby.alive:
                 p.lobby.lobby_notify(sub, data)
 
+    def to_lobby_outside(self, g, sub, data, exclude=None):
+        """Send to the members of room g's lobby who are not in g itself.
+
+        A console counts each room's players itself, at +0x5C of its room entry: the add handler
+        zeroes it (ELF 0x0019FF90), the update copy skips it (ELF 0x00316AB0), and only
+        MEMBER_JOIN / MEMBER_LEAVE naming the room move it (ELF 0x001A1130 -> 0x001A0AF0 / 0x001A1330).
+        The Join Game filter then drops any room whose count is below Min Players (ELF 0x00315938),
+        so a lobby member that is never told about room joins sees every room as empty and hidden.
+        """
+        lob = self.st.groups.get(g.parent)
+        if not lob:
+            return
+        for n in list(lob.members):
+            if n == exclude or n in g.members:
+                continue
+            p = self.st.players.get(n)
+            if p and p.lobby and p.lobby.alive:
+                p.lobby.lobby_notify(sub, data)
+
+    def member_join(self, name, gid):
+        p = self.st.players.get(name)
+        ip = p.ip if p else '0.0.0.0'
+        info = p.player_info if p else b''
+        return [name, 0, gid, ip, ip, Bin(info), -1]    # parser 0x007149B0
+
     def l_JOIN_LOBBY(self, m, sub, data):
         # [lobby, password, 0x1c0]  (online.bin 0x00709290, ELF 0x0019F7D0)
         gid = as_int(data[0]) if data else 0
@@ -591,6 +616,12 @@ class GSConnection:
         p.groups.add(gid)
         self.lobby_reply(m, sub, [gid])
         self.lobby_notify(LOBBY['GROUP_INFO'], self.group_info(g, 0x140))
+        # the listing above adds each room with a player count of zero; replay who is in them
+        for c in list(self.st.groups.values()):
+            if c.parent == gid and c.is_room():
+                for n in list(c.members):
+                    if n != self.name:
+                        self.lobby_notify(LOBBY['MEMBER_JOIN'], self.member_join(n, c.id))
 
     def l_CREATE_ROOM(self, m, sub, data):
         # [parent, name, game, type(5), max_players, max_visitors, Bin(124), password, ver, gsver, Bin]
@@ -655,8 +686,9 @@ class GSConnection:
             self.lobby_reply(m, sub, [gid])
             self.lobby_notify(LOBBY['GROUP_INFO'], self.group_info(g, 0x1C0))
         if new:
-            mj = [self.name, 0, gid, p.ip, p.ip, Bin(p.player_info), -1]    # parser 0x007149B0
+            mj = self.member_join(self.name, gid)
             self.to_group(g, LOBBY['MEMBER_JOIN'], mj, exclude=self.name)
+            self.to_lobby_outside(g, LOBBY['MEMBER_JOIN'], mj, exclude=self.name)
         self.update_counts(g)
 
     def room_config(self, g):
@@ -681,6 +713,7 @@ class GSConnection:
         g.members.remove(name)
         self.to_group(g, LOBBY['MEMBER_LEAVE'], [name, gid])
         if g.is_room():
+            self.to_lobby_outside(g, LOBBY['MEMBER_LEAVE'], [name, gid], exclude=name)
             if not g.members:
                 del st.groups[gid]
                 lob = st.groups.get(g.parent)
