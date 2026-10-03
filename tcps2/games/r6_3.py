@@ -40,6 +40,7 @@ from .. import (rseaicover, rsecanon, rseclark, rsedebrief, rsefragwarn, rsechat
                 rseorders, rsewheel, rsecallouts, rseflashlight, rsehands, rsecarry,
                 rsedowncall, rseroguecall, rsethuntai, rsegadget,
                 rsehostagerun, rseflashcost, rsecorpsehit, rsegunaudio,
+                rsethirdperson,
                 rseclaymore, rseff,
                 rsedecal, rseaihunt, rsesmoke, rseuzilight, rsepuffs,
                 rseviewport, rsespectate, rsetracer, rseslomo,
@@ -391,6 +392,7 @@ STOCK.update(rseburstsnd.stock_words())
 # six seconds, because one line in UGameEngine::Tick clears the latch
 # that says it already ran. See rseflashcost.
 STOCK.update(rseflashcost.stock_words())
+STOCK.update(rsethirdperson.stock_words())
 # Molotovs and flashbangs for the terrorists. ONE overlay word: the hook
 # in PickGrenadeClass, delivered as a cheat row. Its delay slot is
 # deliberately NOT registered -- `lui $at, 0x005e` is the top half of an
@@ -806,7 +808,14 @@ PLAYED_SPLIT_SCREEN = frozenset(('ai_trigger_hold', 'breach_stun', 'burst_fire_s
 #:   terrorist_grenades an enemy seen throwing a flashbang
 #:   tracer_calibre     tracers seen, reported working
 #:   wave_enable        the enemies it adds, reported and seen
-PROVEN_IN_GAME = frozenset(('blast_decals', 'blood_splats', 'corpse_hitbox', 'stun_flash', 'terrorist_grenades', 'tracer_calibre', 'wave_enable'))
+#: Watched working in play. The 2026-09-29 session added ai_hunt, the two
+#: decal options, the dead terrorist's weapon light and third person
+#: (camera and reticule; see RETEST_IN_PLAY for the eye/zoom half).
+PROVEN_IN_GAME = frozenset((
+    'ai_hunt', 'blast_decal_size', 'blast_decals', 'blood_splats',
+    'corpse_hitbox', 'dead_flashlight', 'decal_ring',
+    'stun_flash', 'terrorist_grenades', 'tracer_calibre', 'tp_camera',
+    'tp_reticle', 'wave_enable'))
 
 
 #: Played and found wanting. These keep their badge but gain a note,
@@ -824,6 +833,20 @@ RETEST_IN_PLAY = {
         "Reported not working in play on 2026-09-28, before the no-wait "
         "option existed. Re-test before trusting it: the action is Joy8 "
         "in PSX2USER.INI, and there is no HUD while spectating.",
+    'tp_keep_eye':
+        "Failed in play on 2026-09-29, then fixed the same day. Re-test "
+        "it. The first version pointed PlayerTick's gate at "
+        "m_bFixCamera on the claim that nothing wrote it; it has a live "
+        "writer and CalcBehindView reads it, so the gate could close "
+        "for good rather than never close. It now points at "
+        "m_bCameraGhost, which was measured inert: no writer, no "
+        "reader, and no class-defaults entry anywhere in the package "
+        "set.\n\n"
+        "Three things ride on this one gate, because the weapon recoil "
+        "shake lives inside SetEyeLocation with the eye write: the eye "
+        "position the auto-aim traces from, the FOV interpolation every "
+        "zoom needs, and the shake. Play reported all three missing, "
+        "which is what identified the gate.",
 }
 
 
@@ -1332,6 +1355,7 @@ def _build_settings():
         rsecorpsehit.card("", "World"),
         rseflashcost.card("", "World"),
         rsegunaudio.card("", "Weapons"),
+        *rsethirdperson.cards("", "Controls"),
         *rsetracer.cards("", "Weapons"),
         *rseslomo.cards("", "World"),
         *rsepenetrate.cards("", "Weapons"),
@@ -1631,6 +1655,12 @@ def build_edits(v: dict) -> list:
     def w(va, value, note):
         e.append(WordEdit(va, value, STOCK[va], note))
 
+    if v.get("tp_camera") and v.get("tp_peek"):
+        # The lean roll UpdateRotation drops in behind view. One
+        # branch to a nop; first person never took it. See
+        # rsethirdperson.
+        w(rsethirdperson.PEEK_AT, rsethirdperson.PEEK_NEW,
+          "third person: peeking leans the camera")
     if v.get("flashbang_cost"):
         # One redundant store. Removing it makes the deafen block run
         # once instead of sixty times a second. It is written to the
@@ -2308,6 +2338,13 @@ def build_data(v: dict) -> list:
     # fire events are the only ones on the disc at 0.707 volume, and the
     # M4's are the only ones with a 3.5/4.0/60.0 distance triple instead
     # of 10.0/10.5/70.0. See rsegunaudio.
+    # Three two-byte edits, offline packages only. The camera itself is
+    # already written and live -- see rsethirdperson.
+    for _tp in ("tp_camera", "tp_keep_eye", "tp_reticle"):
+        if v.get(_tp):
+            out.append(FileEdit("third_person", rsethirdperson.SELECT, "",
+                                {"which": _tp, "enable": True},
+                                "third person: %s" % _tp))
     if v.get("gun_audio_fix"):
         out.append(FileEdit("gun_audio_fix", rsegunaudio.SELECT, "",
                             {"enable": True},

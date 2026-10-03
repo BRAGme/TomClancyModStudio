@@ -9,7 +9,7 @@ which fields of it to ignore. A row that no longer agrees with the profile's own
 stock word is dropped on load, so a stale table degrades into "this option is
 disabled here" rather than into a wrong write.
 
-649 addresses, 1..99 words wide (median 3, mean 8.9), 22.6 KiB of window.
+650 addresses, 1..99 words wide (median 3, mean 8.9), 22.6 KiB of window.
 0 refused as not uniquely locatable.
 """
 
@@ -722,6 +722,7 @@ SIGS = {
  "003b70d0": (0, "1460fee226310004"),
  "003b70d4": (1, "1460fee226310004"),
  "003b70d8": (1, "26310004dfbf00907bb70080"),
+ "003b8fb8": (0, "148000220000902d"),
  "003bdaec": (0, "240400063c0341a0"),
  "003bdaf0": (0, "3c0341a00044001a"),
  "003bdb04": (0, "2442000144820800"),

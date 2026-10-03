@@ -145,16 +145,16 @@ def card(prefix, group):
         prefix + "flashbang_cost", "Flashbangs do not wreck the frame rate",
         BOOL, False, group, confidence="experimental", touches="code",
         help="While you are flashbanged the game drops to roughly a quarter "
-             "of its frame rate, and recovers the moment the ringing stops.\\n\\n"
+             "of its frame rate, and recovers the moment the ringing stops.\n\n"
              "It is re-running the whole deafening routine every frame for "
              "the six seconds the effect lasts -- restarting the ringing, and "
              "re-arming twenty channel fades, sixty times a second -- because "
              "one line clears the flag that was supposed to say it had "
              "already done it. That line does nothing else, and the flag is "
-             "cleared properly elsewhere when the effect ends.\\n\\n"
+             "cleared properly elsewhere when the effect ends.\n\n"
              "This removes that one line. Nothing sounds different: the same "
              "ringing, the same muffling, the same recovery.",
-        caution="Not yet played.\\n\\n"
+        caution="Not yet played.\n\n"
                 "This is written to the disc rather than the cheat file on "
                 "purpose. The instruction sits in the same small region of "
                 "memory as the engine's per-frame update, and a cheat line "

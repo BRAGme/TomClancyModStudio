@@ -149,6 +149,12 @@ def _op_split_down_callouts(plain, params):
     return rsedowncall.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_third_person(plain, params):
+    from . import rsethirdperson
+    return rsethirdperson.apply(plain, params["which"],
+                                bool(params.get("enable", True)))
+
+
 def _op_gun_audio_fix(plain, params):
     from . import rsegunaudio
     return rsegunaudio.apply(plain, bool(params.get("enable", True)))
@@ -421,6 +427,7 @@ OPS = {
     "hostage_rainbow_voice": _op_hostage_rainbow_voice,
     "corpse_hitbox": _op_corpse_hitbox,
     "gun_audio_fix": _op_gun_audio_fix,
+    "third_person": _op_third_person,
     "split_thunt_ai": _op_split_thunt_ai,
     "breach_stun": _op_breach_stun,
     "friendly_fire": _op_friendly_fire,
