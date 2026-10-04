@@ -1107,7 +1107,7 @@ def _settings():
                         "played (the first version, a small amber mark beside an amber reticle, "
                         "was played 2026-09-29). One extra line trace a frame per third-person "
                         "view (what one fired round costs); the reticle follows the view one "
-                        "frame late. Jungle Storm only."),
+                        "frame late."),
         Setting("js_gun_far", "How far gunshots carry", CHOICE, "stock", "World", touches="data",
                 confidence="experimental",
                 choices=[Choice("stock", "Stock", "Rifles fade to silence by 110 m; machine guns, snipers and launchers by 200 m."),

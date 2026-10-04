@@ -66,7 +66,7 @@ spread is kept, locked-on shots aim from the origin, and a prone soldier's
 round is stopped by the low wall in front of him that the camera line clears
 (it used to fly on). Converging shots confirmed in play 2026-09-29.
 
-"Show when cover blocks your shot" (``blocked_edits``, Jungle Storm only): while
+"Show when cover blocks your shot" (``blocked_edits``, both games): while
 the round's own line is blocked short of the reticle point, the reticle turns
 amber and moves to where the round would hit (the first build, played
 2026-09-29, kept it in place and added a small amber mark there); see the
@@ -866,7 +866,7 @@ def unhide_edits(game):
 
 
 # ---------------------------------------------------------------------------
-# Third person: show when cover blocks the shot (Jungle Storm)
+# Third person: show when cover blocks the shot
 # ---------------------------------------------------------------------------
 #
 # Rounds leave the soldier's eye and fly at P, the point under the reticle
@@ -898,13 +898,83 @@ def unhide_edits(game):
 # third-person view (the same trace a round makes: 20k-1.1M EE instructions in
 # the interpreter on the test saves, dense scenery costing most) and, while
 # blocked, one projection.
+#
+# Ghost Recon's reticle is the same model with the same packet (tag and 5 quads
+# read from savestates), but its ReticuleDisplay::Draw (0x0027D190) calls
+# UIPacket::AddModel(packet, this) itself instead of UIModel::Draw(this): the
+# hook replaces that jal and puts this in a0 from its delay slot (HOOK_DELAY),
+# and UIModel::Draw (0x003A1790, AddModel on UIPacket::Get(), the same packet)
+# stands in for the call. Its split number is +0xC8 (Jungle Storm +0xD8), set
+# the same way: 0 for a view on its own, -1 / 1 the first / second player's half.
 BLOCKED = {
+    "gr": dict(
+        HOOK=0x0027D538, HOOK_STOCK=0x0C145CB8,   # ReticuleDisplay::Draw: jal UIPacket::AddModel(packet, this)
+        HOOK_DELAY=(0x0027D53C, 0x00000000),      # its delay slot: a0 = this (a1) for the stand-in
+        UIDRAW=0x003A1790,                        # UIModel::Draw: UIPacket::AddModel(UIPacket::Get(), this)
+        PROJ=0x00459240,                          # CGraphicAPI::TransformVertToScreen (api, view, out, in, 0)
+        GFX=0x00630B40,                           # its graphics API is *this + 0x100, as the reticle loads it
+        SHOOTROOM=0x158,                          # IkeSimController::GetShootFromSimRoom
+        SPLIT=0xC8,                               # ReticuleDisplay: split number (ReticuleSetSplitNumber)
+        CAVE_D=0x0040F478, CAVE_D_BYTES=904,      # sceDmaSendN, sceDmaSendI, sceDmaRecv, sceDmaRecvN: unreferenced
+        CAVE_E=0x0042A638, CAVE_E_BYTES=572,      # scePadInfoAct, scePadInfoComb: unreferenced
+        CAVE_NAMES=("sceDmaSendN..sceDmaRecvN (unreferenced)", "scePadInfoAct/Comb (unreferenced)"),
+        STOCK_D=(
+            "27bdffa0 ffb40040 ffb30030 00c0a02d ffb10010 00a0982d ffb00000 3c110100"
+            "ffbf0050 0080802d ffb20020 8e020000 30420100 10400018 3c120058 2631ffff"
+            "06210011 00000000 0c0403cc 264477e8 8e040000 00041202 30420001 1040000a"
+            "00000000 2405feff 00851824 0000102d 0060202d 00000000 00000000 1440fffa"
+            "00000000 ae030000 8e020000 30420100 1440ffeb 2631ffff 3c02ffff 8e030010"
+            "3442ffff 54620001 ae130010 8e020000 2403fff3 ae140020 00431024 dfbf0050"
+            "34420101 dfb40040 ae020000 dfb30030 dfb20020 dfb10010 dfb00000 03e00008"
+            "27bd0060 00000000 27bdffa0 ffb40040 ffb30030 00c0a02d ffb10010 00a0982d"
+            "ffb00000 3c110100 ffbf0050 0080802d ffb20020 8e020000 30420100 10400018"
+            "3c120058 2631ffff 06210011 00000000 0c0403cc 264477e8 8e040000 00041202"
+            "30420001 1040000a 00000000 2405feff 00851824 0000102d 0060202d 00000000"
+            "00000000 1440fffa 00000000 ae030000 8e020000 30420100 1440ffeb 2631ffff"
+            "3c02ffff 8e030010 3442ffff 54620001 ae130010 8e020000 2403fff3 ae140020"
+            "00431024 dfbf0050 34420109 dfb40040 ae020000 dfb30030 dfb20020 dfb10010"
+            "dfb00000 03e00008 27bd0060 00000000 27bdffc0 ffb10010 ffb00000 3c110100"
+            "ffbf0030 0080802d ffb20020 8e020000 30420100 10400018 3c120058 2631ffff"
+            "06210011 00000000 0c0403cc 264477e8 8e040000 00041202 30420001 1040000a"
+            "00000000 2405feff 00851824 0000102d 0060202d 00000000 00000000 1440fffa"
+            "00000000 ae030000 8e020000 30420100 1440ffeb 2631ffff 8e020000 2403fff3"
+            "2404fffe ae000020 00431024 dfbf0030 34420004 dfb20020 00441024 dfb10010"
+            "34420100 ae020000 dfb00000 03e00008 27bd0040 00000000 27bdffa0 ffb40040"
+            "ffb30030 00c0a02d ffb10010 00a0982d ffb00000 3c110100 ffbf0050 0080802d"
+            "ffb20020 8e020000 30420100 10400018 3c120058 2631ffff 06210011 00000000"
+            "0c0403cc 264477e8 8e040000 00041202 30420001 1040000a 00000000 2405feff"
+            "00851824 0000102d 0060202d 00000000 00000000 1440fffa 00000000 ae030000"
+            "8e020000 30420100 1440ffeb 2631ffff 3c02ffff 8e030010 3442ffff 54620001"
+            "ae130010 8e020000 2403fff3 2404fffe ae140020 00431024 dfbf0050 00441024"
+            "dfb40040 34420100 dfb30030 ae020000 dfb20020 dfb10010 dfb00000 03e00008"
+            "27bd0060 00000000"),
+        STOCK_E=(
+            "0080402d 24030070 2404001c 71031818 00a42018 27bdffd0 3c02005f ffb10010"
+            "ffb00000 24422390 ffbf0020 00c0882d 00832021 00441021 8c430010 10600032"
+            "00e0802d 0c10a8da 0100202d 0040202d 90850072 24020001 14a2002c 0000102d"
+            "90820064 2c420002 14400028 0000102d 9083006a 0223102a 10400023 2402ffff"
+            "16220003 24020002 10000020 0060102d 12020011 2a020003 10400005 24020003"
+            "12050009 0000102d 10000019 dfbf0020 1202000d 24020004 1202000f 0000102d"
+            "10000013 dfbf0020 00111880 00831821 1000000e 90620030 00111880 00831821"
+            "1000000a 90620031 00111880 00831821 10000006 90620032 00111880 00831821"
+            "10000002 90620033 0000102d dfbf0020 dfb10010 dfb00000 03e00008 27bd0030"
+            "0080402d 24030070 2404001c 71031818 00a42018 27bdffd0 3c02005f ffb10010"
+            "ffb00000 24422390 ffbf0020 00c0882d 00832021 00441021 8c430010 10600031"
+            "00e0802d 0c10a8da 0100202d 0040202d 90830072 24020001 1462002b 0000102d"
+            "90820064 2c420002 14400027 0000102d 2405ffff 16250003 9082006b 10000023"
+            "dfbf0020 0222102a 5040001f 0000102d 52000011 00111880 1e000005 00000000"
+            "12050009 0000102d 10000018 dfbf0020 1203000c 24020002 1202000e 0000102d"
+            "10000012 dfbf0020 00111880 00831821 1000000d 90620040 00831821 1000000a"
+            "90620041 00111880 00831821 10000006 90620042 00111880 00831821 10000002"
+            "90620043 0000102d dfbf0020 dfb10010 dfb00000 03e00008 27bd0030"),
+    ),
     "js": dict(
         HOOK=0x0025EF20, HOOK_STOCK=0x0C05686C,   # ReticuleDisplay::Draw: jal UIModel::Draw (a0 = this)
         UIDRAW=0x0015A1B0,                        # UIModel::Draw: UIPacket::AddModel(packet, this)
         PROJ=0x0041EAF0,                          # world -> GS (api, view, out, in, 0), as the reticle calls it
         GFX=0x0067CF40,                           # its graphics API is *this + 0x100
         SHOOTROOM=0x158,                          # SimHuman: GetShootFromSimRoom (IkeSimController +0x158)
+        SPLIT=0xD8,                               # ReticuleDisplay: split number
         CAVE_D=0x005544B0, CAVE_D_BYTES=784,      # three unreferenced lgAud-library functions
         CAVE_E=0x00554950, CAVE_E_BYTES=600,      # three more, all unreferenced
         STOCK_D=(
@@ -991,7 +1061,7 @@ tp_mark:                             ; a0 = the ReticuleDisplay being drawn (UIM
     sq    s3, 0x380(sp)
     sq    s4, 0x390(sp)
     move  s0, a0
-    lw    t0, 0xd8(s0)               ; split number: above 0 is the second player's view
+    lw    t0, {b['SPLIT']:#x}(s0)               ; split number: above 0 is the second player's view
     slt   s4, zero, t0               ; view 0 / 1, as ReticuleDisplay reads it
     sll   t0, s4, 5
     lui   s3, %hi(STATE)
@@ -1253,7 +1323,7 @@ tm_tint:
     addiu t0, t2, {MARK_X * 16:#x}             ; on screen: within {MARK_X} GS sideways ...
     sltiu t0, t0, {MARK_X * 32:#x}
     beqz  t0, tm_one
-    lw    t1, 0xd8(s0)
+    lw    t1, {b['SPLIT']:#x}(s0)
     addiu t5, zero, {MARK_Y * 16:#x}           ; ... and {MARK_Y} GS up or down for a view on its own,
     beqz  t1, tm_ylim
     nop
@@ -1338,7 +1408,8 @@ def build_mark(game):
     if len(wd) * 4 > b["CAVE_D_BYTES"] or b["CAVE_E"] + len(we) * 4 > state:
         raise ValueError("%s: the blocked-shot routine outgrows its caves" % game)
     we = we + [0] * ((state - b["CAVE_E"]) // 4 - len(we)) + [0] * (STATE_BYTES // 4)
-    return ([(b["CAVE_D"], wd, "lgAud (unreferenced)"), (b["CAVE_E"], we, "lgAud (unreferenced)")],
+    names = b.get("CAVE_NAMES", ("lgAud (unreferenced)", "lgAud (unreferenced)"))
+    return ([(b["CAVE_D"], wd, names[0]), (b["CAVE_E"], we, names[1])],
             dict(ld, **le, STATE=state))
 
 
@@ -1355,6 +1426,10 @@ def blocked_edits(game):
                  "third-person camera: blocked-shot routine in " + where) for i, w in enumerate(words)]
     out.append((b["HOOK"], assemble("jal %#x" % labels["tp_mark"], b["HOOK"])[0][0], b["HOOK_STOCK"],
                 "third-person camera: the reticle is drawn through tp_mark"))
+    if "HOOK_DELAY" in b:
+        va, st = b["HOOK_DELAY"]
+        out.append((va, assemble("move a0, a1", va)[0][0], st,
+                    "third-person camera: tp_mark gets the reticle in a0"))
     return out
 
 
@@ -1363,6 +1438,8 @@ for _g, _b in BLOCKED.items():
     _t.update(_stock_words(_b["CAVE_D"], _b["STOCK_D"]))
     _t.update(_stock_words(_b["CAVE_E"], _b["STOCK_E"]))
     _t[_b["HOOK"]] = _b["HOOK_STOCK"]
+    if "HOOK_DELAY" in _b:
+        _t[_b["HOOK_DELAY"][0]] = _b["HOOK_DELAY"][1]
 
 
 

@@ -999,6 +999,23 @@ def _settings():
                      "reticle. Rounds land a fixed 0.2-0.5 m below and beside "
                      "the reticle at any range. Locked-on shots aim at their "
                      "target from the eye either way."),
+        Setting("gr_tp_blocked", "Third person: show when cover blocks your shot", BOOL, False,
+                "World", confidence="experimental",
+                requires={"gr_tp_camera": ("centered", "ots", "ots_left")},
+                help="Your rounds leave your soldier's eye and fly to the point under the "
+                     "reticle, so cover in front of him stops them even when the camera sees "
+                     "over it. With this on, whenever something between his eye and that point "
+                     "would stop the round -- a hill crest, a wall, a car, a teammate -- the "
+                     "reticle turns amber and moves to where the round would actually hit. If "
+                     "that spot is off screen, the amber reticle stays in the middle. Needs "
+                     "'Third person: shots parallel to the view' off.",
+                caution="Not yet played in Ghost Recon. Checked in an interpreter on Ghost Recon "
+                        "savestates through the game's own reticle drawing: a soldier or the "
+                        "ground in the round's path turns it amber and moves it, a clear line "
+                        "leaves it exactly as stock. Jungle Storm's first version (an amber "
+                        "mark beside the reticle) was played 2026-09-29. One extra line trace a "
+                        "frame per third-person view (what one "
+                        "fired round costs); the reticle follows the view one frame late."),
         Setting("gr_extra_cameras", "Unlock the chase and ghost cameras", BOOL,
                 False, "World", confidence="experimental",
                 help="The camera cycle wraps at 3 of the 5 camera modes the "
