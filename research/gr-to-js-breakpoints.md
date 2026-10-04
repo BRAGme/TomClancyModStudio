@@ -1,4 +1,54 @@
-# Naming the texture that hangs a ported level in Jungle Storm
+# Porting a Ghost Recon level into Jungle Storm: what actually hangs it
+
+**SOLVED 2026-10-04.** Ghost Recon's `M01_CAVES` plays in Jungle Storm's
+`CP01_HUNTING_LODGE` slot in split screen. The cause of every hang was
+**storage form**: Ghost Recon stores some files plain that the Jungle Storm
+slot stores packed, and the loader hangs with no error when handed an unpacked
+file where it expects a packed one. It bit three times separately --
+`_SKY.POZ`, the `.MIS`, and `.POL`.
+
+**Derive the storage form from the SLOT's existing file, never from the source
+game.** `research/soaf/port-to-gr.md` 19a states it: "all seven CP01 level
+files are packed, the .POL included".
+
+## Which screen you are stuck on tells you which half is wrong
+
+* **"Please wait", the startup screen after the logos** -- the game parses
+  EVERY mission at startup to build its lists, so a bad `.MIS` hangs here,
+  before any menu.
+* **the level's own loading screen** -- a bad terrain file hangs here.
+
+## Which file, from a savestate, with no debugger
+
+Probe each level file's bytes against EE RAM. The loader order is
+`LoadFromMol (.mol)` -> `LoadPortals (.pol)` -> `LoadMissionMap (.MAZ/.SHT/
+.BMZ)` -> `LoadObjects (.aol)`. The last file fully resident with nothing after
+it names the step: `.POL` resident and no `.MAZ/.SHT/.BMZ` meant `LoadPortals`,
+and `.POL` was the file stored in the wrong form.
+
+A `.MOL` that is NOT resident is normal -- it is consumed into model structures
+rather than kept.
+
+## The recipe
+
+1. grow `GR.IMG` (`tcps2/discgrow.py`);
+2. the six terrain files into the slot, **each in the slot's own storage form**;
+3. rescale every `.MOL` plane normal 4096 -> 32000, re-pack (see
+   port-to-gr.md 19c -- read at Jungle Storm's scale an unscaled floor sits
+   7.8125x too high);
+4. `.MIS` = the slot's Shell verbatim + the donor's `RoomList` and `ZoneList`,
+   minus `EnvTag`/`Extraction`/`Sound`/`Type` on zones, plus one `CoopBase`
+   zone at the donor's insertion point -- **packed**;
+5. `.ENV` = the slot's names with the donor's lighting -- plain;
+6. keep the slot's `.PAK`, `.RSB`, `.POB`, skybox and grass.
+
+**CP02 and CP04 are hidden from the offline map list on a stock disc** -- a
+Jungle Storm quirk, not something a port breaks.
+
+---
+
+# Appendix: the texture-manager breakpoint (a dead end here)
+
 
 **One breakpoint answers it: `0x00501F4C`, then read `$s1` as a string.**
 
