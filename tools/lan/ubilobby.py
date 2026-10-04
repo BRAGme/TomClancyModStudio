@@ -56,7 +56,8 @@ class Player:
         self.name = name
         self.wm = None          # router / wait-module connection (PEERMSG goes here)
         self.lobby = None       # lobby-server connection (LOBBY_MSG notifications go here)
-        self.ip = '0.0.0.0'
+        self.ip = '0.0.0.0'     # the address other consoles are told (after --map)
+        self.own_ip = ''        # the address this console reached us from: what it is told about itself
         self.player_info = b''  # SET_PLAYER_INFO (42) blob, 24 bytes from ELF 0x0019F1A0
         self.groups = set()     # lobby / room ids this player is in
 
@@ -84,14 +85,16 @@ class Group:
     def is_room(self):
         return self.type != 0
 
-    def record(self, st):
-        """Lobby record = 14 fields (parser online.bin 0x00708970), room record = 20 fields (0x00708690)."""
+    def record(self, st, viewer=None):
+        """Lobby record = 14 fields (parser online.bin 0x00708970), room record = 20 fields (0x00708690).
+        viewer = the name of the console it is for (see State.ip_for)."""
         cfg = self.config | (0x1000 if self.started else 0)
         base = [self.type, self.name, self.id, self.srv, self.parent, cfg, self.level, self.master,
-                self.allowed, self.games, Bin(self.info), self.event, self.max_players, len(self.members)]
+                self.allowed, self.games, Bin(st.room_block(self, viewer)), self.event, self.max_players,
+                len(self.members)]
         if not self.is_room():
             return base
-        ip = st.player_ip(self.master)
+        ip = st.ip_for(self.master, viewer)
         return base + [self.max_visitors, self.nb_visitors, self.game_version, self.gs_version, ip, ip]
 
 
@@ -119,6 +122,26 @@ class State:
     def player_ip(self, name):
         p = self.players.get(name)
         return p.ip if p else '0.0.0.0'
+
+    def ip_for(self, name, viewer=None):
+        """The address to tell console `viewer` for player `name`. A console is told its own address as it
+        reached us, everyone else's as advertised: with --map a TAP host must not be told that it is at the
+        relay's public address (it has no route there), while a remote joiner must be."""
+        p = self.players.get(name)
+        if not p:
+            return '0.0.0.0'
+        return p.own_ip if viewer is not None and name == viewer and p.own_ip else p.ip
+
+    def room_block(self, g, viewer=None):
+        """A room's 124-byte game-info block as console `viewer` should get it: with --room-info-fix full,
+        +8 is always the host's address for that viewer. The host console fills +8 itself and keeps it from
+        its previous room (a second CREATE_ROOM in one boot carried the old room's address), so a value it
+        sends is not trusted."""
+        info = g.info
+        if self.args.room_info_fix != 'full' or len(info) != ROOM_INFO_LEN or g.master not in self.players:
+            return info
+        ipb = self.ip_for(g.master, viewer).encode('latin1')[:19]
+        return info[:8] + ipb + bytes(20 - len(ipb)) + info[0x1C:]
 
     def lobbies(self):
         return [g for g in self.groups.values() if not g.is_room()]
@@ -230,8 +253,19 @@ class GSConnection:
         ip = addr[0]
         adv = st.args.map.get(ip)
         if adv is None:
-            adv = st.args.ip if ip in st.local_ips else ip
+            adv = st.args.ip if ip in st.local_ips else st.args.map.get('*', ip)
         self.adv_ip = adv           # the address other consoles should use for this console
+
+    def here(self):
+        """The address to give this console for our own services: with --advertise local, the address it reached
+        us at (a TAP console and a Radmin console reach this PC on different networks, and each can only use
+        its own); otherwise --ip."""
+        if self.st.args.advertise == 'local':
+            try:
+                return self.sock.getsockname()[0]
+            except OSError:
+                pass
+        return self.st.args.ip
 
     # -------------------------------------------------- io
     def send(self, msg):
@@ -367,9 +401,9 @@ class GSConnection:
         a = self.st.args
         if self.is_proxy_msg(m):
             # proxy wait module: [name, host, port as decimal string] (online.bin 0x006EC9C0: GetStr 0, GetStr 1, GetS16 2)
-            self.ok(m, [self.name or 'player', a.ip, a.proxy_port])
+            self.ok(m, [self.name or 'player', self.here(), a.proxy_port])
             return
-        self.ok(m, [a.ip, u32le(a.wm_port)])     # port is a 4-byte LE Bin, read with lhu (online.bin 0x00704B2C/0x00703F00)
+        self.ok(m, [self.here(), u32le(a.wm_port)])     # port is a 4-byte LE Bin, read with lhu (online.bin 0x00704B2C/0x00703F00)
 
     def h_LOGINWAITMODULE(self, m):
         if self.is_proxy_msg(m):
@@ -387,7 +421,7 @@ class GSConnection:
             else:
                 log(self.tag, 'replacing older wait-module connection of %s' % self.name)
         p.wm = self
-        p.ip = self.adv_ip
+        p.ip, p.own_ip = self.adv_ip, self.addr[0]
         self.ok(m)
 
     def h_PLAYERINFO(self, m):
@@ -462,7 +496,7 @@ class GSConnection:
             #   fail: ['39', ['1', [error, module, S16, S16]]]   (-> 0x0071FAE0 -> error dialog instead of a hang)
             module = as_str(data[0]) if data else ''
             if a.proxy == 'on':
-                self.reply(m, MSG['PROXY_HANDLER'], [38, [1, [module, 0, 0, [[a.proxy_id, a.ip, a.proxy_port]]]]])
+                self.reply(m, MSG['PROXY_HANDLER'], [38, [1, [module, 0, 0, [[a.proxy_id, self.here(), a.proxy_port]]]]])
             else:
                 self.reply(m, MSG['PROXY_HANDLER'], [39, [1, [a.proxy_error, module, 0, 0]]])
         elif sub == 2:
@@ -529,7 +563,7 @@ class GSConnection:
         self.name = as_str(m.items[0]) if m.items else (self.name or 'player')
         p = self.st.player(self.name)
         p.lobby = self
-        p.ip = self.adv_ip
+        p.ip, p.own_ip = self.adv_ip, self.addr[0]
         self.reply(m, MSG['GSSUCCESS'], [210, [self.st.srv_id]])   # parser 0x0070C630
 
     # -------------------------------------------------- LOBBY_MSG
@@ -560,29 +594,31 @@ class GSConnection:
     def l_JOIN_SERVER(self, m, sub, data):
         # ['3', [srv]] -> ['38', ['3', [srv, ip, port]]]  (online.bin 0x0070C8A0)
         srv = as_int(data[0]) if data else self.st.srv_id
-        self.lobby_reply(m, sub, [srv, self.st.args.ip, self.st.args.lobby_port])
+        self.lobby_reply(m, sub, [srv, self.here(), self.st.args.lobby_port])
 
     def me(self):
         return self.st.player(self.name or ('conn%d' % self.id))
 
-    def member_record(self, name, gid):
+    def member_record(self, name, gid, viewer=None):
         p = self.st.players.get(name)
-        ip = p.ip if p else '0.0.0.0'
+        ip = self.st.ip_for(name, viewer)
         return [name, 0, ip, ip, Bin(p.player_info if p else b''), [gid], -1, 2]
 
     def group_info(self, g, flags):
-        st = self.st
-        kids = [c.record(st) for c in st.groups.values() if c.parent == g.id] if flags & 0x100 else []
-        mem = [self.member_record(n, g.id) for n in g.members] if flags & 0x80 else []
-        return [g.id, flags, g.record(st), kids, mem]
+        """GROUP_INFO for this console."""
+        st, v = self.st, self.name
+        kids = [c.record(st, v) for c in st.groups.values() if c.parent == g.id] if flags & 0x100 else []
+        mem = [self.member_record(n, g.id, v) for n in g.members] if flags & 0x80 else []
+        return [g.id, flags, g.record(st, v), kids, mem]
 
     def to_group(self, g, sub, data, exclude=None):
+        """data: the items, or a function of the recipient's name that builds them."""
         for n in list(g.members):
             if n == exclude:
                 continue
             p = self.st.players.get(n)
             if p and p.lobby and p.lobby.alive:
-                p.lobby.lobby_notify(sub, data)
+                p.lobby.lobby_notify(sub, data(n) if callable(data) else data)
 
     def to_lobby_outside(self, g, sub, data, exclude=None):
         """Send to the members of room g's lobby who are not in g itself.
@@ -601,11 +637,11 @@ class GSConnection:
                 continue
             p = self.st.players.get(n)
             if p and p.lobby and p.lobby.alive:
-                p.lobby.lobby_notify(sub, data)
+                p.lobby.lobby_notify(sub, data(n) if callable(data) else data)
 
-    def member_join(self, name, gid):
+    def member_join(self, name, gid, viewer=None):
         p = self.st.players.get(name)
-        ip = p.ip if p else '0.0.0.0'
+        ip = self.st.ip_for(name, viewer)
         info = p.player_info if p else b''
         return [name, 0, gid, ip, ip, Bin(info), -1]    # parser 0x007149B0
 
@@ -627,16 +663,16 @@ class GSConnection:
         # (+0x148), and adding a player to a room (0x001A0BE0) fails without one. Seen on a real PS2 as a
         # room in which each console listed only itself and the host never sent its peer message.
         # So introduce the newcomer to everyone here, and everyone here to the newcomer.
-        self.to_group(g, LOBBY['MEMBER_JOIN'], self.member_join(self.name, gid), exclude=self.name)
+        self.to_group(g, LOBBY['MEMBER_JOIN'], lambda v: self.member_join(self.name, gid, v), exclude=self.name)
         for n in list(g.members):
             if n != self.name:
-                self.lobby_notify(LOBBY['MEMBER_JOIN'], self.member_join(n, gid))
+                self.lobby_notify(LOBBY['MEMBER_JOIN'], self.member_join(n, gid, self.name))
         # the listing above adds each room with a player count of zero; replay who is in them
         for c in list(self.st.groups.values()):
             if c.parent == gid and c.is_room():
                 for n in list(c.members):
                     if n != self.name:
-                        self.lobby_notify(LOBBY['MEMBER_JOIN'], self.member_join(n, c.id))
+                        self.lobby_notify(LOBBY['MEMBER_JOIN'], self.member_join(n, c.id, self.name))
 
     def l_CREATE_ROOM(self, m, sub, data):
         # [parent, name, game, type(5), max_players, max_visitors, Bin(124), password, ver, gsver, Bin]
@@ -667,14 +703,13 @@ class GSConnection:
         # tell everyone in the parent lobby (creator included) BEFORE the reply: the creator's ELF
         # joins the room straight from the CREATE_ROOM callback and needs it in its room list.
         lob = st.groups.get(parent)
-        rec = g.record(st)
         if lob:
             for n in list(lob.members):
                 p = st.players.get(n)
                 if p and p.lobby and p.lobby.alive:
-                    p.lobby.lobby_notify(LOBBY['NEW_GROUP'], rec)
+                    p.lobby.lobby_notify(LOBBY['NEW_GROUP'], g.record(st, n))
         else:
-            self.lobby_notify(LOBBY['NEW_GROUP'], rec)
+            self.lobby_notify(LOBBY['NEW_GROUP'], g.record(st, self.name))
         self.lobby_reply(m, sub, [g.id, g.name, st.srv_id])
 
     def l_JOIN_ROOM(self, m, sub, data):
@@ -702,7 +737,7 @@ class GSConnection:
             self.lobby_reply(m, sub, [gid])
             self.lobby_notify(LOBBY['GROUP_INFO'], self.group_info(g, 0x1C0))
         if new:
-            mj = self.member_join(self.name, gid)
+            mj = lambda v: self.member_join(self.name, gid, v)
             self.to_group(g, LOBBY['MEMBER_JOIN'], mj, exclude=self.name)
             self.to_lobby_outside(g, LOBBY['MEMBER_JOIN'], mj, exclude=self.name)
         self.update_counts(g)
@@ -791,9 +826,10 @@ class GSConnection:
         self.lobby_reply(m, sub, [gid])
         if g:
             g.started = True
-            host = self.st.player_ip(g.master)
-            log(self.tag, 'ROOM %d started by %s, host %s:%d' % (gid, self.name, host, HOST_GAME_PORT))
-            self.to_group(g, LOBBY['GAME_STARTED'], [gid, Bin(g.info), HOST_GAME_PORT, host, host])   # parser 0x00711160
+            st = self.st
+            log(self.tag, 'ROOM %d started by %s, host %s:%d' % (gid, self.name, st.player_ip(g.master), HOST_GAME_PORT))
+            self.to_group(g, LOBBY['GAME_STARTED'], lambda v: [gid, Bin(st.room_block(g, v)), HOST_GAME_PORT,
+                                                               st.ip_for(g.master, v), st.ip_for(g.master, v)])   # parser 0x00711160
 
     def l_GAME_READY(self, m, sub, data):
         gid = as_int(data[0]) if data else 0
@@ -856,7 +892,6 @@ class GSConnection:
         st, mode = self.st, self.st.args.room_update
         if mode == 'none':
             return
-        rec = g.record(st)
         lob = st.groups.get(g.parent)
         names = list(dict.fromkeys((lob.members if lob else []) + g.members))
         for n in names:
@@ -865,6 +900,7 @@ class GSConnection:
             p = st.players.get(n)
             if not (p and p.lobby and p.lobby.alive):
                 continue
+            rec = g.record(st, n)
             if mode == 'readd' and n not in g.members:
                 p.lobby.lobby_notify(LOBBY['GROUP_REMOVE'], [g.id])      # ELF 0x001A0520
                 p.lobby.lobby_notify(LOBBY['NEW_GROUP'], rec)            # ELF 0x0019FEC0 (new entry, id from record)
@@ -901,8 +937,8 @@ def make_gs_server(st, host, port):
     return ThreadingTCPServer((host, port), Handler)
 
 
-def gsinit_body(args):
-    ip = args.ip
+def gsinit_body(args, ip=None):
+    ip = ip or args.ip
     lines = ['[Servers]',
              'RouterIP0=%s' % ip, 'RouterPort0=%d' % args.router_port,
              'RouterLauncherPort0=%d' % args.router_port,
@@ -934,7 +970,8 @@ def make_http_server(st, host, port):
             u = urllib.parse.urlsplit(path)
             if u.path.lower().endswith('gsinit.php'):
                 q = urllib.parse.parse_qs(u.query)
-                body = gsinit_body(st.args)
+                here = self.request.getsockname()[0] if st.args.advertise == 'local' else None
+                body = gsinit_body(st.args, here)
                 log(tag, 'gsinit for dp=%s user=%s -> %d bytes' % (q.get('dp', ['?'])[0], q.get('user', ['-'])[0], len(body)))
                 code = '200 OK'
             else:
@@ -956,8 +993,13 @@ def build_args(argv=None):
     ap.add_argument('--wm-port', type=int, default=None, help='wait module port (default: router port)')
     ap.add_argument('--lobby-port', type=int, default=None, help='lobby server port (default: router port)')
     ap.add_argument('--lobby', action='append', help='lobby name (repeatable, default "Jungle Storm")')
+    ap.add_argument('--advertise', choices=('fixed', 'local'), default='fixed',
+                    help='fixed = give every console --ip for the lobby services; local = give each the address '
+                         'it reached us at (needed when consoles arrive on different networks, e.g. TAP + Radmin)')
     ap.add_argument('--map', action='append', default=[], metavar='SEEN=ADVERTISED',
-                    help='advertise a different address for a console, e.g. 192.168.1.20=10.147.17.5')
+                    help='tell the other consoles a different address for a console, e.g. 192.168.1.20=10.147.17.5; '
+                         'SEEN may be * for every console not otherwise mapped or on this PC. A console is always '
+                         'told its own address as it reached us')
     ap.add_argument('--motd', default='Welcome to the stand-in Ubi.com lobby')
     ap.add_argument('--proxy', choices=['on', 'fail'], default='on',
                     help='ladder/persistent-data proxy: on = serve it (needed to reach the lobby list), '
@@ -984,7 +1026,8 @@ def build_args(argv=None):
                          'the sender\'s rooms (default), also to the sender, also to lobby members, or not at all')
     ap.add_argument('--room-info-fix', choices=('full', 'id', 'off'), default='full',
                     help='keep a room\'s 124-byte game-info block consistent: full = room id at +4, server id at +0 '
-                         'if -1, host IP at +8 if empty (default); id = only +4; off = store blocks untouched (v3)')
+                         'if -1, host IP at +8 as each console should see it (default); id = only +4; off = store '
+                         'blocks untouched (v3)')
     ap.add_argument('--room-update', choices=('info', 'readd', 'none'), default='info',
                     help='after the host\'s 31 changes the game-info block: GROUP_INFO [room,0x40,record] to lobby '
                          'and room members (default); readd = GROUP_REMOVE+NEW_GROUP to lobby members outside the '
@@ -1001,8 +1044,20 @@ def build_args(argv=None):
     a.wm_port = a.wm_port or a.router_port
     a.lobby_port = a.lobby_port or a.router_port
     a.proxy_port = a.proxy_port or a.router_port
-    a.map = dict(x.split('=', 1) for x in a.map)
+    a.map = dict(x.split('=', 1) if '=' in x else (x, '') for x in a.map)
+    for seen, adv in a.map.items():
+        # cmd.exe passes '*=...' with its single quotes, which would silently never match
+        if not (seen == '*' or is_ipv4(seen)) or not is_ipv4(adv):
+            ap.error('--map %s=%s: expected ADDRESS=ADDRESS or *=ADDRESS (in cmd.exe use double quotes: "*=10.20.30.1")'
+                     % (seen, adv))
     return a
+
+
+def is_ipv4(s):
+    try:
+        return socket.inet_aton(s) and s.count('.') == 3
+    except OSError:
+        return False
 
 
 class LobbyServer:
