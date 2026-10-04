@@ -1066,7 +1066,7 @@ def _settings():
                         "real PS2."),
 
         # ---- controls ---------------------------------------------------
-        Setting("gr_controls", "Controller layout", CHOICE, "jungle_storm", "Controls",
+        Setting("gr_controls", "Controller layout", CHOICE, "stock", "Controls",
                 confidence="experimental",
                 choices=[
                     Choice("stock", "Ghost Recon (as shipped)", ""),
