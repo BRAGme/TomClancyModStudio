@@ -149,6 +149,17 @@ def _op_split_down_callouts(plain, params):
     return rsedowncall.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_frag_window(plain, params):
+    from . import rsewindowfrag
+    return rsewindowfrag.apply(plain, params["choice"])
+
+
+def _op_voice_line(plain, params):
+    from . import rseregroup
+    return rseregroup.apply(plain, params["which"],
+                            bool(params.get("enable", True)))
+
+
 def _op_third_person(plain, params):
     from . import rsethirdperson
     return rsethirdperson.apply(plain, params["which"],
@@ -428,6 +439,8 @@ OPS = {
     "corpse_hitbox": _op_corpse_hitbox,
     "gun_audio_fix": _op_gun_audio_fix,
     "third_person": _op_third_person,
+    "voice_line": _op_voice_line,
+    "frag_window": _op_frag_window,
     "split_thunt_ai": _op_split_thunt_ai,
     "breach_stun": _op_breach_stun,
     "friendly_fire": _op_friendly_fire,

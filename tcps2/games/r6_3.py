@@ -40,7 +40,7 @@ from .. import (rseaicover, rsecanon, rseclark, rsedebrief, rsefragwarn, rsechat
                 rseorders, rsewheel, rsecallouts, rseflashlight, rsehands, rsecarry,
                 rsedowncall, rseroguecall, rsethuntai, rsegadget,
                 rsehostagerun, rseflashcost, rsecorpsehit, rsegunaudio,
-                rsethirdperson,
+                rsethirdperson, rseregroup, rsewindowfrag, rsemsgpos,
                 rseclaymore, rseff,
                 rsedecal, rseaihunt, rsesmoke, rseuzilight, rsepuffs,
                 rseviewport, rsespectate, rsetracer, rseslomo,
@@ -393,6 +393,9 @@ STOCK.update(rseburstsnd.stock_words())
 # that says it already ran. See rseflashcost.
 STOCK.update(rseflashcost.stock_words())
 STOCK.update(rsethirdperson.stock_words())
+# Where the native HUD puts the message box -- objectives and the
+# "objective updated" line. One immediate. See rsemsgpos.
+STOCK.update(rsemsgpos.stock_words())
 # Molotovs and flashbangs for the terrorists. ONE overlay word: the hook
 # in PickGrenadeClass, delivered as a cheat row. Its delay slot is
 # deliberately NOT registered -- `lui $at, 0x005e` is the top half of an
@@ -1356,6 +1359,8 @@ def _build_settings():
         rseflashcost.card("", "World"),
         rsegunaudio.card("", "Weapons"),
         *rsethirdperson.cards("", "Controls"),
+        *rseregroup.cards("", "Teammates", "Enemies"),
+        rsewindowfrag.card("", "Teammates"),
         *rsetracer.cards("", "Weapons"),
         *rseslomo.cards("", "World"),
         *rsepenetrate.cards("", "Weapons"),
@@ -1375,6 +1380,7 @@ def _build_settings():
         rseswitch.card("", "Weapons"),
         rsesquad.card("", "Split Screen"),
         rsehudteam.card("", "Split Screen"),
+        rsemsgpos.card("", "Split Screen"),
         rseclark.card("", "Split Screen"),
         rseteam.card("", "Split Screen"),
         rserescue.card("", "Split Screen"),
@@ -1661,6 +1667,15 @@ def build_edits(v: dict) -> list:
         # rsethirdperson.
         w(rsethirdperson.PEEK_AT, rsethirdperson.PEEK_NEW,
           "third person: peeking leans the camera")
+    _mbp = str(v.get("msg_box_pos") or rsemsgpos.DEFAULT)
+    if _mbp != rsemsgpos.DEFAULT:
+        # One immediate in DrawNativeHUD. The background art and the
+        # text both follow it, and rsehudteam's hook on the very next
+        # word re-executes the store with $v0 untouched, so the two
+        # options compose. See rsemsgpos.
+        w(rsemsgpos.POS_AT, rsemsgpos.word(_mbp),
+          "message box at y=%d" % rsemsgpos.CHOICES[_mbp])
+
     if v.get("flashbang_cost"):
         # One redundant store. Removing it makes the deafen block run
         # once instead of sixty times a second. It is written to the
@@ -2345,6 +2360,26 @@ def build_data(v: dict) -> list:
             out.append(FileEdit("third_person", rsethirdperson.SELECT, "",
                                 {"which": _tp, "enable": True},
                                 "third person: %s" % _tp))
+    # Where a teammate throws when the order wheel is pointed at a
+    # window. The only place in the order path that discards your
+    # aim. See rsewindowfrag.
+    _fw = str(v.get("frag_window") or rsewindowfrag.DEFAULT)
+    if _fw != rsewindowfrag.DEFAULT:
+        out.append(FileEdit("frag_window", rsewindowfrag.SELECT, "",
+                            {"choice": _fw},
+                            "window grenades: %s" % _fw))
+
+    # Two bytes each: a voice event that ships pointed at the wrong
+    # clip, leaving the one recorded for it unreachable. See
+    # rseregroup.
+    for _v, _note in (("regroup_2nd",
+                       "teammates: the second regroup line"),
+                      ("terro_down",
+                       "enemies: their own line for going down")):
+        if v.get(_v):
+            out.append(FileEdit("voice_line", rseregroup.SELECT, "",
+                                {"which": _v, "enable": True},
+                                _note))
     if v.get("gun_audio_fix"):
         out.append(FileEdit("gun_audio_fix", rsegunaudio.SELECT, "",
                             {"enable": True},
