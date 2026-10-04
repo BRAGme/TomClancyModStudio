@@ -70,6 +70,25 @@ If it never breaks, the hang is **not** this bug, and the next question is which
 load step died — see §4.
 
 
+## 3a. Result, 2026-10-04: it never fires
+
+Run on `JS_GR_M01_planes_packed.iso` into CP01, execute breakpoint at
+`0x00501F4C` on the R5900 tab. **The breakpoint was never hit.** The VIF
+assertion (`FQC = 0 on VIF FIFO READ`) came up first and the load never
+reached a failed texture open.
+
+**So the texture-manager lock leak is NOT the cause of this hang**, even
+though the savestate fingerprint matched it -- `icons_interface` resident, the
+manager's vtable on the main thread's stack, the list ending at
+`pda_counterparts`. That fingerprint is necessary but not sufficient: a load
+that stops early leaves the manager mid-sequence whatever the reason, so it
+looks like the leak without being it. Treat §19b's signature as suggestive, not
+diagnostic, and confirm with this breakpoint before acting on it.
+
+The dialog's `Retry` ("break to debugger") did not give a usable break either --
+the emulator closed instead. `Abort` loses the state. That leaves `Ignore`, and
+the open question of whether the assertion is survivable.
+
 ## 4. If `0x00501F4C` never fires
 
 Add an execute breakpoint at `0x00501EC0` instead and read `$a1` at each hit to
