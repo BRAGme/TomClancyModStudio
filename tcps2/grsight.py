@@ -31,6 +31,34 @@ online/offline overlays). The routines were run in an interpreter at the real
 call sites against stubbed engine calls (every difficulty, hostile / allied,
 each weapon type, null looker, register and stack preservation), and the
 draw constant through the whole UpdateGlobalDistance. Not yet played.
+
+  * squad sight: the players' AI teammates never get a
+    difficulty factor -- their cap is the live spotting distance itself
+    (SimulationMgr+0x704 through vt+0x14C, the getter grhuspot scales), the
+    same number that caps the enemy. So with the enemy multiplier on, an enemy
+    sees a Ghost that Ghost cannot see back. The call right after that fetch in
+    CheckLineOfSight (JS 0x003D422C `jal IIkeRulesMgr::Get`, whose delay slot
+    has just set f20 = the distance) goes through a routine that multiplies
+    f20 by K when the looker is an AI-controlled (SimHuman+0x138 == 1) soldier
+    who is not hostile (SimHuman::IsEnemy), then tail-jumps to the getter.
+    Everything later in the test (acuity, facing, light, foliage, the line
+    trace) still applies; players, vehicles and every hostile keep stock.
+    Routine at a fixed spot in the same cave (CAVE + 0x100). Interpreter-run
+    on four savestates: the hooked stretch gives K x the distance for every
+    friendly AI looker and the stock number for every hostile and player,
+    registers kept; the whole CheckLineOfSight for a Ghost facing an enemy
+    53 m away (co-op host) stops at the cap in stock and reaches the line
+    trace at x1.5. Not yet played.
+    Ghost Recon: the same call at 0x003F4380, with the cap in f22 (the
+    getter is vt+0x13C). The routine sits in the dead 24-word RSArray
+    destructor at 0x001397D0, one of the family grawareness uses. It was run
+    the same way on four GR savestates (1458AB4E.01, 3D55F8ED.01, 3E571E95.01
+    and .08) at x1.5, plus x3 on the first two and x1.25 on 3D55F8ED.01. All
+    26 friendly AI lookers got K x the stock cap (66.7-200 m). All 106
+    hostiles and 4 players kept the stock cap, and registers were kept.
+    For a squad member facing an enemy 123.6 m away (cap 120 m), the whole
+    CheckLineOfSight stops at the cap in stock (ControllerHasNoSight). At x1.5
+    it passes the cap and calls FindLineCollision. Not yet played.
 """
 
 from __future__ import annotations
@@ -49,6 +77,9 @@ GAMES = {
         DELAY_STOCK=0x70402628,                      # move a0, v0 (move128 form)
         PREC_HOOK=0x001B1900, PREC_STOCK=0x0C0F7214, # CalculateTargetPoint: 1st jal IsEnemy
         DRAW=(0x003A11A8, 0x003A1258),               # lui v0, 80.0 per viewport
+        # squad sight: delay slot `mov.s f22, f0`; routine in a dead RSArray destructor
+        SQ_HOOK=0x003F4380, SQ_STOCK=0x0C0D7F48, RULESGET=0x0035FD20,
+        SQ_CAVE=0x001397D0, SQ_END=0x00139830, ISSIM=0x25C, DIST="f22",
     ),
     "js": dict(
         CAVE=0x00180CD0, CAVE_END=0x00180F08,        # twin of GR sceLseek64, unreferenced
@@ -60,6 +91,10 @@ GAMES = {
         DELAY_STOCK=0x0040202D,                      # move a0, v0 (daddu form)
         PREC_HOOK=0x001AEF00, PREC_STOCK=0x0C0EF014,
         DRAW=(0x00380014, 0x003800C8),
+        # squad sight: CheckLineOfSight's `jal IIkeRulesMgr::Get` right after the
+        # spotting-distance fetch (delay slot `mov.s f20, f0`)
+        SQ_HOOK=0x003D422C, SQ_STOCK=0x0C049184, RULESGET=0x00124610,
+        SQ_CAVE=0x00180DD0, ISSIM=0x260, DIST="f20", # SimHuman vt+0x260 IsSimHuman
     ),
 }
 DRAW_STOCK = 0x3C0242A0                              # lui v0, 0x42a0 (80.0)
@@ -119,7 +154,38 @@ out:
     addiu sp, sp, 16
 """
 
+# AI teammates (and allied soldiers) -- s4 = the looker; DIST (JS f20, GR f22) = the
+# spotting distance, set by the replaced call's delay slot
+SQUAD_SRC = """
+squad:
+    addiu sp, sp, -16
+    sd    ra, 0(sp)
+    beqz  s4, done
+    nop
+    lw    t9, 0(s4)
+    lw    t9, {issim}(t9)       ; IsSimHuman
+    jalr  t9
+    move  a0, s4
+    beqz  v0, done
+    nop
+    lw    v0, 0x138(s4)         ; control type: 1 = AI (0 local player, 2 network)
+    addiu v0, v0, -1
+    bnez  v0, done
+    nop
+    jal   {isenemy}             ; SimHuman::IsEnemy(looker)
+    move  a0, s4
+    bnez  v0, done              ; hostiles: the difficulty-factor routine's job
+    lui   v1, {ksq}
+    mtc1  v1, f1
+    mul.s {dist}, {dist}, f1  ; friendly AI: spotting distance x K
+done:
+    ld    ra, 0(sp)
+    j     {rulesget}            ; the replaced IIkeRulesMgr::Get; returns to CheckLineOfSight
+    addiu sp, sp, 16
+"""
+
 KALL = {"1": 0x3F80, "1.25": 0x3FA0, "1.5": 0x3FC0, "2": 0x4000, "3": 0x4040}
+KSQ = {"1": 0x3F80, "1.25": 0x3FA0, "1.5": 0x3FC0, "2": 0x4000, "3": 0x4040}
 KSNP = {"1": 0x3F80, "1.5": 0x3FC0, "2": 0x4000, "3": 0x4040, "4": 0x4080}
 DRAW = {"80": 0x42A0, "120": 0x42F0, "160": 0x4320, "240": 0x4370}
 
@@ -142,6 +208,11 @@ _GR_CAVE_STOCK_HEX = (   # sceDevctl, 0x00418448..0x00418680
     "00000000 0C1046BC 0220202D 10000006 2402FFF5 0C1046C8 0220202D 0C1046BC"
     "0220202D 8FA20030 DFBF00D0 DFBE00C0 DFB700B0 DFB600A0 DFB50090 DFB40080"
     "DFB30070 DFB20060 DFB10050 DFB00040 03E00008 27BD00E0"
+)
+_GR_SQ_STOCK_HEX = (    # RSArray<P48RSArray<...RSBool>>::~RSArray, 0x001397D0..0x00139830
+    "27BDFFD0 FFBF0020 7FB10010 7FB00000 70808E28 1220000C 70A08628 8E240000"
+    "10800004 0010143C 0C040AF8 00000000 0010143C 0002143F 18400004 72201628"
+    "0C040B14 72202628 72201628 DFBF0020 7BB10010 7BB00000 03E00008 27BD0030"
 )
 _JS_CAVE_STOCK_HEX = (   # sceLseek64 twin, 0x00180CD0..0x00180F08
     "27BDFF40 FFB40080 FFB20060 00C0A02D FFB50090 00A0902D FFB10050 3C150061"
@@ -171,6 +242,7 @@ def _stock_words(base, hexwords):
 
 
 GR_STOCK = _stock_words(GAMES["gr"]["CAVE"], _GR_CAVE_STOCK_HEX)
+GR_STOCK.update(_stock_words(GAMES["gr"]["SQ_CAVE"], _GR_SQ_STOCK_HEX))
 JS_STOCK = _stock_words(GAMES["js"]["CAVE"], _JS_CAVE_STOCK_HEX)
 for _st, _g in ((GR_STOCK, GAMES["gr"]), (JS_STOCK, GAMES["js"])):
     for _va, _s, _off in _g["SITES"]:
@@ -179,13 +251,33 @@ for _st, _g in ((GR_STOCK, GAMES["gr"]), (JS_STOCK, GAMES["js"])):
     _st[_g["PREC_HOOK"]] = _g["PREC_STOCK"]
     for _va in _g["DRAW"]:
         _st[_va] = DRAW_STOCK
+    if "SQ_HOOK" in _g:
+        _st[_g["SQ_HOOK"]] = _g["SQ_STOCK"]
 
 
-def edits(game: str, kall: str = "1", ksnp: str = "1", prec: bool = False, draw: str = "80"):
+def squad_words(game: str, ksq: str):
+    g = GAMES[game]
+    w, _ = assemble(SQUAD_SRC.format(issim="%#x" % g["ISSIM"], isenemy="%#x" % g["ISENEMY"],
+                                     ksq="%#x" % KSQ[ksq], rulesget="%#x" % g["RULESGET"],
+                                     dist=g["DIST"]),
+                    g["SQ_CAVE"])
+    return w
+
+
+def edits(game: str, kall: str = "1", ksnp: str = "1", prec: bool = False, draw: str = "80",
+          ksq: str = "1"):
     """(va, value, stock, note)."""
     g = GAMES[game]
     st = GR_STOCK if game == "gr" else JS_STOCK
     out = []
+    if ksq != "1":
+        sw = squad_words(game, ksq)
+        if g["SQ_CAVE"] + 4 * len(sw) > g.get("SQ_END", g["CAVE_END"]):
+            raise ValueError("squad sight routine outgrows its cave")
+        out += [(g["SQ_CAVE"] + 4 * i, w, st[g["SQ_CAVE"] + 4 * i], "squad sight: routine")
+                for i, w in enumerate(sw)]
+        out.append((g["SQ_HOOK"], assemble("jal %#x" % g["SQ_CAVE"], g["SQ_HOOK"])[0][0],
+                    g["SQ_STOCK"], "squad sight: spotting distance through the routine"))
     if kall != "1" or ksnp != "1" or prec:
         sw, _ = assemble(SIGHT_SRC.format(isenemy="%#x" % g["ISENEMY"], cwmt="%#x" % g["CWMT"],
                                           kall="%#x" % KALL[kall], ksnp="%#x" % KSNP[ksnp]),
@@ -196,7 +288,8 @@ def edits(game: str, kall: str = "1", ksnp: str = "1", prec: bool = False, draw:
             pw, _ = assemble(PREC_SRC.format(isenemy="%#x" % g["ISENEMY"], cwmt="%#x" % g["CWMT"]),
                              prec_va)
             words += pw
-        if g["CAVE"] + 4 * len(words) > g["CAVE_END"]:
+        if g["CAVE"] + 4 * len(words) > (g["SQ_CAVE"] if g["CAVE"] < g["SQ_CAVE"] < g["CAVE_END"]
+                                         else g["CAVE_END"]):
             raise ValueError("sight routines outgrow their cave")
         out += [(g["CAVE"] + 4 * i, w, st[g["CAVE"] + 4 * i],
                  "sightlines: routine" if i < len(sw) else "sightlines: sniper precision")
@@ -219,12 +312,14 @@ def edits(game: str, kall: str = "1", ksnp: str = "1", prec: bool = False, draw:
 
 def gr_edits(v: dict):
     return edits("gr", v.get("gr_enemy_sight_mult", "1"), v.get("gr_sniper_sight", "1"),
-                 bool(v.get("gr_sniper_precision")), v.get("gr_soldier_draw", "80"))
+                 bool(v.get("gr_sniper_precision")), v.get("gr_soldier_draw", "80"),
+                 v.get("gr_squad_sight_mult", "1"))
 
 
 def js_edits(v: dict):
     return edits("js", v.get("js_enemy_sight_mult", "1"), v.get("js_sniper_sight", "1"),
-                 bool(v.get("js_sniper_precision")), v.get("js_soldier_draw", "80"))
+                 bool(v.get("js_sniper_precision")), v.get("js_soldier_draw", "80"),
+                 v.get("js_squad_sight_mult", "1"))
 
 
 def selftest(gr_elf: bytes, js_elf: bytes):
@@ -235,7 +330,7 @@ def selftest(gr_elf: bytes, js_elf: bytes):
             off = va - 0x100000 + d
             if int.from_bytes(elf[off:off + 4], "little") != w:
                 bad.append("%s %08X" % (game, va))
-        e = edits(game, "3", "4", True, "240")
+        e = edits(game, "3", "4", True, "240", "3")
         if len({va for va, *_ in e}) != len(e):
             bad.append("%s duplicate VA" % game)
         if any(va not in st for va, *_ in e):

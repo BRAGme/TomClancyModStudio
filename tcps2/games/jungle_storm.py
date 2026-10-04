@@ -26,7 +26,10 @@ from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grextras, grhitblur, grshrapnel, grsight, grsquad,
                grdeathmusic, grfrag, grhu, grhuspot, grpierce, grselcopy, grsmoke, grsplat, grsuppress,
-               grtotalwar, grtrigger, grsprint, grshotgun, grshotsound, grlan)
+               grtotalwar, grtrigger, grsprint, grshotgun, grshotsound, grlan, grcooplabel,
+               grcooporders, grobserver, grcoopctl, grsprintspeed, grlanmenu, grcoophandicap,
+               grawareness, grtactics, grgunfar, grcoophud, grcombatmusic, gralarm, grsidearm,
+               grzoomhold)
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
 from . import rseweapons, rstuning
@@ -91,6 +94,7 @@ STOCK.update(grtotalwar.JS_STOCK)
 # Four in-place sites. The cave's own stock words are already recorded
 # by grsquad, which owns the whole lzo block grsprint rents a hole in.
 STOCK.update(grsprint.JS_STOCK)
+STOCK.update(grsprintspeed.JS_STOCK)
 STOCK.update(grsight.JS_STOCK)
 STOCK.update(grtrigger.JS_STOCK)
 STOCK.update(grsplat.JS_STOCK)
@@ -98,9 +102,23 @@ STOCK.update(grhuspot.JS_STOCK)
 STOCK.update(grfrag.JS_STOCK)
 STOCK.update(grpierce.JS_STOCK)
 STOCK.update(grdeathmusic.JS_STOCK)
+STOCK.update(grlan.JS_STOCK)
+STOCK.update(grcooplabel.JS_STOCK)
+STOCK.update(grcooporders.JS_STOCK)
+STOCK.update(grcoopctl.JS_STOCK)
+STOCK.update(grlanmenu.JS_STOCK)
+STOCK.update(grcoophandicap.JS_STOCK)
+STOCK.update(grawareness.JS_STOCK)
+STOCK.update(grtactics.JS_STOCK)
+STOCK.update(grgunfar.JS_STOCK)
+STOCK.update(grcoophud.JS_STOCK)
 STOCK.update(grsuppress.JS_STOCK)
 STOCK.update(grselcopy.JS_STOCK)
+STOCK.update(grobserver.JS_STOCK)
 STOCK.update(grsmoke.JS_STOCK)
+STOCK.update(grcombatmusic.JS_STOCK)
+STOCK.update(grsidearm.JS_STOCK)
+STOCK.update(grzoomhold.JS_STOCK)
 
 # "perm" loads 0x7F7F0000 (3.39e38 s): spawn + life never overflows or expires,
 # so a hole goes only when the ring reuses its slot -- Render never fades them
@@ -308,6 +326,39 @@ def _settings():
                      "This stops the exemption.",
                 caution="Never played. What an enemy does once dry is "
                         "untested."),
+        Setting("js_enemy_pistols", "Enemies carry a pistol", BOOL, False, "Enemies",
+                confidence="experimental",
+                help="No enemy in Jungle Storm carries a sidearm: every hostile kit is a rifle, "
+                     "machine gun or sniper rifle, with grenades, a cigarette or a beer can at most. "
+                     "This adds an M9 with two magazines to 17 of the 18 kits enemies use (not the "
+                     "AK-47-only kit of eight soldiers in J02 and J06, which has no room for it), and "
+                     "lets the game hand a kit's third slot to the soldier (it passed on two). On its "
+                     "own it only matters when an enemy's rifle is out of rounds -- with 'Enemies can "
+                     "run out of magazines' -- and he draws the pistol instead of standing there with "
+                     "an empty rifle. 'Enemies draw their pistol up close' adds the rest.",
+                caution="Never played. The pistol shot is heard only when the level has the M9's "
+                        "sound bank: it does whenever a Ghost carries an M9 or M9 SD; otherwise it "
+                        "takes one of the level's 11 weapon-bank places, and with all 11 taken the "
+                        "enemy pistol is silent. Online co-op: the host's disc builds every soldier's "
+                        "inventory and sends it to the joiner; put it on both discs."),
+        Setting("js_enemy_sidearm", "Enemies draw their pistol up close", CHOICE, "off",
+                "Enemies", confidence="experimental", requires={"js_enemy_pistols": True},
+                choices=[
+                    Choice("off", "Never", "Only when the rifle is out of rounds."),
+                    Choice("25", "1 in 4", ""),
+                    Choice("50", "1 in 2", ""),
+                    Choice("75", "3 in 4", ""),
+                    Choice("100", "Always", ""),
+                ],
+                help="An enemy whose rifle magazine runs empty while you are within 12 m and in his "
+                     "sight draws his pistol instead of reloading, on this chance (rolled once per "
+                     "empty magazine; if it fails he reloads as before). With you within 4 m he may "
+                     "draw it even with rounds left, on the same chance (decided once per soldier "
+                     "and target). He keeps the pistol while he has seen you in the last 5 s and you "
+                     "are within 24 m, then goes back to his rifle and reloads it. Snipers too. The "
+                     "switch is the game's own weapon change -- the same one an enemy makes to throw "
+                     "a grenade -- so in online co-op the joiner sees it.",
+                caution="Never played."),
         Setting("js_enemy_grenades", "Enemies throw grenades",
                 BOOL, False, "Enemies", confidence="experimental",
                 help="Ghost Recon's soldiers decide under suppressive fire "
@@ -316,10 +367,12 @@ def _settings():
                      "enemies only ever throw while investigating a spot 20-30 "
                      "m away. This puts Ghost Recon's decision back, with the "
                      "rules of Ghost Recon's 'throw more readily' option: "
-                     "indoors too, 10-35 m (75 m with a launcher). Asked every "
-                     "time a soldier would lay down suppressive fire, on one "
-                     "engagement in three, and one time in two when he loses "
-                     "sight of you (you went behind cover, where the fighting "
+                     "indoors too, from 10 m out to the 'Enemy grenade throw "
+                     "distance' (75 m with a launcher). Asked when a soldier "
+                     "would lay down suppressive fire, when he starts an "
+                     "engagement and when he loses sight of you, as often as "
+                     "'How often enemies throw grenades' says (when he loses "
+                     "sight of you, you went behind cover, where the fighting "
                      "is close: engagements themselves start 50-150 m out, "
                      "beyond a throw). A throw also needs only 4 m of clear arc "
                      "instead of 10 m, which the jungle almost never gave. The "
@@ -332,7 +385,9 @@ def _settings():
                         "295 engagement starts and no throw, all at 50-270 m; "
                         "the loss-of-sight ask is new since. A grenade may "
                         "bounce off foliage beyond the first 4 m. No enemy in "
-                        "that savestate carried a grenade launcher."),
+                        "that savestate carried a grenade launcher. Throw "
+                        "distance and aim changed 2026-09-29; never played "
+                        "since."),
         Setting("js_enemy_suppress", "Enemies suppress when they lose sight of you",
                 BOOL, False, "Enemies", confidence="experimental",
                 help="Jungle Storm's soldiers seldom lay down suppressive fire: "
@@ -346,6 +401,72 @@ def _settings():
                      "suppression. Your AI teammates do it too.",
                 caution="Never played. More suppressive fire means more "
                         "ammunition spent; soldiers may run dry sooner."),
+        Setting("js_enemy_frag_range", "Enemy grenade throw distance", CHOICE, "50", "Enemies",
+                confidence="experimental", requires={"js_enemy_grenades": True},
+                choices=[
+                    Choice("35", "Up to 35 m (the game's own throw)",
+                           "25 m/s, as the game throws. Aimed for the drag the grenade "
+                           "really flies with; that speed tops out at about 36 m."),
+                    Choice("50", "Up to 50 m",
+                           "Past 30 m an AI soldier throws at 32 m/s (reaches about 53 m)."),
+                    Choice("60", "Up to 60 m",
+                           "Past 30 m an AI soldier throws at 36 m/s (reaches about 63 m)."),
+                ],
+                help="How far away a soldier will throw a hand grenade (a grenade "
+                     "launcher still fires out to 75 m). The game aims a throw as if "
+                     "there were no air, but the grenade flies with drag: a throw at a "
+                     "man 35 m away came down about 30 m out, and no throw went past "
+                     "about 36 m. With 'Enemies throw grenades' on, the AI aims for the "
+                     "drag, so the grenade passes through the man it was thrown at. "
+                     "Beyond 30 m an AI soldier throws harder than the game's arm; "
+                     "nearer, he throws as the game does. Your own throws never change. "
+                     "Your AI teammates' throws get the same aim and arm.",
+                caution="Never played. Checked in the interpreter on the online host's "
+                        "savestates: the aim, the throw speed, and the flight worked out "
+                        "with the game's own drag and gravity."),
+        Setting("js_enemy_frag_chance", "How often enemies throw grenades", CHOICE, "normal",
+                "Enemies", confidence="experimental", requires={"js_enemy_grenades": True},
+                choices=[
+                    Choice("low", "Less often",
+                           "Loses sight of you: 1 in 4. Starts an engagement: 1 in 6. "
+                           "Under suppressive fire: 1 in 2."),
+                    Choice("normal", "Normal",
+                           "Loses sight of you: 1 in 2. Starts an engagement: 1 in 3. "
+                           "Under suppressive fire: always."),
+                    Choice("high", "More often",
+                           "Loses sight of you: 3 in 4. Starts an engagement: 2 in 3. "
+                           "Under suppressive fire: always."),
+                    Choice("max", "Every chance", "Every time any of the three comes up."),
+                ],
+                help="The rolls behind 'Enemies throw grenades'. With 'Enemies suppress' "
+                     "on, a soldier whose sight-lost roll fails may suppress the spot, and "
+                     "suppressive fire asks again: on 'Normal' that makes up to 3 in 4 when "
+                     "he loses sight of you. Every choice still needs you inside the throw "
+                     "distance, no friendly of his within 15 m of you, and 30 s since his "
+                     "fireteam's last grenade."),
+        Setting("js_ai_advance", "Enemies close in on a firefight", CHOICE, "stock", "Enemies",
+                confidence="experimental",
+                choices=[Choice("stock", "Stock", "Advance on 1 re-plan in 2/3/4 (Recruit/Veteran/Elite), only under 75 m."),
+                         Choice("more", "More", "2 in 3 / 1 in 2 / 2 in 5, within 150 m."),
+                         Choice("aggressive", "Aggressive", "3 in 4 / 3 in 5 / 1 in 2, within 300 m.")],
+                help="An enemy team in a firefight re-plans every 2-5 s. In stock a soldier advances only on a lucky "
+                     "roll and only under 75 m; after his one run for cover he just stands. Savestates showed whole "
+                     "teams 80-210 m from the fight doing nothing. This lets them close in on where you were last "
+                     "reported, 15 m at a time with the game's own bounding move, stopping to fight when they see you. "
+                     "A soldier already advancing is not given a second advance on top. Your AI teammates are unchanged.",
+                caution="Never played. More moving enemies means harder fights and more AI work per frame; watch the "
+                        "frame rate on Aggressive. Online, only the host's disc counts."),
+        Setting("js_ai_flank", "Advancing enemies come at you from both sides", BOOL, False, "Enemies",
+                confidence="experimental",
+                help="Advancing enemies aim 8 m to one side of your position, alternating sides across the team, so "
+                     "pairs come from two directions. Only where there is walkable ground beside you; otherwise straight.",
+                caution="Never played. Jungle Storm's walkable ground is mostly trails, so this often has no room "
+                        "(about 4 soldiers in 10 in the tested fights)."),
+        Setting("js_ai_hold_cover", "Idle enemies in a firefight take a firing position", BOOL, False, "Enemies",
+                confidence="experimental",
+                help="An enemy with nothing to do in a firefight (his one run for cover used) crouches, faces you, "
+                     "peeks and fires at what is in his arc instead of standing in the open, until he is told to advance.",
+                caution="Never played. They may spend more ammunition on suppressive fire."),
         Setting("js_enemy_sight_all", "Enemies see at full strength on "
                 "every difficulty", BOOL, False, "Enemies",
                 confidence="experimental",
@@ -390,6 +511,18 @@ def _settings():
                      "bullets fly about 500 m.",
                 caution="Never played. Draw distance matters even more here; "
                         "foliage still blocks sight (each layer cuts 40%)."),
+        Setting("js_squad_sight_mult", "How far your AI teammates can see (multiplier)", CHOICE, "1", "Enemies",
+                confidence="experimental",
+                choices=[Choice("1", "Stock", ""), Choice("1.25", "x1.25", ""),
+                         Choice("1.5", "x1.5", "Matches enemy x1.5 at full strength."),
+                         Choice("2", "x2", ""), Choice("3", "x3", "")],
+                help="Your AI teammates' sight has the same hard cap as the enemy's: the level's spotting "
+                     "distance (they get no difficulty factor). Facing, light, scope and foliage only matter "
+                     "inside it. The enemy options above raise only the enemy's cap -- with them on, an enemy "
+                     "can see a Ghost who cannot see him back. This multiplies the cap for AI soldiers on your "
+                     "side (your squad and allied soldiers); players and every enemy are unchanged.",
+                caution="Never played. Your squad may open fire from farther away and give away its position "
+                        "sooner. Online co-op: only the host's disc counts."),
         Setting("js_sniper_precision", "Enemy snipers lose the built-in miss",
                 BOOL, False, "Enemies", confidence="experimental",
                 help="Every enemy's aim point carries a deliberate 0.10-0.25 m "
@@ -466,6 +599,30 @@ def _settings():
                         "extra soldier: the big missions keep only 2.6-3.0 MB free: x2 adds 1.2-1.5 MB, x3 and up 2.3-4.2 MB -- use the 128 MB option for x3 and up. Frame rate drops with the "
                         "number of soldiers. Vehicle crews' extra members "
                         "stay on foot."),
+        Setting("js_tw_enemies_plus", "Extra enemies per team", CHOICE, "0", "Total War",
+                confidence="experimental",
+                choices=[
+                    Choice("0", "Off (as shipped)", ""),
+                    Choice("1", "+1", "One more soldier in every enemy team. With x2: a lone "
+                                      "sentry becomes 3, a pair 5, three or more 6."),
+                    Choice("2", "+2", "Two more in every enemy team. With x2: a lone sentry "
+                                      "becomes 4, a pair or more 6."),
+                ],
+                help="Adds soldiers to every enemy team after 'Enemy followers' has made "
+                     "its copies, or on its own with that option off (+1 then turns a lone "
+                     "sentry into a pair). The extra soldiers are copies of the team's "
+                     "leader -- strictly, of the first soldier the mission places on every "
+                     "difficulty the team appears on, so the team gets them on whatever "
+                     "difficulty you play. Same rules as Enemy followers: no team grows "
+                     "past 6, soldiers a script keeps hidden are never copied, copies "
+                     "stand 1 m from their original (or on its spot where there is no "
+                     "floor) and are plain soldiers named 'TW'. Online, both consoles must "
+                     "run discs built with the same value.",
+                caution="Never played; checked in an interpreter on every mission. x2 +1 "
+                        "is about as many soldiers as x3, x2 +2 as x4. Memory: the host is "
+                        "the tight console -- at x2 the busiest co-op map tested kept "
+                        "1.4-2.0 MB free on the host and +1 adds about 25 soldiers there "
+                        "(roughly 0.6-1.0 MB). Frame rate drops with the number of soldiers."),
         Setting("js_tw_allies", "More AI teammates", CHOICE, "1", "Total War",
                 confidence="verified",
                 choices=[
@@ -495,15 +652,20 @@ def _settings():
                         "SELECT while dead may leave the death fade on until "
                         "the automatic hand-off's time (6 s)."),
         Setting("js_tw_heap128", "Use PCSX2's 128 MB of RAM", BOOL, False,
-                "Total War", confidence="verified",
+                "Total War", confidence="experimental",
                 help="The game keeps soldiers, textures and sounds in one "
                      "heap that ends at a fixed address near 32 MB, which is "
-                     "what limits the multipliers above. This moves the heap "
-                     "to 32 MB and gives it 95 MB, for PCSX2's 128 MB mode "
-                     "(Settings > Advanced > 'Enable 128MB RAM (Dev Console)').",
-                caution="Needs that PCSX2 setting: without it the game crashes "
-                        "the moment it starts. Never booted. Does not work on a "
-                        "real PS2."),
+                     "what limits the multipliers above. When PCSX2's 128 MB mode "
+                     "is on (Settings > Advanced > 'Enable 128MB RAM (Dev Console)'), "
+                     "this moves the heap to 32 MB and gives it 95 MB; when it is "
+                     "off, the game keeps its own heap, so the same disc boots "
+                     "either way. Online, the host runs every AI soldier and "
+                     "needs the room most: an online co-op host at x2 with +1 "
+                     "ran out of memory in the stock heap and froze.",
+                caution="The 95 MB heap played at x4 (G03). The check that "
+                        "picks the heap at boot is new: checked in an "
+                        "interpreter in both modes, not yet played. A console "
+                        "without 128 MB mode gets only the stock heap."),
         Setting("js_squad_death_music", "Death music when any of your squad falls",
                 BOOL, False, "World", confidence="experimental",
                 help="Jungle Storm plays one of its six death tracks only when "
@@ -513,6 +675,26 @@ def _settings():
                      "silent.",
                 caution="Never played. Each squad death starts a track, so "
                         "deaths close together restart it."),
+        Setting("js_combat_music_range", "Combat music for fights farther away", CHOICE, "stock", "World",
+                confidence="experimental",
+                choices=[Choice("stock", "Stock", "2 enemies within 50 m, or 1 known within 10 m."),
+                         Choice("1.5", "x1.5", "75 m / 15 m."),
+                         Choice("2", "x2", "100 m / 20 m."),
+                         Choice("3", "x3", "150 m / 30 m.")],
+                help="The action music starts only when you open fire while you can see an enemy AND 2 or more "
+                     "enemies are within 50 m of you (or the closest one your fireteam knows about is within 10 m, "
+                     "or you are zoomed in with a sniper rifle). Fights that start farther out never get it. This "
+                     "multiplies both distances.",
+                caution="Never played. Online, only the host's console plays combat music at all: the joining "
+                        "console has no AI, and the game's music code gives up without it."),
+        Setting("js_combat_music_engaged", "Combat music when your squad is engaged or you are under fire",
+                BOOL, False, "World", confidence="experimental",
+                help="Stock, only your own shots can start the action music. With this, any other soldier's burst "
+                     "does too -- an AI Ghost, player 2, your co-op partner or an enemy -- when he is within 50 m "
+                     "of you (times the multiplier above) and the closest opponent he knows about is within that "
+                     "distance of him. A track that is playing is never restarted; the next can start when it ends.",
+                caution="Never played. In split screen the music follows player 1: player 2's fights count only "
+                        "within that distance of player 1."),
         Setting("js_callouts", "Everyone calls out", BOOL, False, "World",
                 confidence="experimental",
                 help="Players' soldiers speak the team call-outs too. A player "
@@ -575,21 +757,36 @@ def _settings():
                      "surface -- glass, leaves and grass 100, wood and drywall "
                      "300, thin metal 1500, metal 2500, heavy wood 3500, thick "
                      "metal 12000, concrete 20000 -- each surface passed "
-                     "taking its cost off, up to 4. Ground, water, sand, "
+                     "taking its cost off, up to 6. Ground, water, sand, "
                      "floors and roofs always stop it. Every surface passed "
-                     "gets its bullet hole and sound; whoever is behind is hit "
-                     "as if nothing were in the way.",
-                caution="Never played. Damage is not reduced by what the round "
-                        "went through. The surface numbers are Ghost Recon's "
-                        "(from its debug information) and assumed the same in "
-                        "Jungle Storm; a number past Ghost Recon's 27 stops "
-                        "the round."),
+                     "gets its bullet hole and sound, a wall one on each side; "
+                     "whoever is behind is hit as if nothing were in the way.",
+                caution="Never played; checked in an interpreter on Jungle "
+                        "Storm savestates. Damage is not reduced by what the "
+                        "round went through. A wall thicker than half a metre, "
+                        "or with nothing behind it, can still swallow the "
+                        "round. The surface numbers are Ghost Recon's (from "
+                        "its debug information) and assumed the same in Jungle "
+                        "Storm; a number past Ghost Recon's 27 stops the round."),
         # L3 was left completely unbound by the game -- verified against
         # all three controller configurations -- so this steals nothing.
         # It is a walk/run switch, not a fourth gear: Jungle Storm has no
         # speed above running, and the numeric run factor the engine used
         # to multiply by is dead code in this build. See grsprint.
         grsprint.card("js_", "Controls"),
+        grsprintspeed.card("js_", "Controls"),
+        Setting("js_zoom_hold", "Zoom holds while you turn and move", BOOL, False,
+                "Controls", confidence="experimental",
+                help="Zoomed in, Jungle Storm drops you back to 1x the moment you "
+                     "run (a full push of the left stick, or an L3 sprint). Turning "
+                     "never dropped it. With this the zoom stays where you put it "
+                     "while you run, as on the Xbox, and the zoom click sound plays "
+                     "when you click the zoom on the run. Running still spreads "
+                     "your shots exactly as before (40 times standing still); zoomed "
+                     "in you just see it more, and the reticle still does not lock "
+                     "onto enemies while you run. Switching weapon or soldier and "
+                     "dying still go back to 1x. Both players in split screen.",
+                caution="Never played: run on savestate RAM in an interpreter only."),
         Setting("js_skip_dnas", "Online: skip the DNAS check", BOOL, False,
                 "Online", confidence="verified",
                 help="Choosing ONLINE loads Sony's DNAS.BIN, whose servers "
@@ -718,6 +915,16 @@ def _settings():
                         "left/right are peek and L3 has no binding, hence "
                         "SELECT. No order HUD in split screen: voice and hand "
                         "signals confirm."),
+        Setting("js_ss_select_aim", "SELECT takes the teammate you aim at", BOOL,
+                False, "Split Screen", confidence="experimental",
+                requires={"js_ss_orders": True},
+                help="With Team orders: point your crosshair at one of your own fireteam's Ghosts "
+                     "-- the one the HUD is naming -- and SELECT switches straight to him. Not "
+                     "aiming at one (nobody, an enemy, the other player or his fireteam, a dead "
+                     "man), SELECT switches to the next living Ghost as before. Death hand-offs "
+                     "are unchanged.",
+                caution="Checked in the RAM interpreter on two split-screen savestates, both "
+                        "players; never played."),
         Setting("js_ss_handoff", "One life: take over a teammate on death",
                 BOOL, False, "Split Screen", confidence="verified",
                 requires={"js_ss_fireteams": True},
@@ -736,8 +943,24 @@ def _settings():
                         "up (before, those left you on 'Player N: Dead' until "
                         "SELECT). Respawns are refused anyway, though the HUD "
                         "still shows the count. When a "
-                        "player's whole fireteam is down, that half of the "
-                        "screen stays dark until the mission fails."),
+                        "player's whole fireteam is down, the fade ends after "
+                        "about six seconds and that half stays on his body "
+                        "until the mission fails -- or follows the rest of the "
+                        "platoon with 'Observer when your fireteam is wiped "
+                        "out'."),
+        Setting("js_ss_observer", "Observer when your fireteam is wiped out", BOOL,
+                False, "Split Screen", confidence="experimental",
+                requires={"js_ss_handoff": True},
+                help="With One life, a player whose whole fireteam is down no longer "
+                     "stares at his own body: his half follows a living soldier of the "
+                     "platoon (the other player and every AI, in squad order) and reads "
+                     "'Player N : OBSERVER MODE'. X (square too) moves on to the next "
+                     "living soldier; when the one you watch goes down the view moves on "
+                     "by itself. The other player's half and controls are untouched.",
+                caution="Checked in the RAM interpreter on eight split-screen savestates; "
+                        "never played. While you watch the other player in first person, "
+                        "his third-person shots may aim from his eye. With Team orders, "
+                        "SELECT jumps back to the first soldier after you."),
 
         Setting("js_fps", "Frame rate", CHOICE, "stock", "World",
                 confidence="verified",
@@ -779,8 +1002,12 @@ def _settings():
                      "after a cutscene, with the reticle, zoom panel and "
                      "action menu shown. The camera sweeps from your eye like "
                      "the stock one, so walls pull it in, and it stays 0.25 m "
-                     "above the floor. Every shot starts on the camera's "
-                     "centre line, so rounds go where the reticle is. Zooming "
+                     "above the floor. Rounds still leave your soldier's eye, "
+                     "as in first person, and fly to the point under the "
+                     "reticle -- whatever the camera's centre line meets "
+                     "first: a wall, the ground or a soldier -- so they land "
+                     "on the reticle, and cover in front of your soldier "
+                     "stops them even when the camera sees over it. Zooming "
                      "stays in third person (the zoom narrows the view), "
                      "except a sniper rifle: its scope uses first person "
                      "from the start of the zoom until it has zoomed back "
@@ -800,10 +1027,12 @@ def _settings():
                         "toggles the view, so "
                         "this is third person all the time except when "
                         "on a mounted gun. The sweep ignores characters: the camera can "
-                        "sit inside a teammate standing behind you. Shots "
-                        "start up to 0.5 m from your eye, so you can fire "
-                        "past cover your eye is behind -- the AI still sees "
-                        "you where you are. Spectators also get the HUD. The aiming pose and your "
+                        "sit inside a teammate standing behind you. Behind "
+                        "cover the camera sees over, your rounds hit the "
+                        "cover: lean or stand to fire over it. A teammate at "
+                        "your shoulder that the centre line passes can take "
+                        "rounds meant for the reticle; aiming at the reticle "
+                        "point (2026-09-29) is not yet played. Spectators also get the HUD. The aiming pose and your "
                         "muzzle flash (2026-09-28) are not yet played."),
         Setting("js_smooth_anim", "Distant soldiers animate smoothly", BOOL, False,
                 "World", confidence="experimental",
@@ -844,14 +1073,71 @@ def _settings():
                 help="How far behind your eye the camera sits (walls still "
                      "pull it in). The centred camera is 2.75 m by default, "
                      "the shoulder cameras 2.25 m."),
-        Setting("js_tp_aim_eye", "Third person: shots start from the eye",
+        Setting("js_tp_smooth", "Third person: camera handles trees and slopes", BOOL, True, "World",
+                confidence="experimental",
+                requires={"js_tp_camera": ("centered", "ots", "ots_left")},
+                help="When the camera has to come in near scenery, it now comes in along the line from your "
+                     "soldier's eye, so he stays where he was on screen and just gets bigger instead of "
+                     "sliding to the bottom edge; on ground rising behind him it comes in rather than up. "
+                     "Anything between his eye and the camera that a bullet would hit -- a tree trunk, a "
+                     "rock, a vehicle -- brings the camera in front of it (other soldiers and leaves don't). "
+                     "After being pulled in it waits 0.3 s, then glides back out over about half a second "
+                     "instead of jumping.",
+                caution="Checked in an interpreter on savestates, not yet played. One extra short line "
+                        "trace a frame per third-person view."),
+        Setting("js_tp_aim_eye", "Third person: shots parallel to the view",
                 BOOL, False, "World", confidence="experimental",
                 requires={"js_tp_camera": ("centered", "ots", "ots_left")},
-                help="Keeps every free shot starting at the soldier's eye, as "
-                     "in stock, instead of on the camera's line. Nothing "
-                     "can be shot around cover, but rounds land a fixed "
-                     "0.2-0.5 m below and beside the reticle. Locked-on shots "
-                     "stay exact either way."),
+                help="Sends every free shot straight along your look from "
+                     "the eye, instead of turning it onto the point under the "
+                     "reticle. Rounds land a fixed 0.2-0.5 m below and beside "
+                     "the reticle at any range. Locked-on shots aim at their "
+                     "target from the eye either way."),
+        Setting("js_tp_blocked", "Third person: show when cover blocks your shot", BOOL, False,
+                "World", confidence="experimental",
+                requires={"js_tp_camera": ("centered", "ots", "ots_left")},
+                help="Your rounds leave your soldier's eye and fly to the point under the "
+                     "reticle, so cover in front of him stops them even when the camera sees "
+                     "over it. With this on, whenever something between his eye and that point "
+                     "would stop the round -- a hill crest, a wall, a car, a teammate -- the "
+                     "reticle turns amber and moves to where the round would actually hit. If "
+                     "that spot is off screen, the amber reticle stays in the middle. Needs "
+                     "'Third person: shots parallel to the view' off.",
+                caution="The moving reticle is checked in an interpreter on savestates, not yet "
+                        "played (the first version, a small amber mark beside an amber reticle, "
+                        "was played 2026-09-29). One extra line trace a frame per third-person "
+                        "view (what one fired round costs); the reticle follows the view one "
+                        "frame late. Jungle Storm only."),
+        Setting("js_gun_far", "How far gunshots carry", CHOICE, "stock", "World", touches="data",
+                confidence="experimental",
+                choices=[Choice("stock", "Stock", "Rifles fade to silence by 110 m; machine guns, snipers and launchers by 200 m."),
+                         Choice("1.5", "1.5x", "Rifles to 165 m."),
+                         Choice("2", "2x", "Rifles to 220 m: a fight 100 m away at about -5 dB."),
+                         Choice("3", "3x", "Rifles to 330 m: 100 m is barely quieter than 25 m.")],
+                help="A gunshot fades in a straight line from full volume at 5 m to nothing at its range, and "
+                     "the game drops it beyond. This stretches the range of every unsuppressed gun, launcher and "
+                     "tank gun; anything within 25 m sounds as before. Silenced weapons (SOCOM M4, silenced M9, "
+                     "MP5SD, SR-25 SD), reloads, casings, whizzes and impacts are unchanged. In online co-op both "
+                     "discs need it.",
+                caution="Never played. More distant guns use more of the game's 48 sound channels."),
+        Setting("js_alarm_tame", "Whisper Shadow's alarm at the other missions' level", BOOL, False, "World",
+                confidence="experimental",
+                help="Whisper Shadow (J07) sounds its siren from four speakers at once, 2 s into the mission, "
+                     "each looping for about three minutes; Ocelot Desert (J03), the only other mission with "
+                     "it, uses one speaker for 15 s. Four in step are 6-11 dB louder than one. This plays each "
+                     "of Whisper Shadow's four at a quarter volume (-12 dB) for 15 s, so together they are "
+                     "never louder than one siren up close, and they stop after about six wails. Other "
+                     "missions are untouched.",
+                caution="Never played. Mission data only (Whisper Shadow's script).", touches="data"),
+        Setting("js_room_sound", "Hear gunfire through walls", BOOL, False, "World", confidence="experimental",
+                help="The game silences any sound on the other side of a wall: a man firing inside a hut is not "
+                     "heard 3 m outside it. Now a gunshot with a clear line to you -- an open doorway, a window -- "
+                     "plays at full volume, and one behind a wall is muffled by distance: full volume within 3 m, "
+                     "down to 40 % (the game's own muffle) by 10 m, fading and cut off at its normal range as usual. "
+                     "Also clears a leftover muffle that kept some enemies at 40 % on open ground. Footsteps and "
+                     "impacts behind a wall get the same fade. Single player and online (split screen never blocked "
+                     "sounds); in online co-op both discs need it.",
+                caution="Never played."),
         Setting("js_extra_cameras", "Unlock the chase and ghost cameras", BOOL,
                 False, "World", confidence="experimental",
                 help="The camera cycle wraps at 3 of the 5 modes the engine "
@@ -908,8 +1194,8 @@ def _settings():
                 help="When a soldier runs for cover (the game's own "
                      "RunForCover: an open fight, a hold or suppress order, "
                      "dodging a grenade) and his threat is 12-90 m away, "
-                     "one time in two he first throws a smoke grenade 10 m "
-                     "toward it, then runs. He must carry grenades (any "
+                     "he may first throw a smoke grenade ('How often the AI "
+                     "throws smoke', 1 in 2 by default) 10 m toward it, then runs. He must carry grenades (any "
                      "kit's frags do: the throw comes out as smoke) and no "
                      "grenade launcher, and his fireteam must not have used "
                      "a grenade in the last 30 s. Across the whole mission "
@@ -918,6 +1204,20 @@ def _settings():
                      "a lot of particles). A smoke throw ignores the check "
                      "for branches in its first metres. Needs 'Smoke "
                      "grenades'."),
+        Setting("js_smoke_ai_chance", "How often the AI throws smoke", CHOICE, "2", "Weapons",
+                confidence="experimental",
+                requires={"js_smoke": True, "js_smoke_ai": ("squad", "enemies", "all")},
+                choices=[
+                    Choice("4", "1 in 4", ""),
+                    Choice("3", "1 in 3", ""),
+                    Choice("2", "1 in 2", ""),
+                    Choice("1", "Every time", ""),
+                ],
+                help="How often a soldier who runs for cover first throws smoke (see 'AI "
+                     "throws smoke'). The limits stay: at most one AI smoke every 15 s "
+                     "across the mission and none while 2 clouds are up. A smoke throw does "
+                     "not start his fireteam's 30 s grenade wait, so it never holds back a "
+                     "frag."),
         Setting("js_smoke_look", "Smoke grenade cloud", CHOICE, "round", "Weapons",
                 confidence="experimental",
                 choices=[
@@ -986,11 +1286,20 @@ def _settings():
                      "67-100 ms for most rifles) -- and it never looks at R1 "
                      "again while you hold it, so the gun stays silent until "
                      "you let go and press once more. This keeps the press "
-                     "for the players' own soldiers. Jungle Storm fires the first round at once, so a kept press is timed from the last shot instead: its first round leaves exactly one round's time after it, as if R1 had never been let go. The AI keeps the "
-                     "rule as shipped.",
-                caution="Never played. Semi-automatic and burst fire can be "
-                        "tapped as fast as the gun's own rate of fire, which "
-                        "the rule held to roughly half."),
+                     "for the players' own soldiers. Jungle Storm fires the "
+                     "first round at once, so a kept press is timed from the "
+                     "last shot instead: its first round leaves exactly one "
+                     "round's time after it, as if R1 had never been let go. "
+                     "On full auto a tap released before that round used to "
+                     "be thrown away (a quick tap after a burst, or rapid "
+                     "tapping, fired nothing); now it fires that one round as "
+                     "soon as the rate allows, then stops. The AI keeps the "
+                     "rules as shipped.",
+                caution="Played as the press-keeping version only; the "
+                        "released-tap fix is checked in an interpreter on a "
+                        "co-op savestate (a tap after a burst, rapid tapping, "
+                        "holds, semi-auto, the AI), not yet played. Online, "
+                        "each console runs it for its own soldier."),
         Setting("js_hu_all", "Heroes Unleashed (PS2): everything below", BOOL, False,
                 "Heroes Unleashed", confidence="experimental",
                 help="Heroes Unleashed is a PC realism mod for Ghost Recon. This "
@@ -1000,33 +1309,43 @@ def _settings():
                      "400-800 m draw distances, and the AI noticing dead bodies.",
                 caution="Never played as a set."),
         Setting("js_hu_spot", "Heroes Unleashed spotting distances", BOOL, False,
-                "Heroes Unleashed", confidence="verified",
-                help="How far enemies can notice you is capped by each level's "
-                     "spotting distance. The PS2 games ship the PC's own numbers "
+                "Heroes Unleashed", confidence="experimental",
+                help="How far enemies can notice you is capped by a spotting "
+                     "distance. The PS2 games ship the PC's own numbers "
                      "(40-125 m); Heroes Unleashed corrected them on every map, "
-                     "mostly to 150 m, a few dense ones to 45-100 m. This uses "
-                     "its number for every map it has, and the stock number "
-                     "x1.67 (its median change, at most 150 m) for maps it does "
-                     "not ship. The difficulty factor on top is unchanged, as "
-                     "on PC.",
-                caution="Played 2026-09-28: a save state showed G04 Train loading "
-                        "117 m (stock 70). The difficulty factor still cuts the "
-                        "enemy's share (your squad never had it): add 'Enemies see "
-                        "at full strength' for enemies that out-see your squad. Past "
-                        "80 m they can see you before the game draws them -- "
-                        "raise 'How far away soldiers are drawn' to match. "
-                        "Replaces the level-file spotting card on the maps it "
-                        "knows."),
+                     "mostly to 150 m, a few dense ones to 45-100 m. The "
+                     "distance the enemies actually use is the level's, or the "
+                     "mission's fog override, or whatever the mission script "
+                     "sets -- most co-op missions override it. This scales that "
+                     "live distance by HU's number over the level's own (the "
+                     "stock number x1.67 for maps HU does not ship): J02 70 -> "
+                     "117 m, J03 75 -> 112.5 m. The difficulty factor on top is "
+                     "unchanged, as on PC.",
+                caution="Not yet played in this form. The first version only "
+                        "changed the level file, which most missions override, "
+                        "so on J01-J03 and J05-J08 enemies kept the stock distance. "
+                        "Scripts that raise the distance now go past 150 m (C02 "
+                        "203 m, C07 233 m). The difficulty factor still cuts the "
+                        "enemy's share: add 'Enemies see at full strength' for "
+                        "enemies that out-see your squad. Past 80 m they can see "
+                        "you before the game draws them -- raise 'How far away "
+                        "soldiers are drawn' to match. Replaces the level-file "
+                        "spotting card while on."),
         Setting("js_hu_damage", "Heroes Unleashed damage model", BOOL, False,
                 "Heroes Unleashed", confidence="experimental",
-                help="Heroes Unleashed's hit model: every head hit kills, "
-                     "chest as stock, abdomen deadlier (300 vs 400), arms and "
-                     "legs survivable (1350 / 2050 / 900 / 1800 vs 700 / 1000 / "
-                     "500 / 800), armour stronger (0 / 400 / 750 / 950 vs 0 / "
-                     "150 / 350 / 750). Lower numbers mean deadlier hits.",
-                caution="Never played. It cuts both ways: your head is as "
-                        "fragile as theirs. Replaces 'How much punishment a "
-                        "body takes' while on."),
+                help="Heroes Unleashed's hit model. Jungle Storm ignores the "
+                     "body-part numbers in its data files and hard-codes them "
+                     "(head x8, torso x4, limbs x3, hands and feet x1), so this "
+                     "is code: each body part gets the game's own multiplier "
+                     "scaled by HU's factor -- head x16 (every head hit kills), "
+                     "chest x4, abdomen x5.3, arms x1.5, thighs x1.7, calves "
+                     "x1.3, hands and feet x0.5. A rifle hit on the arm or calf "
+                     "leaves an enemy standing; a thigh hit still drops him. "
+                     "Armour stays as the game reads it (vest and helmet), and "
+                     "level-1 armour keeps its vest.",
+                caution="Not yet played in this form. It cuts both ways: any "
+                        "head hit kills your squad too. Replaces 'How much "
+                        "punishment a body takes' while on."),
         Setting("js_hu_weapons", "Heroes Unleashed weapons", CHOICE, "off",
                 "Heroes Unleashed", confidence="experimental",
                 choices=[
@@ -1065,7 +1384,12 @@ def _settings():
                      "untouched.",
                 caution="Never played. Stacks with 'extra skill' and "
                         "marksmanship dials."),
-    ] + grlan.cards("js_", "Online") + rstuning.cards("js_")
+    ] + grlan.cards("js_", "Online") + grcooplabel.cards("js_", "Online") \
+      + grcooporders.cards("js_", "Online") + grcoopctl.cards("js_", "Online") \
+      + grlanmenu.cards("js_", "Online") + grcoophandicap.cards("js_", "Online") \
+      + grcoophud.cards("js_", "Online") \
+      + grawareness.cards("js_", "Enemies") \
+      + rstuning.cards("js_")
 
 
 STOCK[0x003BF6C0] = 0xC4207340  # lwc1 f0, 0x7340(at): 0.0225 s, the in-view update interval
@@ -1118,6 +1442,24 @@ def build_edits(v: dict) -> list:
 
     for va, value, stock, note in grlan.edits(v, "js_"):
         e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcooplabel.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcooporders.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcoopctl.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grlanmenu.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcoophandicap.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcoophud.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grawareness.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grtactics.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grgunfar.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
 
     if v.get("js_blood"):
         w(0x00247344, 0x24020001, "the Blood setting always answers yes")
@@ -1135,10 +1477,15 @@ def build_edits(v: dict) -> list:
             bullet_holes=bool(v.get("js_ss_bulletholes")),
             briefing=bool(v.get("js_ss_briefing")),
             teammates=bool(v.get("js_ss_teammates")),
-            orders=bool(v.get("js_ss_orders"))):
+            orders=bool(v.get("js_ss_orders")),
+            observer=grobserver.enabled(v),
+            select_aim=grcoopctl.ss_aim_enabled(v)):
         e.append(WordEdit(va, value, stock, note))
 
     for va, value, stock, note in grsprint.js_edits(v):
+        # its cave words carry no stock of their own: grsquad's table records them
+        e.append(WordEdit(va, value, STOCK[va] if stock is None else stock, note))
+    for va, value, stock, note in grsprintspeed.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grshrapnel.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
@@ -1168,7 +1515,15 @@ def build_edits(v: dict) -> list:
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grselcopy.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grobserver.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grsmoke.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcombatmusic.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grsidearm.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grzoomhold.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
 
     if v.get("js_smooth_anim"):
@@ -1309,6 +1664,9 @@ def build_data(v: dict) -> list:
     out += grsmoke.data_edits(v)
     out += grshotgun.data_edits(v)
     out += grshotsound.data_edits(v, "js_")
+    out += grgunfar.data_edits(v, "js_")
+    out += gralarm.data_edits(v, "js_")
+    out += grsidearm.data_edits(v, "js_")
     return out
 
 

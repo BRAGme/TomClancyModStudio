@@ -25,7 +25,9 @@ accordingly in the interface.
 from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grcontrols, grextras, grhitblur, grshrapnel,
-               grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger)
+               grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger,
+               grsprintspeed, grobserver, grdeathmusic, grcombatmusic, grawareness, grzoomhold,
+               grsmoke, grtactics, grsuppress, grfrag, grgunfar, grpierce)
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
 from . import rseweapons, rstuning
@@ -76,8 +78,20 @@ STOCK.update(grcallouts.GR_STOCK)
 STOCK.update(grtotalwar.GR_STOCK)
 STOCK.update(grsight.GR_STOCK)
 STOCK.update(grtrigger.GR_STOCK)
+STOCK.update(grdeathmusic.GR_STOCK)
+STOCK.update(grcombatmusic.GR_STOCK)
+STOCK.update(grawareness.GR_STOCK)
+STOCK.update(grzoomhold.GR_STOCK)
+STOCK.update(grsmoke.GR_STOCK)
+STOCK.update(grtactics.GR_STOCK)
+STOCK.update(grsuppress.GR_STOCK)
+STOCK.update(grfrag.GR_STOCK)
+STOCK.update(grpierce.GR_STOCK)
+STOCK.update(grgunfar.GR_STOCK)
 STOCK.update(grsplat.GR_STOCK)
 STOCK.update(grhuspot.GR_STOCK)
+STOCK.update(grsprintspeed.GR_STOCK)
+STOCK.update(grobserver.GR_STOCK)
 # blood: both blood handlers read BloodOn (IkeOptions+0xA3) themselves
 STOCK[0x00247B24] = 0x926300A3  # lbu v1, 0xa3(s3)   HandleBloodPoolEffect
 STOCK[0x00247D24] = 0x92A300A3  # lbu v1, 0xa3(s5)   HandleBloodyHumanEffect
@@ -197,14 +211,102 @@ def _settings():
                         "untested."),
         Setting("gr_enemy_grenades", "Enemies throw grenades more readily",
                 BOOL, False, "Enemies", confidence="experimental",
-                help="An enemy throws only when both rooms are outdoors, the "
-                     "target is 15-40 m away and a 75% roll passes. This "
-                     "allows indoor throws at 10-60 m every time the other "
-                     "checks pass; the check that keeps grenades off nearby "
-                     "friendlies stays. The Rainbow Six 3 'only beyond 15 m, "
-                     "never indoors' problem again.",
-                caution="Never played. Throws at the far end may fall short: "
-                        "the throw speed is unchanged."),
+                help="An enemy throws only under suppressive fire, both rooms "
+                     "outdoors, 15-40 m, on a 75% roll. This allows indoor "
+                     "throws from 10 m out to the 'Enemy grenade throw "
+                     "distance' (75 m with a launcher). It also asks when a "
+                     "soldier starts an engagement and when he loses sight of "
+                     "you, as often as 'How often enemies throw grenades' "
+                     "says, and needs only 4 m of clear arc. The friendly "
+                     "check and the 30 s wait between a fireteam's grenades "
+                     "stay.",
+                caution="Never played; checked in an interpreter on Ghost "
+                        "Recon savestates. The AI now aims for the grenade's "
+                        "drag (see 'Enemy grenade throw distance'); set that to "
+                        "60 m for the reach this option allowed before."),
+        Setting("gr_enemy_frag_range", "Enemy grenade throw distance", CHOICE, "50", "Enemies",
+                confidence="experimental", requires={"gr_enemy_grenades": True},
+                choices=[
+                    Choice("35", "Up to 35 m (the game's own throw)",
+                           "25 m/s, as the game throws. Aimed for the drag the grenade "
+                           "really flies with; that speed tops out at about 36 m."),
+                    Choice("50", "Up to 50 m",
+                           "Past 30 m an AI soldier throws at 32 m/s (reaches about 53 m)."),
+                    Choice("60", "Up to 60 m",
+                           "Past 30 m an AI soldier throws at 36 m/s (reaches about 63 m). "
+                           "The distance 'more readily' alone allowed, now with a throw "
+                           "that gets there."),
+                ],
+                help="How far away a soldier will throw a hand grenade (a grenade "
+                     "launcher still fires out to 75 m). The game aims a throw as if "
+                     "there were no air, but the grenade flies with drag: worked through "
+                     "the game's own aim, a throw at a man 32 m away comes down 3-4 m "
+                     "short and one at 42 m 10-13 m short. With this, the AI aims for "
+                     "the drag, so the grenade passes through the man it was thrown at. "
+                     "Beyond 30 m an AI soldier throws harder than the game's arm; "
+                     "nearer, he throws as the game does. Your own throws never change. "
+                     "Your AI teammates' throws get the same aim and arm.",
+                caution="Never played. Checked in the interpreter on a Ghost Recon "
+                        "firefight savestate: the aim, the throw speed, and the flight "
+                        "worked out with the game's own drag and gravity."),
+        Setting("gr_enemy_frag_chance", "How often enemies throw grenades", CHOICE, "normal",
+                "Enemies", confidence="experimental", requires={"gr_enemy_grenades": True},
+                choices=[
+                    Choice("low", "Less often",
+                           "Loses sight of you: 1 in 4. Starts an engagement: 1 in 6. "
+                           "Under suppressive fire: 1 in 2."),
+                    Choice("normal", "Normal",
+                           "Loses sight of you: 1 in 2. Starts an engagement: 1 in 3. "
+                           "Under suppressive fire: always."),
+                    Choice("high", "More often",
+                           "Loses sight of you: 3 in 4. Starts an engagement: 2 in 3. "
+                           "Under suppressive fire: always."),
+                    Choice("max", "Every chance", "Every time any of the three comes up."),
+                ],
+                help="Ghost Recon's soldiers decide on a grenade when they are about to "
+                     "lay down suppressive fire (and a team investigating a spot may throw "
+                     "one). With 'Enemies throw grenades more readily' on, it is also asked "
+                     "when a soldier starts an engagement and when he loses sight of you, "
+                     "as often as this says. With 'Enemies suppress when they "
+                     "lose sight of you' on, a soldier whose sight-lost roll fails may "
+                     "suppress the spot, and suppressive fire asks again: on 'Normal' that "
+                     "makes up to 3 in 4 when he loses sight of you. Every choice still "
+                     "needs you inside the throw distance, no friendly of his near the "
+                     "blast, and 30 s since his fireteam's last grenade."),
+        Setting("gr_enemy_suppress", "Enemies suppress when they lose sight of you",
+                BOOL, False, "Enemies", confidence="experimental",
+                help="A soldier who loses sight of the enemy he is engaging -- you went "
+                     "behind cover -- fires at the spot for 3-7 s, one time in two, the "
+                     "same suppression the game's own open-fight code builds, and only "
+                     "where the game's own check agrees he can put rounds there. Then he "
+                     "carries on as before. With 'Enemies throw grenades more readily' on, "
+                     "a grenade is asked first, and a throw replaces the suppression. Your "
+                     "AI teammates do it too.",
+                caution="Never played. More suppressive fire means more ammunition "
+                        "spent; with 'Enemies can run out of magazines' soldiers may run "
+                        "dry sooner."),
+        Setting("gr_ai_advance", "Enemies close in on a firefight", CHOICE, "stock", "Enemies",
+                confidence="experimental",
+                choices=[Choice("stock", "Stock", "Advance on 1 re-plan in 2/3/4 (Recruit/Veteran/Elite), only under 50 m."),
+                         Choice("more", "More", "2 in 3 / 1 in 2 / 2 in 5, within 150 m."),
+                         Choice("aggressive", "Aggressive", "3 in 4 / 3 in 5 / 1 in 2, within 300 m.")],
+                help="An enemy team in a firefight re-plans every 2-5 s. In stock a soldier advances only on a lucky "
+                     "roll and only under 50 m; after his one run for cover he just stands. This lets them close in "
+                     "on where you were last reported, 15 m at a time with the game's own bounding move, stopping to "
+                     "fight when they see you. A soldier already advancing is not given a second advance on top. "
+                     "Your AI teammates are unchanged.",
+                caution="Never played. More moving enemies means harder fights and more AI work per frame; watch the "
+                        "frame rate on Aggressive."),
+        Setting("gr_ai_flank", "Advancing enemies come at you from both sides", BOOL, False, "Enemies",
+                confidence="experimental",
+                help="Advancing enemies aim 8 m to one side of your position, alternating sides across the team, so "
+                     "pairs come from two directions. Only where there is walkable ground beside you; otherwise straight.",
+                caution="Never played."),
+        Setting("gr_ai_hold_cover", "Idle enemies in a firefight take a firing position", BOOL, False, "Enemies",
+                confidence="experimental",
+                help="An enemy with nothing to do in a firefight (his one run for cover used) crouches, faces you, "
+                     "peeks and fires at what is in his arc instead of standing in the open, until he is told to advance.",
+                caution="Never played. They may spend more ammunition on suppressive fire."),
         Setting("gr_enemy_sight_all", "Enemies see at full strength on "
                 "every difficulty", BOOL, False, "Enemies",
                 confidence="experimental",
@@ -259,6 +361,19 @@ def _settings():
                      "hostile snipers only.",
                 caution="Never played. Their aim error and weapon spread "
                         "remain."),
+        Setting("gr_squad_sight_mult", "How far your AI teammates can see (multiplier)", CHOICE, "1", "Enemies",
+                confidence="experimental",
+                choices=[Choice("1", "Stock", ""), Choice("1.25", "x1.25", ""),
+                         Choice("1.5", "x1.5", "Matches enemy x1.5 at full strength."),
+                         Choice("2", "x2", ""), Choice("3", "x3", "")],
+                help="Your AI teammates' sight has the same hard cap as the enemy's: the level's spotting "
+                     "distance (they get no difficulty factor). Facing, light, scope and foliage only matter "
+                     "inside it. The enemy options above raise only the enemy's cap -- with them on, an enemy "
+                     "can see a Ghost who cannot see him back. This multiplies the cap for AI soldiers on your "
+                     "side (your squad and allied soldiers); players and every enemy are unchanged.",
+                caution="Never played; checked in a RAM interpreter on Ghost Recon savestates. Your squad may "
+                        "open fire from farther away and give away its position sooner."),
+        *grawareness.cards("gr_", "Enemies"),
         Setting("gr_soldier_draw", "How far away soldiers are drawn", CHOICE,
                 "80", "Enemies", confidence="experimental",
                 choices=[
@@ -432,6 +547,91 @@ def _settings():
                      "game uses for 'grenade!'). Enemy teams, AI teammates "
                      "and faint sightings are left as they are.",
                 caution="Never played."),
+        Setting("gr_squad_death_music", "Death music when any of your squad falls",
+                BOOL, False, "World", confidence="experimental",
+                help="Ghost Recon plays one of its six death tracks when player 1's "
+                     "soldier dies, and for player 2 only when no death track is still "
+                     "playing. This plays one whenever any soldier of your squad dies -- "
+                     "AI Ghosts, their total-war copies, and either player in split "
+                     "screen. Enemies stay silent.",
+                caution="Never played; checked in a RAM interpreter on Ghost Recon "
+                        "savestates. Each squad death starts a track, so deaths close "
+                        "together cut each other off."),
+        Setting("gr_combat_music_range", "Combat music for fights farther away", CHOICE, "stock", "World",
+                confidence="experimental",
+                choices=[Choice("stock", "Stock", "2 enemies within 50 m, or 1 known within 10 m."),
+                         Choice("1.5", "x1.5", "75 m / 15 m."),
+                         Choice("2", "x2", "100 m / 20 m."),
+                         Choice("3", "x3", "150 m / 30 m.")],
+                help="The action music starts only when you open fire while you can see an enemy AND 2 or more "
+                     "enemies are within 50 m of you (or the closest one your fireteam knows about is within 10 m, "
+                     "or you are zoomed in with a sniper rifle). Fights that start farther out never get it. This "
+                     "multiplies both distances.",
+                caution="Never played. In split screen the music follows player 1, so this changes only player "
+                        "1's own shots; player 2's count through the option below."),
+        Setting("gr_combat_music_engaged", "Combat music when your squad is engaged or you are under fire",
+                BOOL, False, "World", confidence="experimental",
+                help="Stock, only player 1's own shots can start the action music. With this, any other soldier's "
+                     "burst does too -- an AI Ghost, player 2 or an enemy -- when he is within 50 m of you (times "
+                     "the multiplier above) and the closest opponent he knows about is within that distance of him. "
+                     "In split screen, 'you' is either player. A track that is playing is never restarted; the next "
+                     "can start when it ends.",
+                caution="Never played; checked in a RAM interpreter on Ghost Recon savestates, split screen "
+                        "only emulated."),
+        Setting("gr_gun_far", "How far gunshots carry", CHOICE, "stock", "World", touches="data",
+                confidence="experimental",
+                choices=[Choice("stock", "Stock", "Rifles at full volume to 5 m, half at 10 m, an eighth at 40 m, "
+                                                  "silent by 110 m; machine guns and launchers by 200 m."),
+                         Choice("1.5", "1.5x", "Rifles silent by 165 m; every shot about 3.5 dB louder."),
+                         Choice("2", "2x", "Rifles silent by 220 m; every shot 6 dB louder: a fight 100 m away "
+                                           "sounds like one 50 m away did."),
+                         Choice("3", "3x", "Rifles silent by 330 m; every shot about 9.5 dB louder.")],
+                help="Ghost Recon plays a gunshot at full volume up close, halves it every time the distance "
+                     "doubles, and fades it to nothing at its range (110 m for rifles), so a fight 50 m away is "
+                     "already an eighth of full volume. This stretches the whole curve for every unsuppressed gun, "
+                     "launcher and tank gun: each shot sounds as loud as one from half (2x) the distance did, and "
+                     "carries twice as far. Silenced weapons, reloads, casings, whizzes and impacts are unchanged. "
+                     "Both copies of the sound table (GR.IMG and MENU.IMG) are edited.",
+                caution="Never played. Shots within 10 m (2x) now play at full volume. More distant guns use "
+                        "more of the game's 48 sound channels."),
+        Setting("gr_room_sound", "Hear gunfire through walls", BOOL, False, "World", confidence="experimental",
+                help="Ghost Recon never muffles a sound for a wall: a man firing in the next room is exactly as loud "
+                     "as one in the open at the same distance. With this, a gunshot or blast from another room is "
+                     "judged by the AI's own line of sight to you: a clear line -- an open doorway, a window -- plays "
+                     "at full volume, and one behind a wall is muffled by distance: full volume within 3 m, down to "
+                     "40 % (about -8 dB) by 10 m and beyond. Footsteps, reloads and impacts from another room get the "
+                     "same fade without the line test. Two outdoor areas count as one room, and nothing is ever "
+                     "silenced. In split screen a sound plays at the level of whichever player hears it best (the "
+                     "engine gives both players one volume per sound), so it is muffled only when it is behind a wall "
+                     "for both.",
+                caution="Never played; checked in a RAM interpreter on Ghost Recon savestates, split screen only "
+                        "emulated. Each muffle decision within 50 m costs one sight trace (5-30 k EE instructions, up "
+                        "to about 80 k), once per burst, 0.5 m of gun movement or 0.5 m of camera movement."),
+        Setting("gr_penetration", "Bullets go through thin cover", BOOL,
+                False, "World", confidence="experimental",
+                help="Each round is traced once and stops at the first thing "
+                     "it meets, so a plank fence stops a rifle like a concrete "
+                     "wall. This lets a round go on through scenery that its "
+                     "energy beats: the gun's muzzle energy (Ghost Recon's own "
+                     "kill coefficients: pistols and SMGs about 450-750, 5.56 mm "
+                     "2100-2200, 7.62 mm 2200-2950, .50 3100; with the Heroes "
+                     "Unleashed weapons, HU's: pistols 550-1150, 5.56 mm "
+                     "2900-3500, 7.62 mm 3800-8400, .50 33000) against a cost "
+                     "per surface -- glass, leaves and grass 100, wood and "
+                     "drywall 300, thin metal 1500, metal 2500, heavy wood 3500, "
+                     "thick metal 12000, concrete 20000 -- each surface passed "
+                     "taking its cost off, up to 6. Ground, water, sand, floors "
+                     "and roofs always stop it. Every surface passed gets its "
+                     "bullet hole and sound, a wall one on each side; whoever "
+                     "is behind is hit as if nothing were in the way.",
+                caution="Never played; checked in an interpreter on Ghost Recon "
+                        "savestates. Damage is not reduced by what the round "
+                        "went through. With Ghost Recon's own guns metal stops "
+                        "5.56 mm and the AK-47 (only the A-91, Groza, 7.62 mm "
+                        "and .50 get through), and nothing gets through heavy "
+                        "wood, thick metal or concrete. A wall thicker than half "
+                        "a metre, or with nothing behind it, can still swallow "
+                        "the round."),
         Setting("gr_callouts_respawn", "'Rock and roll' on a takeover", BOOL,
                 False, "Split Screen", confidence="experimental",
                 requires={"gr_ss_handoff": True},
@@ -653,7 +853,21 @@ def _settings():
                         "that count is. When a player's whole fireteam "
                         "is down, that half of the screen stays dark, as it "
                         "does in stock split screen when respawns run out, and "
-                        "the mission fails when everyone is down."),
+                        "the mission fails when everyone is down -- or follows "
+                        "the rest of the platoon with 'Observer when your "
+                        "fireteam is wiped out'."),
+        Setting("gr_ss_observer", "Observer when your fireteam is wiped out", BOOL,
+                False, "Split Screen", confidence="experimental",
+                requires={"gr_ss_handoff": True},
+                help="With One life, a player whose whole fireteam is down no longer stares "
+                     "at his own body: his half of the screen follows a living soldier of the "
+                     "platoon (the other player's soldier and every AI teammate, in squad "
+                     "order). The reload button (the next-item button too) moves on to the "
+                     "next living soldier; when the one you watch goes down, the view moves "
+                     "on by itself. The other player's half and controls are untouched.",
+                caution="Checked in the RAM interpreter on a mission save made split screen "
+                        "(no Ghost Recon split-screen savestate exists); never played. No "
+                        "on-screen 'observer' text in Ghost Recon."),
 
         # ---- weather ----------------------------------------------------
         Setting("gr_weather", "Rain and snow density", CHOICE, "stock", "World",
@@ -697,9 +911,13 @@ def _settings():
                      "start every mission in third person, with the reticle, "
                      "zoom panel and action menu shown. The camera sweeps "
                      "from your eye like the stock one, so walls pull it in, "
-                     "and it stays 0.25 m above the floor. Every shot starts "
-                     "on the camera's centre line, so rounds go where the "
-                     "reticle is. Zooming stays in third person (the zoom "
+                     "and it stays 0.25 m above the floor. Rounds still leave "
+                     "your soldier's eye, as in first person, and fly to the "
+                     "point under the reticle -- whatever the camera's centre "
+                     "line meets first: a wall, the ground or a soldier -- so "
+                     "they land on the reticle, and cover in front of your "
+                     "soldier stops them even when the camera sees over it. "
+                     "Zooming stays in third person (the zoom "
                      "narrows the view), except a sniper rifle: its scope "
                      "uses first person from the start of the zoom until it "
                      "has zoomed back out. Mounted guns use first "
@@ -715,10 +933,12 @@ def _settings():
                 caution="Played 2026-09-27. No pad button toggles the view, so "
                         "this is third person all the time except when "
                         "on a mounted gun. The sweep ignores characters: the camera can "
-                        "sit inside a teammate standing behind you. Shots "
-                        "start up to 0.5 m from your eye, so you can fire "
-                        "past cover your eye is behind -- the AI still sees "
-                        "you where you are. Spectators also get the HUD. The aiming pose and your "
+                        "sit inside a teammate standing behind you. Behind "
+                        "cover the camera sees over, your rounds hit the "
+                        "cover: lean or stand to fire over it. A teammate at "
+                        "your shoulder that the centre line passes can take "
+                        "rounds meant for the reticle; aiming at the reticle "
+                        "point (2026-09-29) is not yet played. Spectators also get the HUD. The aiming pose and your "
                         "muzzle flash (2026-09-28) are not yet played."),
         Setting("gr_smooth_anim", "Distant soldiers animate smoothly", BOOL, False,
                 "World", confidence="experimental",
@@ -759,14 +979,26 @@ def _settings():
                 help="How far behind your eye the camera sits (walls still "
                      "pull it in). The centred camera is 2.75 m by default, "
                      "the shoulder cameras 2.25 m."),
-        Setting("gr_tp_aim_eye", "Third person: shots start from the eye",
+        Setting("gr_tp_smooth", "Third person: camera handles trees and slopes", BOOL, True, "World",
+                confidence="experimental",
+                requires={"gr_tp_camera": ("centered", "ots", "ots_left")},
+                help="When the camera has to come in near scenery, it now comes in along the line from your "
+                     "soldier's eye, so he stays where he was on screen and just gets bigger instead of "
+                     "sliding to the bottom edge; on ground rising behind him it comes in rather than up. "
+                     "Anything between his eye and the camera that a bullet would hit -- a tree trunk, a "
+                     "rock, a vehicle -- brings the camera in front of it (other soldiers and leaves don't). "
+                     "After being pulled in it waits 0.3 s, then glides back out over about half a second "
+                     "instead of jumping.",
+                caution="Checked in an interpreter on savestates, not yet played. One extra short line "
+                        "trace a frame per third-person view."),
+        Setting("gr_tp_aim_eye", "Third person: shots parallel to the view",
                 BOOL, False, "World", confidence="experimental",
                 requires={"gr_tp_camera": ("centered", "ots", "ots_left")},
-                help="Keeps every free shot starting at the soldier's eye, as "
-                     "in stock, instead of on the camera's line. Nothing "
-                     "can be shot around cover, but rounds land a fixed "
-                     "0.2-0.5 m below and beside the reticle. Locked-on shots "
-                     "stay exact either way."),
+                help="Sends every free shot straight along your look from "
+                     "the eye, instead of turning it onto the point under the "
+                     "reticle. Rounds land a fixed 0.2-0.5 m below and beside "
+                     "the reticle at any range. Locked-on shots aim at their "
+                     "target from the eye either way."),
         Setting("gr_extra_cameras", "Unlock the chase and ghost cameras", BOOL,
                 False, "World", confidence="experimental",
                 help="The camera cycle wraps at 3 of the 5 camera modes the "
@@ -834,7 +1066,7 @@ def _settings():
                         "real PS2."),
 
         # ---- controls ---------------------------------------------------
-        Setting("gr_controls", "Controller layout", CHOICE, "stock", "Controls",
+        Setting("gr_controls", "Controller layout", CHOICE, "jungle_storm", "Controls",
                 confidence="experimental",
                 choices=[
                     Choice("stock", "Ghost Recon (as shipped)", ""),
@@ -857,9 +1089,26 @@ def _settings():
                      "also takes its right stick: a smaller dead zone (25 "
                      "instead of 32) and half Ghost Recon's turn speed. Both "
                      "players get the layout in split screen.",
-                caution="Never played. Text elsewhere in the game (tutorial, "
-                        "hints) still names Ghost Recon's buttons. Zoom out "
-                        "has no button of its own: click through to 1x."),
+                caution="Played in split screen. Text elsewhere in the game "
+                        "(tutorial, hints) still names Ghost Recon's buttons. "
+                        "Zoom out has no button of its own: click through to 1x."),
+        *grsprintspeed.gr_cards("gr_", "Controls"),
+        Setting("gr_zoom_hold", "Zoom holds while you turn and move", BOOL, False,
+                "Controls", confidence="experimental",
+                help="Zoomed in, Ghost Recon drops you back to 1x as soon as the "
+                     "reticle spreads past a limit (500 upright, 600 crouched, 700 "
+                     "prone, 480 wounded), and turning faster than about 3 rad/s, "
+                     "walking while turning, running, or any move while wounded "
+                     "spreads it that far at once. With this the zoom stays where "
+                     "you put it while you turn and move, as on the Xbox: the drop "
+                     "to 1x only counts the spread your own shots put on the "
+                     "reticle, so a long full-auto burst from a heavy gun still "
+                     "drops it as shipped. Moving and turning still spread your "
+                     "shots exactly as before (running upright is 40 times the "
+                     "spread of standing still); zoomed in you just see it more. "
+                     "Reloading, switching weapon or soldier and dying still go back "
+                     "to 1x. Both players in split screen; the AI is unchanged.",
+                caution="Never played: run on savestate RAM in an interpreter only."),
         Setting("gr_quick_trigger", "Quick trigger taps always fire", BOOL, False,
                 "Weapons", confidence="experimental",
                 help="Let go of R1 and press it again quickly and the game "
@@ -868,11 +1117,115 @@ def _settings():
                      "67-100 ms for most rifles) -- and it never looks at R1 "
                      "again while you hold it, so the gun stays silent until "
                      "you let go and press once more. This keeps the press "
-                     "for the players' own soldiers. Ghost Recon already fires a new burst's first round one round's time after the press, so no gun fires faster than its rate. The AI keeps the "
-                     "rule as shipped.",
-                caution="Never played. Semi-automatic and burst fire can be "
-                        "tapped as fast as the gun's own rate of fire, which "
-                        "the rule held to roughly half."),
+                     "for the players' own soldiers, and fixes the rest of a "
+                     "short tap: Ghost Recon fired a press's first round one "
+                     "round's time later (5 frames at 60 fps for an M16) and, "
+                     "on full auto, threw the burst away when R1 came up "
+                     "first -- so a tap shorter than that, or a quick tap "
+                     "after a burst, fired nothing. Now the first round "
+                     "leaves on the press, and a tap released before its "
+                     "round fires that one round as soon as the gun's rate "
+                     "allows, then stops. No gun fires faster than its rate. "
+                     "The AI keeps the rules as shipped.",
+                caution="Played as the press-keeping version only; the tap "
+                        "fix is checked in an interpreter on a firefight "
+                        "savestate (taps from rest, a tap after a burst, rapid "
+                        "tapping, long holds, semi-auto, the AI), not yet "
+                        "played. A burst of full auto now starts on the press, "
+                        "one round's time sooner than before."),
+        Setting("gr_smoke", "Smoke grenades", BOOL, False, "Weapons",
+                confidence="experimental",
+                help="Ghost Recon has no smoke grenade, only smoke effects "
+                     "(burning wrecks, a few maps). With this, any soldier "
+                     "carrying grenades can switch them: select the grenades "
+                     "and press reload, and the slot changes between FRAG "
+                     "and SMOKE (one count for both; the weapon panel shows "
+                     "which). A smoke grenade pops 2 s after it lands into a "
+                     "45 s cloud with no blast (see 'Smoke grenade cloud'). "
+                     "Nobody sees through a cloud from 2 s after it pops until "
+                     "5 s before it clears: a sight line passing within 5 m of "
+                     "its centre stops the AI spotting, and an engaged soldier "
+                     "loses his target. Works for your squad and the enemy "
+                     "alike. The grenade is the unused SQUIRREL.PRJ rewritten "
+                     "(the squirrel cheat throws smoke while this is on); the "
+                     "label replaces the PC-only 'Toggle Console' line in every "
+                     "strings file. Both copies (GR.IMG and MENU.IMG) of the "
+                     "grenade, kits and strings are edited.",
+                caution="Ported from Jungle Storm and checked by running the "
+                        "patched code on Ghost Recon savestates; never played. "
+                        "Ghost Recon's own handler for scripted effects is "
+                        "empty, so the cloud is created directly, the way a "
+                        "map's smoke is. Not checked in split screen."),
+        Setting("gr_smoke_kits", "Smoke grenade kits", CHOICE, "second", "Weapons",
+                confidence="experimental", requires={"gr_smoke": True},
+                choices=[
+                    Choice("none", "None (switch with reload)", ""),
+                    Choice("second", "One per class",
+                           "Demolitions Bizon, Heavy Weapons PKM and Sniper "
+                           "PSG-1 kits carry 6 smoke instead of 6 frag; the "
+                           "M4 and A-91, M249 and M60, M24 and M98 grenade "
+                           "kits keep frags."),
+                    Choice("all", "Every grenade kit",
+                           "Every kit-screen kit that carried frags (the "
+                           "three classes' and the specialists') carries smoke."),
+                ],
+                help="Kits in the kit screen that carry smoke grenades from "
+                     "the start. Ghost Recon's riflemen carry no frags. The kit "
+                     "picture still shows grenades; the item is named SMOKE. "
+                     "Reload still switches FRAG / SMOKE in the field. Needs "
+                     "'Smoke grenades'."),
+        Setting("gr_smoke_ai", "AI throws smoke", CHOICE, "all", "Weapons",
+                confidence="experimental", requires={"gr_smoke": True},
+                choices=[
+                    Choice("off", "Never", ""),
+                    Choice("squad", "Your squad", ""),
+                    Choice("enemies", "Enemies", "Everyone not in your squad."),
+                    Choice("all", "Everyone", ""),
+                ],
+                help="When a soldier runs for cover (the game's own "
+                     "RunForCover: an open fight, a hold or suppress order, "
+                     "dodging a grenade) and his threat is 12-90 m away, "
+                     "he may first throw a smoke grenade ('How often the AI "
+                     "throws smoke', 1 in 2 by default) 10 m toward it, then "
+                     "runs. He must carry grenades (any kit's frags do: the "
+                     "throw comes out as smoke) and no grenade launcher, and "
+                     "his fireteam must not have used a grenade in the last "
+                     "30 s. Across the whole mission the AI pops smoke at most "
+                     "once every 15 s and never while 2 clouds are already up "
+                     "(frame rate: a cloud is a lot of particles). A smoke "
+                     "throw ignores the check for branches in its first "
+                     "metres. 'Your squad' is the players' company. Needs "
+                     "'Smoke grenades'."),
+        Setting("gr_smoke_ai_chance", "How often the AI throws smoke", CHOICE, "2", "Weapons",
+                confidence="experimental",
+                requires={"gr_smoke": True, "gr_smoke_ai": ("squad", "enemies", "all")},
+                choices=[
+                    Choice("4", "1 in 4", ""),
+                    Choice("3", "1 in 3", ""),
+                    Choice("2", "1 in 2", ""),
+                    Choice("1", "Every time", ""),
+                ],
+                help="How often a soldier who runs for cover first throws smoke (see 'AI "
+                     "throws smoke'). The limits stay: at most one AI smoke every 15 s "
+                     "across the mission and none while 2 clouds are up. A smoke throw does "
+                     "not start his fireteam's 30 s grenade wait, so it never holds back a "
+                     "frag."),
+        Setting("gr_smoke_look", "Smoke grenade cloud", CHOICE, "round", "Weapons",
+                confidence="experimental", requires={"gr_smoke": True},
+                choices=[
+                    Choice("round", "Round cloud",
+                           "A dome about 6 m across that billows up and out "
+                           "from the grenade: ~60 puffs 3.5 m wide. Built "
+                           "into an effect slot the game leaves empty."),
+                    Choice("smoke_large_type1", "Large smoke, type 1", ""),
+                    Choice("smoke_large_type2", "Large smoke, type 2", ""),
+                    Choice("smoke_large_type3", "Large smoke, type 3",
+                           "The waterfall mist: 75 sheets 9 m wide on a flat "
+                           "24 x 8 m patch. Looks flat and is heavy on frame rate."),
+                ],
+                help="What a smoke grenade's cloud looks like: the round "
+                     "cloud made for it, or one of the game's three large "
+                     "smoke effects. Needs 'Smoke grenades'."),
         Setting("gr_hu_all", "Heroes Unleashed (PS2): everything below", BOOL, False,
                 "Heroes Unleashed", confidence="experimental",
                 help="Heroes Unleashed is a PC realism mod for Ghost Recon. This "
@@ -895,7 +1248,9 @@ def _settings():
                         "80 m they can see you before the game draws them -- "
                         "raise 'How far away soldiers are drawn' to match. "
                         "Replaces the level-file spotting card on the maps it "
-                        "knows."),
+                        "knows. River, Train Wreck (and TAC02 Rescue on its map) "
+                        "and Vilnius have no spotting number in their level file "
+                        "and keep the game's default 75 m."),
         Setting("gr_hu_damage", "Heroes Unleashed damage model", BOOL, False,
                 "Heroes Unleashed", confidence="experimental",
                 help="Heroes Unleashed's hit model: every head hit kills, "
@@ -1016,7 +1371,10 @@ def build_edits(v: dict) -> list:
             briefing=bool(v.get("gr_ss_briefing")),
             teammates=bool(v.get("gr_ss_teammates")),
             orders=bool(v.get("gr_ss_orders")),
-            js_controls=v.get("gr_controls", "stock") != "stock"):
+            js_controls=v.get("gr_controls", "stock") != "stock",
+            observer=grobserver.gr_enabled(v)):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grobserver.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
 
     if v.get("gr_first_person_body"):
@@ -1042,6 +1400,21 @@ def build_edits(v: dict) -> list:
     for va, value, stock, note in grsight.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grtrigger.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grdeathmusic.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grcombatmusic.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grawareness.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grzoomhold.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grsmoke.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
+    for mod in (grtactics, grsuppress, grfrag, grpierce, grgunfar):
+        for va, value, stock, note in mod.gr_edits(v):
+            e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in grsprintspeed.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grsplat.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
@@ -1215,6 +1588,8 @@ def build_data(v: dict) -> list:
     out += grhu.data_edits("gr_", v)
     out += grshotgun.data_edits(v, "gr_")
     out += grshotsound.data_edits(v, "gr_")
+    out += grsmoke.data_edits(v, "gr_")
+    out += grgunfar.data_edits(v, "gr_")
     return out
 
 

@@ -1,4 +1,5 @@
-"""Heroes Unleashed spotting distances: Ghost Recon (SLUS-20613) and Jungle Storm (SLUS-20820).
+"""Heroes Unleashed in code: spotting distances on Ghost Recon (SLUS-20613) and
+Jungle Storm (SLUS-20820), and Jungle Storm's hit damage.
 
 An enemy's sight is capped by the level's spotting distance (the .ENV's
 MaxSpot) times a difficulty factor. The PS2 games ship the PC's own per-map
@@ -23,12 +24,45 @@ median change (1.67), at most 150 m. A level whose .ENV has no MaxSpot at all
 (Vilnius, two multiplayer maps) never reaches the hook and keeps the game's
 default.
 
+Jungle Storm does not see MaxSpot where enemies look. Line of sight (JS
+0x003D3EF0) reads the simulation's live distance (IkeSimulationMgr +0x704,
+through GetSpottingDistance, JS 0x00382080), which HandleLoadEnvironment sets
+from the mission's fog override when it has one and from MaxSpot only
+otherwise, and which a mission script's "set spotting distance" overwrites --
+most of the campaign and co-op does one or both. So on Jungle Storm the number
+becomes a ratio: HandleLoadEnvironment's call of MissionFile::IsValid (JS
+0x00365C9C, the EnvironmentFile in s4) first stores table metres / MaxSpot
+(x1 for a map not in the table; a .ENV without MaxSpot has the default 75),
+and GetSpottingDistance returns the live distance times it. The .ENV value is
+left as read; the first build's hook in EnvironmentFile::Load stays in the
+stock words so a disc it patched is put back.
+
+Jungle Storm's damage (JS only, `damage_edits`). SimHuman::TakeGunshotDamage
+(JS 0x003B3410) never reads CMBTMODL.XML's body-part factors: a hit costs
+round(multiplier x the bullet's strength) points out of the soldier's own
+total (+0x728; 4 for the enemies in a J02 save, 14-19 for the players' own),
+and the multiplier comes from a switch on the bone's class (JS 0x003B4220): x8
+head, x4 torso, x3 bicep, forearm, thigh and calf, x1 hand, foot and toe. Its
+caller calls a hit head when that is 8 or more and, bare-headed, takes 2 for
+the strength, so a head hit costs 16. The switch becomes a per-bone table:
+each bone's stock multiplier times its stock factor / HU's (the PC's classes:
+bones 1-2 abdomen, 3-4 chest, 5-7 head, 8/11 upper arm, 9-10/12-13 lower arm,
+14/18 upper leg, the rest lower leg; the names are the executable's bone
+table), and 16 for the head, 32 points, past the 31 a soldier can hold: HU's
+-1, every head hit kills. Explosions are untouched (a flat 9 points). The
+armour factors are read only as bits (JS 0x003B42F0: bit 1 a vest halves a
+torso hit, bit 0 a helmet a head hit), which is why grhu gives Jungle Storm
+402 for HU's level-1 400.
+
 Cave: sceSifGetIopAddr + sceSifSetIopAddr (GR 0x004198B8, JS twins
 0x001825C8), 464 bytes, unreferenced in the loaded image and Jungle Storm's
-overlays. Not yet played.
+overlays; on Jungle Storm its last 21 words hold the bone table. Not yet
+played.
 """
 
 from __future__ import annotations
+
+import struct
 
 from .grasm import assemble
 
@@ -39,9 +73,11 @@ GAMES = {
         BACK=0x001CE960, ENV="s4",
     ),
     "js": dict(
-        CAVE=0x001825C8, CAVE_END=0x00182798,
-        HOOK=0x001CB5E4, HOOK_STOCK=0x10000204,   # b 0x1cbdf8 (slot: swc1 f0,0x90(s1) stays)
-        BACK=0x001CBDF8, ENV="s1",
+        CAVE=0x001825C8, CAVE_END=0x00182744,     # the bone table (DAMAGE) takes the rest
+        HOOK=0x001CB5E4, HOOK_STOCK=0x10000204,   # the first build's hook: stock words only
+        LOAD=0x00365C9C, LOAD_STOCK=0x0C0D9678,   # jal MissionFile::IsValid (slot: move a0,s1 stays)
+        ISVALID=0x003659E0, ENV="s4",
+        GET=0x00382080, GET_STOCK=0x03E00008,     # jr ra (slot: lwc1 f0,0x704(a0) stays)
     ),
 }
 NAME, SPOT = 0x50, 0x90                         # EnvironmentFile: MapFileName, MaxSpot
@@ -120,8 +156,9 @@ TABLES = {
     ],
 }
 
-SRC = """
-spot:                                   ; j from EnvironmentFile::Load; MaxSpot is already stored
+#: the map's hash looked up in the table (t8, s-registers and a0 untouched); falls to
+#: `back` for a map not in it, else leaves its metres in t6
+_LOOKUP = """
     lw      t0, {NAME}+4({ENV})         ; MapFileName: its string rep
     beqz    t0, back
     nop
@@ -171,7 +208,11 @@ next:
     bnez    t7, next
     nop
     andi    t6, t6, 0xff                ; metres
-    mtc1    t6, f0
+"""
+
+SRC = """
+spot:                                   ; j from EnvironmentFile::Load; MaxSpot is already stored
+""" + _LOOKUP + """    mtc1    t6, f0
     nop
     cvt.s.w f0, f0
     swc1    f0, {SPOT}({ENV})
@@ -181,15 +222,91 @@ back:
 table:
 """
 
+JS_SRC = """
+spot:                                   ; jal from HandleLoadEnvironment, for MissionFile::IsValid
+    lui     t8, %hi(scale)
+    lui     t0, 0x3f80                  ; x1 unless the map is in the table
+    sw      t0, %lo(scale)(t8)
+""" + _LOOKUP + """    mtc1    t6, f0
+    lwc1    f1, {SPOT}({ENV})           ; MaxSpot as the level file has it
+    cvt.s.w f0, f0
+    div.s   f0, f0, f1
+    nop
+    nop
+    swc1    f0, %lo(scale)(t8)
+back:
+    j       {ISVALID:#x}                ; the call this replaced (a0 is its MissionFile)
+    nop
+get:                                    ; j from GetSpottingDistance, f0 = the live distance
+    lui     t0, %hi(scale)
+    lwc1    f1, %lo(scale)(t0)
+    jr      ra
+    mul.s   f0, f0, f1
+scale:
+    .word   0x3f800000
+table:
+"""
+
 
 def words(game: str):
+    """(cave words, labels)."""
     g = GAMES[game]
-    src = SRC.format(NAME=NAME, SPOT=SPOT, **g)
+    src = (SRC if game == "gr" else JS_SRC).format(NAME=NAME, SPOT=SPOT, **g)
     src += "".join("    .word   %#x\n" % ((h << 8) | m) for _n, h, m in TABLES[game]) + "    .word   0\n"
-    w, _ = assemble(src, g["CAVE"])
+    w, labels = assemble(src, g["CAVE"])
     if g["CAVE"] + 4 * len(w) > g["CAVE_END"]:
         raise ValueError("spotting table outgrows its cave")
-    return w
+    return w, labels
+
+
+#: Jungle Storm's hit multiplier (JS 0x003B4220): the switch on the bone's class becomes a
+#: load from the bone table; TAIL multiplies by the strength and returns, as every case did
+DAMAGE = dict(LOOK=0x003B4240, TAIL=0x003B42C0, TABLE=0x00182744)
+DAMAGE_SRC = """
+    sll     v0, a1, 2                   ; the bone: 1-21 whenever its class is under 10
+    lui     v1, %hi(bones-4)
+    addu    v1, v1, v0
+    lwc1    f0, %lo(bones-4)(v1)
+    b       {TAIL:#x}
+    nop
+"""
+DAMAGE_STOCK = {0x003B4240: 0x3C030059, 0x003B4244: 0x00021080, 0x003B4248: 0x24636BC0,
+                0x003B424C: 0x00431021, 0x003B4250: 0x8C420000, 0x003B4254: 0x00400008}
+#: bones 1-21 (SpineRoot01 .. LToe): the PC's class (CombatModelFile::GetKillChance, GR
+#: 0x003D4AE0) and Jungle Storm's stock multiplier (x8 head, x4 torso, x3 bicep, forearm,
+#: thigh, calf, x1 hand, foot, toe)
+BONES = [("Abdomen", 4), ("Abdomen", 4), ("Chest", 4), ("Chest", 4),
+         ("Head", 8), ("Head", 8), ("Head", 8),
+         ("UpperArm", 3), ("LowerArm", 3), ("LowerArm", 1),
+         ("UpperArm", 3), ("LowerArm", 3), ("LowerArm", 1),
+         ("UpperLeg", 3), ("LowerLeg", 3), ("LowerLeg", 1), ("LowerLeg", 1),
+         ("UpperLeg", 3), ("LowerLeg", 3), ("LowerLeg", 1), ("LowerLeg", 1)]
+#: the PS2 CMBTMODL.XML's factors (both games ship the same)
+STOCK_FACTORS = {"Head": 10, "Chest": 100, "Abdomen": 400, "UpperArm": 700,
+                 "LowerArm": 1000, "UpperLeg": 500, "LowerLeg": 800}
+#: HU's head (-1: every hit kills): x the 2 a bare head takes is 32 points, past the 31 a
+#: soldier can hold; still 8 or more, which is how the caller tells a head hit
+HEAD = 16.0
+
+
+def bone_multipliers():
+    """Bones 1-21: Jungle Storm's multiplier x stock factor / HU's (a lower factor kills more)."""
+    from .grhu import HU_COMBAT_MODEL
+    return [HEAD if part == "Head"
+            else mult * STOCK_FACTORS[part] / float(HU_COMBAT_MODEL["Ballistic%sFactor" % part])
+            for part, mult in BONES]
+
+
+def damage_edits():
+    """(va, value, stock, note), Jungle Storm only."""
+    look, _ = assemble(DAMAGE_SRC.format(**DAMAGE), DAMAGE["LOOK"], {"bones": DAMAGE["TABLE"]})
+    out = [(DAMAGE["LOOK"] + 4 * i, w, DAMAGE_STOCK[DAMAGE["LOOK"] + 4 * i],
+            "HU damage: the bone's own multiplier") for i, w in enumerate(look)]
+    for i, (x, (part, _m)) in enumerate(zip(bone_multipliers(), BONES)):
+        va = DAMAGE["TABLE"] + 4 * i
+        out.append((va, struct.unpack("<I", struct.pack("<f", x))[0], JS_STOCK[va],
+                    "HU damage: bone %d (%s) x%.3g" % (i + 1, part, x)))
+    return out
 
 
 _GR_CAVE_STOCK_HEX = (   # sceSifGetIopAddr + sceSifSetIopAddr, 0x004198B8..0x00419A88
@@ -237,6 +354,9 @@ GR_STOCK = _stock_words(GAMES["gr"]["CAVE"], _GR_CAVE_STOCK_HEX)
 JS_STOCK = _stock_words(GAMES["js"]["CAVE"], _JS_CAVE_STOCK_HEX)
 GR_STOCK[GAMES["gr"]["HOOK"]] = GAMES["gr"]["HOOK_STOCK"]
 JS_STOCK[GAMES["js"]["HOOK"]] = GAMES["js"]["HOOK_STOCK"]
+JS_STOCK[GAMES["js"]["LOAD"]] = GAMES["js"]["LOAD_STOCK"]
+JS_STOCK[GAMES["js"]["GET"]] = GAMES["js"]["GET_STOCK"]
+JS_STOCK.update(DAMAGE_STOCK)
 
 
 def h24(name: str) -> int:
@@ -252,10 +372,17 @@ def edits(game: str):
     """(va, value, stock, note)."""
     g = GAMES[game]
     st = GR_STOCK if game == "gr" else JS_STOCK
-    out = [(g["CAVE"] + 4 * i, w, st[g["CAVE"] + 4 * i], "HU spotting: per-map distances")
-           for i, w in enumerate(words(game))]
-    out.append((g["HOOK"], assemble("j %#x" % g["CAVE"], g["HOOK"])[0][0], g["HOOK_STOCK"],
-                "HU spotting: after MaxSpot is read"))
+    w, labels = words(game)
+    out = [(g["CAVE"] + 4 * i, x, st[g["CAVE"] + 4 * i], "HU spotting: per-map distances")
+           for i, x in enumerate(w)]
+    if game == "gr":
+        out.append((g["HOOK"], assemble("j %#x" % g["CAVE"], g["HOOK"])[0][0], g["HOOK_STOCK"],
+                    "HU spotting: after MaxSpot is read"))
+    else:
+        out.append((g["LOAD"], assemble("jal %#x" % labels["spot"], g["LOAD"])[0][0],
+                    g["LOAD_STOCK"], "HU spotting: the map's ratio, as the level loads"))
+        out.append((g["GET"], assemble("j %#x" % labels["get"], g["GET"])[0][0],
+                    g["GET_STOCK"], "HU spotting: the live distance x the ratio"))
     return out
 
 
@@ -264,7 +391,10 @@ def gr_edits(v: dict):
 
 
 def js_edits(v: dict):
-    return edits("js") if v.get("js_hu_spot") or v.get("js_hu_all") else []
+    out = edits("js") if v.get("js_hu_spot") or v.get("js_hu_all") else []
+    if v.get("js_hu_damage") or v.get("js_hu_all"):
+        out += damage_edits()
+    return out
 
 
 def selftest(gr_elf: bytes, js_elf: bytes):
@@ -279,7 +409,9 @@ def selftest(gr_elf: bytes, js_elf: bytes):
             bad.append("%s table hash/metres" % game)
         if len({h for _n, h, _m in TABLES[game]}) != len(TABLES[game]):
             bad.append("%s hash collision" % game)
-        e = edits(game)
+        e = edits(game) + (damage_edits() if game == "js" else [])
         if len({va for va, *_ in e}) != len(e) or any(va not in st for va, *_ in e):
             bad.append("%s edit addresses" % game)
+    if len(BONES) != 21 or DAMAGE["TABLE"] + 4 * len(BONES) != 0x00182798:
+        bad.append("js bone table")
     return bad

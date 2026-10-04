@@ -11,7 +11,9 @@ built from its own files, value for value:
     Chest 100 as stock; abdomen 300 (stock 400); arms 1350 / 2050 and legs
     900 / 1800 (stock 700 / 1000 / 500 / 800) -- limb hits are survivable,
     torso and head hits are not. Armour 0 / 400 / 750 / 950 (stock 0 / 150 /
-    350 / 750).
+    350 / 750). Jungle Storm reads none of the body-part factors and the
+    armour ones only as bits, so there the body parts are code (grhuspot)
+    and level 1 is 402, which keeps the vest bit HU's 400 lacks.
 
   * weapons -- every PS2 .GUN with an HU counterpart takes that gun's
     ballistics (velocity and kill coefficients, range), weight and magazine,
@@ -223,6 +225,9 @@ HU_COMBAT_MODEL = {
     "BallisticUpperLegFactor": "900.0",
     "BallisticLowerLegFactor": "1800.0",
 }
+#: Jungle Storm reads an armour factor only as bits of its whole value (bit 1 a vest, bit 0 a
+#: helmet; see grhuspot): HU's 400 has neither and would take away the vest stock 150 gives
+JS_COMBAT_MODEL = dict(HU_COMBAT_MODEL, BallisticArmoredChestFactor1="402.0")
 
 
 def on(prefix: str, v: dict, part: str) -> bool:
@@ -231,10 +236,14 @@ def on(prefix: str, v: dict, part: str) -> bool:
 
 
 def without_overridden(prefix: str, v: dict) -> dict:
-    """The values with the cards HU replaces put back to stock, so the two never both edit a file."""
+    """The values with the cards HU replaces put back to stock, so the two never both edit a file
+    -- and so Jungle Storm's spotting ratio (HU / the .ENV's MaxSpot) is taken against the stock number."""
     if on(prefix, v, "damage"):
         v = dict(v)
         v[prefix + "lethality"] = "stock"
+    if on(prefix, v, "spot"):
+        v = dict(v)
+        v[prefix + "spot"] = 100
     return v
 
 
@@ -550,14 +559,17 @@ def data_edits(prefix: str, v: dict) -> list:
             flavour = "ai" if name in HU_AI_ONLY.get(game, ()) else ("player" if w == "you" else "ai")
             if game == "js" and name.startswith("PLAYER_"):
                 flavour = "player"
-            # Jungle Storm loads the compiled .XBG, never the .GUN (see xbg_fields)
+            # Jungle Storm loads the compiled .XBG, never the .GUN (see xbg_fields). Ghost Recon
+            # ships every .GUN in MENU.IMG too and missions use the gun parsed from there, so
+            # its edit is not pinned to one archive.
             op, ext = ("hu_xbg", "XBG") if game == "js" else ("hu_values", "GUN")
-            out.append(FileEdit(op, r"/%s\.%s$" % (re.escape(name), ext), "GR.IMG",
+            out.append(FileEdit(op, r"/%s\.%s$" % (re.escape(name), ext), "GR.IMG" if game == "js" else "",
                                 {"values": HU_GUNS[base][flavour]},
                                 "Heroes Unleashed %s (%s numbers)" % (base, "AI" if flavour == "ai" else "player")))
     if on(prefix, v, "damage"):
         # not pinned to one archive: Ghost Recon ships CMBTMODL.XML twice and both copies must agree
-        out.append(FileEdit("xml_values", r"/CMBTMODL\.XML$", "", {"values": HU_COMBAT_MODEL},
+        out.append(FileEdit("xml_values", r"/CMBTMODL\.XML$", "",
+                            {"values": JS_COMBAT_MODEL if game == "js" else HU_COMBAT_MODEL},
                             "Heroes Unleashed damage model"))
     if on(prefix, v, "skills"):
         out.append(FileEdit("bump_stats", r"\.ATR$", "GR.IMG", {"steps": -2, "stats": ["Weapon"]},

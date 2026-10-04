@@ -13,6 +13,10 @@ through the same reader, so they get their copies too.
     actor gets (multiplier - 1) copies -- x3 makes a lone sentry a leader
     with two followers, x6 a team of six. Actors a script hides until later are never copied,
     so no invisible copy can hold up a "kill everyone" objective;
+  * Jungle Storm can add 1 or 2 more copies per enemy team after the
+    multiplier (x2 +1: a lone sentry becomes 3, a pair 5), made of the visible
+    members present on the most difficulties, so a team gets them on every
+    difficulty it has soldiers on -- normally the leader, the first in the file;
   * the players' squad ("_Company"): each AI soldier (Owner -1) gets
     (multiplier - 1) copies; the players' own soldiers are never copied. The
     squad is built in memory by the platoon screen or the split-screen
@@ -57,8 +61,9 @@ the bigger multipliers.
 
 Caves: GR 0x00417330-0x00417998 (sceAddDrv..sceGetstat) and 0x00421DA0
 (sceMcSetFileInfo), JS 0x00196078 and 0x00195910 (twins of the unused scePad
-info functions), 0x0017F990 (twins of sceRemove..sceDopen; the squad pass,
-then the height check at 0x0017FC84) and 0x0019B888 (sceScfGetAspect's twin),
+info functions; the radar clamp, then the extra-enemy count), 0x0017F990
+(twins of sceRemove..sceDopen; the squad pass, then the height check at
+0x0017FC84) and 0x0019B888 (sceScfGetAspect's twin),
 none referenced from the loaded image or Jungle Storm's online/offline
 overlays. The routine was run in an interpreter against a mock of the parsed
 mission data (team sizes, hidden actors, allied companies, the squad file,
@@ -66,6 +71,10 @@ unique ids and the original each names, member lists, no copy from a moved
 array, registers and stack); the squad pass and the clamps likewise. The
 height check ran inside the real AdjustHeightsOverFloors loop of each ELF
 against stubbed floor lookups, compared word for word with the unpatched loop.
+The extra copies ran in Jungle Storm's real ProcessTeamMembers inside online
+host and joiner RAM dumps, on every mission's actors, then through the real
+AdjustHeightsOverFloors loop; at x2 without them those runs rebuilt the exact
+tables the game had built in the dumps (G04, U05, U02).
 """
 
 from __future__ import annotations
@@ -108,39 +117,32 @@ CHOICES_ENEMIES = ("1", "2", "3", "4", "6")
 CHOICES_ALLIES = ("1", "2", "3")
 
 
-def _prologue(g, emul, fmul):
+def _prologue(g, emul, fmul, plus=0):
     S, T, M = g["SETUP"], g["TEAM"], g["MODE"]
-    return f"""
-cave:
-    lw    t0, 0x18({S})             ; companies.count
-    blez  t0, out
-    lw    t1, 0x14({S})             ; companies.data (delay)
-    addiu t0, t0, -1
-    sll   t2, t0, 5                 ; *0x28
-    sll   t0, t0, 3
-    addu  t0, t0, t2
-    addu  t0, t1, t0                ; the company being parsed = the last one
-    lbu   t1, 0x24(t0)              ; Allied="1"
-    bnez  t1, out
-    move  {M}, zero                 ; (delay) hostile
-    lw    t1, 0x10(t0)              ; company Name: RSString rep
-    beqz  t1, hostile
+    SCR = g["SCR"]
+    if plus:
+        count = """    jal   plan                      ; s0 = n, s1 = base, s2 = copies (_plan_source)
     nop
-    lw    t1, 4(t1)                 ; char*
-    beqz  t1, hostile
+    blez  s2, out
     nop
-    lb    t1, 0(t1)
-    addiu t1, t1, -0x5f             ; '_' = the player's squad ("_Company")
-    bnez  t1, hostile
+"""
+        pick = f"""    lw    t9, {SCR:#x}(sp)          ; k
+    lw    t0, {SCR + 12:#x}(sp)     ; copies the multiplier makes
+    slt   t9, t9, t0
+    bnez  t9, picked
+    lbu   t0, 0x4c(t8)              ; (delay) an extra copy: Easy + Normal + Hard
+    lbu   t1, 0x4d(t8)
+    addu  t0, t0, t1
+    lbu   t1, 0x4e(t8)
+    addu  t0, t0, t1
+    lw    t1, {SCR + 16:#x}(sp)     ; the most any visible member of the team has
+    bne   t0, t1, find              ; absent on a difficulty another is on: skip
     nop
-    li    {M}, 1
-    b     setmul
-    li    t3, {fmul}                ; friendly multiplier (delay)
-hostile:
-    li    t3, {emul}                ; enemy multiplier
-setmul:
-    addiu t3, t3, -1                ; copies per source
-    blez  t3, out
+    b     picked
+    nop
+"""
+    else:
+        count = f"""    blez  t3, out
     lw    s0, 0x18({T})             ; n = members
     blez  s0, out
     lw    t0, 0x10({S})             ; actors.count (delay)
@@ -188,7 +190,39 @@ room:
     beqz  t8, go
     nop
     move  s2, t9
-go:
+"""
+        pick = "    b     picked\n    nop\n"
+    return f"""
+cave:
+    lw    t0, 0x18({S})             ; companies.count
+    blez  t0, out
+    lw    t1, 0x14({S})             ; companies.data (delay)
+    addiu t0, t0, -1
+    sll   t2, t0, 5                 ; *0x28
+    sll   t0, t0, 3
+    addu  t0, t0, t2
+    addu  t0, t1, t0                ; the company being parsed = the last one
+    lbu   t1, 0x24(t0)              ; Allied="1"
+    bnez  t1, out
+    move  {M}, zero                 ; (delay) hostile
+    lw    t1, 0x10(t0)              ; company Name: RSString rep
+    beqz  t1, hostile
+    nop
+    lw    t1, 4(t1)                 ; char*
+    beqz  t1, hostile
+    nop
+    lb    t1, 0(t1)
+    addiu t1, t1, -0x5f             ; '_' = the player's squad ("_Company")
+    bnez  t1, hostile
+    nop
+    li    {M}, 1
+    b     setmul
+    li    t3, {fmul}                ; friendly multiplier (delay)
+hostile:
+    li    t3, {emul}                ; enemy multiplier
+setmul:
+    addiu t3, t3, -1                ; copies per source
+{count}go:
     move  s3, zero                  ; cursor
     sw    zero, {g['SCR']:#x}(sp)          ; k
 find:
@@ -210,9 +244,7 @@ nowrap:
     lbu   t9, 0x50(t8)              ; (delay)
     bnez  t9, find                  ; hidden: a script owns him, skip
     nop
-    b     picked
-    nop
-findf:
+{pick}findf:
     lw    t9, 0x54(t8)
     addiu t9, t9, 1
     bnez  t9, find                  ; a player's own soldier: skip
@@ -306,10 +338,10 @@ out:
 """ + _tail()
 
 
-def _js_source(emul, fmul):
+def _js_source(emul, fmul, plus=0):
     g = GAMES["js"]
     SCR, TMP = g["SCR"], g["TMP"]
-    return _prologue(g, emul, fmul) + f"""
+    return _prologue(g, emul, fmul, plus) + f"""
     addiu a0, sp, {TMP:#x}
     jal   EntryCtor                 ; a live entry to build the copy in
     nop
@@ -418,6 +450,87 @@ JS_RADAR_SRC = """
     nop
 skip:
     j     0x29e2dc
+    nop
+"""
+
+
+# ---- Jungle Storm's extra enemies per team (js_tw_enemies_plus) --------------
+# With extra copies the mission pass counts in this routine (after the radar
+# clamp, same cave): copies = sources * (MUL-1), then + PLUS for an enemy team,
+# then no more than 6 - n. The extra copies go to the visible members present on
+# the most difficulties (Easy/Normal/Hard, +0x4C..+0x4E; CreateTeam skips an
+# actor whose byte for the current one is 0), so the team gets them on every
+# difficulty it has soldiers on; the cursor starts them at the first such member.
+# The frame's dead words SCR+12 / SCR+16 keep the multiplier's count and that best.
+def _plan_source(plus):
+    g = GAMES["js"]
+    S, T, M, SCR = g["SETUP"], g["TEAM"], g["MODE"], g["SCR"]
+    return f"""
+plan:
+    lw    s0, 0x18({T})             ; n = members
+    blez  s0, pdone
+    move  s2, zero                  ; (delay) copies
+    lw    t0, 0x10({S})
+    subu  s1, t0, s0                ; base: this team's actors are the last n
+    lw    t6, 0xc({S})
+    move  t4, zero                  ; eligible sources
+    move  t5, zero                  ; i
+    move  t2, zero                  ; best presence among them
+pcnt:
+    addu  t7, s1, t5
+    sll   t8, t7, 4                 ; *0x5c
+    sll   t9, t7, 3
+    addu  t8, t8, t9
+    subu  t8, t8, t7
+    sll   t8, t8, 2
+    addu  t8, t6, t8
+    bnez  {M}, pcntf
+    lbu   t9, 0x50(t8)              ; Hidden (delay)
+    bnez  t9, pnext
+    lbu   t0, 0x4c(t8)              ; (delay)
+    lbu   t1, 0x4d(t8)
+    addu  t0, t0, t1
+    lbu   t1, 0x4e(t8)
+    addu  t0, t0, t1
+    slt   t1, t2, t0
+    beqz  t1, pvis
+    nop
+    move  t2, t0
+pvis:
+    b     pnext
+    addiu t4, t4, 1
+pcntf:
+    lw    t9, 0x54(t8)              ; Owner
+    addiu t9, t9, 1
+    bnez  t9, pnext
+    nop
+    addiu t4, t4, 1
+pnext:
+    addiu t5, t5, 1
+    slt   t9, t5, s0
+    bnez  t9, pcnt
+    nop
+    blez  t4, pdone
+    sw    t2, {SCR + 16:#x}(sp)     ; (delay)
+pmul:
+    blez  t3, pplus
+    nop
+    addu  s2, s2, t4
+    b     pmul
+    addiu t3, t3, -1
+pplus:
+    bnez  {M}, proom                ; the players' squad gets no extra
+    sw    s2, {SCR + 12:#x}(sp)     ; (delay)
+    addiu s2, s2, {plus}
+proom:
+    li    t9, 6                     ; FireTeamAI::Update ignores teams of 7+
+    subu  t9, t9, s0
+    slt   t8, t9, s2
+    beqz  t8, pdone
+    nop
+    move  s2, t9                    ; 0 or less: no room
+pdone:
+    jr    ra
     nop
 """
 
@@ -694,11 +807,39 @@ JS_QUICK_ORDER_STOCK = {va: st for va, st, _src in JS_QUICK_ORDER}
 # The game heap is one malloc'd block ending at a hard-coded 0x01F98000. These
 # put it at 0x02000000 with 0x05F00000 bytes; the kernel stack sits at the top of
 # 128 MB. Without the emulator's 128 MB setting the first allocation fails.
+#
+# Jungle Storm decides at boot instead, so one disc serves both modes (an online
+# host needs the room, a joiner in 32 MB mode must still boot): the kernel puts
+# the main thread's stack at the top of RAM, 0x01FFxxxx in 32 MB mode and
+# 0x07FFxxxx in 128, and both heap sites run on that thread. Each site calls a
+# few words that take the 128 MB heap only when sp >= 0x02000000 and otherwise
+# do exactly what the stock code does.
+HEAP_JS_CAVE = 0x00195A40          # radar block, past the extra-enemy routine's end (0x00195A10)
+HEAP_JS_WORDS = (
+    # A, called instead of `jal malloc` (0x00169788) for the heap block
+    0x001D4642,     # srl   t0, sp, 25
+    0x11000003,     # beqz  t0, 1f
+    0x00000000,     # nop
+    0x03E00008,     # jr    ra
+    0x3C020200,     # lui   v0, 0x200          128 MB: the block is 0x02000000
+    0x0805A5E2,     # 1: j  malloc              32 MB: stock
+    0x00000000,     # nop
+    # B, called instead of `lui v1, 0x1f9` before the size: s2 = v1 - s2 - v0 follows
+    0x3C0301F9,     # lui   v1, 0x1f9
+    0x001D4642,     # srl   t0, sp, 25
+    0x11000004,     # beqz  t0, 2f
+    0x34638000,     # ori   v1, v1, 0x8000      stock end 0x01F98000
+    0x3C0305F0,     # lui   v1, 0x5f0
+    0x00621821,     # addu  v1, v1, v0
+    0x00721821,     # addu  v1, v1, s2          128 MB: the size comes out 0x05F00000
+    0x03E00008,     # 2: jr ra
+    0x00000000,     # nop
+)
 HEAP = {
     "gr": ((0x001019E4, 0x0C100B5C, 0x3C020200),    # jal malloc -> lui v0, 0x200
            (0x003F968C, 0x00623023, 0x3C0605F0)),   # subu a2 -> lui a2, 0x5f0
-    "js": ((0x00102AC4, 0x0C05A5E2, 0x3C020200),
-           (0x0015B7D0, 0x00629023, 0x3C1205F0)),   # subu s2 -> lui s2, 0x5f0
+    "js": ((0x00102AC4, 0x0C05A5E2, 0x0C000000 | (HEAP_JS_CAVE >> 2)),             # jal malloc -> jal A
+           (0x0015B7C0, 0x3C0301F9, 0x0C000000 | ((HEAP_JS_CAVE + 0x1C) >> 2))),   # lui v1 -> jal B
 }
 
 # ---- the height check -------------------------------------------------------
@@ -979,20 +1120,34 @@ def _jal(target):
     return 0x0C000000 | ((target >> 2) & 0x3FFFFFF)
 
 
-def edits(game: str, enemies: int = 1, allies: int = 1, heap: bool = False):
-    """(va, value, stock, note). enemies 1-6, allies 1-3; 1 = off."""
+def edits(game: str, enemies: int = 1, allies: int = 1, heap: bool = False, plus: int = 0):
+    """(va, value, stock, note). enemies 1-6, allies 1-3; 1 = off. plus 0-2 (Jungle Storm):
+    extra copies per enemy team after the multiplier."""
     g = GAMES[game]
     st = GR_STOCK if game == "gr" else JS_STOCK
-    if not 1 <= enemies <= 6 or not 1 <= allies <= 3:
-        raise ValueError("total war: enemies %r allies %r" % (enemies, allies))
+    if not 1 <= enemies <= 6 or not 1 <= allies <= 3 or not 0 <= plus <= (2 if game == "js" else 0):
+        raise ValueError("total war: enemies %r allies %r plus %r" % (enemies, allies, plus))
     out = []
     if heap:
         out += [(va, n, s, "total war: game heap in PCSX2's 128 MB") for va, s, n in HEAP[game]]
-    if enemies == 1 and allies == 1:
+        if game == "js":
+            out += [(HEAP_JS_CAVE + 4 * i, w, st[HEAP_JS_CAVE + 4 * i],
+                     "total war: 128 MB heap only when PCSX2 has it") for i, w in enumerate(HEAP_JS_WORDS)]
+    if enemies == 1 and allies == 1 and not plus:
         return out
     # the mission pass: enemy teams, and squads read from a file
-    src = (_gr_source if game == "gr" else _js_source)(enemies, allies)
-    words, _labels = assemble(src, g["CAVE"], g["SYMS"])
+    if game == "gr":
+        words, _labels = assemble(_gr_source(enemies, allies), g["CAVE"], g["SYMS"])
+    else:
+        pbase = g["RADAR_CAVE"] + 4 * len(assemble(JS_RADAR_SRC, g["RADAR_CAVE"])[0])
+        words, _labels = assemble(_js_source(enemies, allies, plus), g["CAVE"],
+                                  dict(g["SYMS"], plan=pbase))
+        if plus:
+            pw, _ = assemble(_plan_source(plus), pbase)
+            if pbase + 4 * len(pw) > g["RADAR_END"]:
+                raise ValueError("total war extra-enemy count outgrows its cave")
+            out += [(pbase + 4 * i, w, st[pbase + 4 * i], "total war: count each team's copies")
+                    for i, w in enumerate(pw)]
     end = g["CAVE"] + 4 * len(words)
     out += [(g["CAVE"] + 4 * i, w, st[g["CAVE"] + 4 * i], "total war: copy each team's soldiers")
             for i, w in enumerate(words)]
@@ -1066,7 +1221,7 @@ def gr_edits(v: dict):
 
 def js_edits(v: dict):
     return edits("js", int(v.get("js_tw_enemies", "1")), int(v.get("js_tw_allies", "1")),
-                 bool(v.get("js_tw_heap128")))
+                 bool(v.get("js_tw_heap128")), int(v.get("js_tw_enemies_plus", "0")))
 
 
 def selftest(gr_elf: bytes, js_elf: bytes):
@@ -1079,9 +1234,10 @@ def selftest(gr_elf: bytes, js_elf: bytes):
                 bad.append("%s %08X" % (game, va))
         for e_ in (1, 2, 3, 4, 6):
             for a_ in (1, 2, 3):
-                e = edits(game, e_, a_, True)
-                if len({va for va, *_ in e}) != len(e):
-                    bad.append("%s duplicate VA x%d/x%d" % (game, e_, a_))
-                if any(va not in st for va, *_ in e):
-                    bad.append("%s VA without a stock word" % game)
+                for p_ in ((0, 1, 2) if game == "js" else (0,)):
+                    e = edits(game, e_, a_, True, p_)
+                    if len({va for va, *_ in e}) != len(e):
+                        bad.append("%s duplicate VA x%d/x%d+%d" % (game, e_, a_, p_))
+                    if any(va not in st for va, *_ in e):
+                        bad.append("%s VA without a stock word" % game)
     return bad

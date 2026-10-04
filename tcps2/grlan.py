@@ -55,6 +55,24 @@ reached.
 
 Ghost Recon (SLUS-20613) has none of this -- no `gsconnect`, no `gsinit.php`, no bootstrap -- so the
 option is Jungle Storm's alone.
+
+AI backup in online co-op
+-------------------------
+
+Online co-op gives each human one soldier. The host's roster writer 0x00377180 can fill every fireteam
+with AI (routine 0x0037E040, up to three per team), but only when the game's AI Backup flag is set
+(GameInfo +0x3C7, getter 0x00148870), and Jungle Storm's lobby never sets it::
+
+    0x00377554  jal   0x148870          ; AI Backup?
+    0x00377558  move  a0, v0
+    0x0037755c  beqz  v0, skip
+
+The option asks for the lobby type instead (GameInfo +0x2CC, getter 0x001485A0; 2 is co-op), so the
+fill runs in every co-op game and in nothing else. The flag itself stays clear: setting it would also
+refuse the lobby's respawn option (0x001486C0) and fill the team games. Only the host builds the
+roster; played 2026-09-29 on two consoles: Alpha = the joiner and two AI, Bravo = the host and two AI,
+Charlie = three AI, the same on both. Online rules still hold -- respawn at the start, no orders, no
+SELECT -- and the multiplayer HUD labels the AI "enemy soldier" (see grcooplabel).
 """
 
 from __future__ import annotations
@@ -76,6 +94,14 @@ PORT_STOCK = 0x24040050
 PORT_MAX = 0x7FFF
 
 _OCTETS = (("1", 192), ("2", 168), ("3", 1), ("4", 10))
+
+#: (va, stock, new, note): the co-op roster fill asks "is this co-op?" instead of "AI Backup?"
+COOP_AI = (
+    (0x00377554, 0x0C05221C, 0x8C4202CC, "lw v0, 0x2cc(v0): the lobby type"),
+    (0x00377558, 0x0040202D, 0x38420002, "xori v0, v0, 2: co-op is 2"),
+    (0x0037755C, 0x1040000F, 0x1440000F, "bnez: no fill unless the game is co-op"),
+)
+JS_STOCK = {va: stock for va, stock, _new, _note in COOP_AI}
 
 
 class LanError(Exception):
@@ -130,14 +156,29 @@ def cards(prefix: str = "js_", group: str = "Online") -> list:
                      "hardcodes 80. Change it only if the server cannot have "
                      "port 80. The lobby's own port is not patched -- the "
                      "server names it itself, as RouterPort0 in the reply."),
+        Setting(prefix + "coop_ai", "Online co-op: AI backup fills every fireteam", BOOL, False,
+                group, confidence="experimental", requires={prefix + "skip_dnas": [True]},
+                help="Online co-op gives each player one soldier. The game can "
+                     "fill every fireteam with AI -- its AI Backup option -- but "
+                     "Jungle Storm's lobby never turns it on. This fills them in "
+                     "every co-op game: your fireteam gets two AI, and a third "
+                     "all-AI fireteam comes along. Only the host's disc builds "
+                     "the teams; put it on both anyway.",
+                caution="Played once on two consoles: the AI appear on both. "
+                        "Online rules still apply -- you respawn at the start "
+                        "instead of taking over an AI, and orders and SELECT do "
+                        "nothing. The HUD calls the AI 'enemy soldier' unless the "
+                        "label fix below is on too."),
     ]
 
 
 def edits(v: dict, prefix: str = "js_") -> list:
-    """(va, value, stock, note) for the bootstrap redirect."""
-    if not v.get(prefix + "lan"):
-        return []
+    """(va, value, stock, note) for the bootstrap redirect and the co-op AI fill."""
     out = []
+    if v.get(prefix + "coop_ai"):
+        out += [(va, new, stock, "online co-op AI backup: " + note) for va, stock, new, note in COOP_AI]
+    if not v.get(prefix + "lan"):
+        return out
     ip = address(v, prefix)
     stock = list(struct.unpack("<%dI" % (HOST_ROOM // 4), HOST_STOCK))
     for i, (word, was) in enumerate(zip(host_words(ip), stock)):

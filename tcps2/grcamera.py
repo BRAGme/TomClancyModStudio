@@ -8,8 +8,9 @@ it to 0 as well; the third-person placement runs only after death.
 
 This keeps the view a live player is in, draws the reticle, zoom panel and
 action menu in third person too, places the camera with a height, sideways
-and distance offset from the soldier's eye, and moves every shot's start
-point onto the camera's centre line so the reticle is where the rounds go.
+and distance offset from the soldier's eye, and turns every shot the soldier
+fires towards the point under the reticle, so the rounds go where the reticle
+is while still starting from the soldier.
 
 Placement (``cam_tp``, called from the view-1 block of
 UpdateFollowerCameraMovement) builds the offset H up, L to the soldier's right
@@ -17,27 +18,64 @@ UpdateFollowerCameraMovement) builds the offset H up, L to the soldier's right
 back along the look vector, then runs the game's own SimCamera::PlaceCamera
 sphere sweep from the eye, so walls pull the camera in exactly as they do for
 the stock spectator camera. A floor probe keeps it 0.25 m above the ground.
-The view looks along the soldier's look vector, parallel to the shot line.
+The view looks along the soldier's look vector.
 While zoomed (field of view under 1.5 rad) or on a mounted gun it returns 0
 and the stock first-person placement runs, so scopes and binoculars work.
 
-``cam_tp`` also stores the camera's offset from the eye, less its component
-along the look vector, in SimCamera+0x74 -- a spare vector only the
-constructor writes. Two hooks in SimHuman::UpdateBurst use it: a free shot's
-origin (the Gunshot message payload) moves by that offset, and a locked-on
-shot aims from eye + offset instead of the camera. First-person play and AI
-shooters are unchanged. "Shots from the eye" stores zero instead, leaving
-free shots a fixed 0.2-0.5 m from the reticle.
+Shots. Every round still starts where the game starts it -- the Gunshot
+message's origin is SimHuman::GetShootFromLocation, the soldier's eye (his
+head) -- so cover his head is behind stops it, as in first person. What changes is where
+it is sent. ``cam_tp`` marks SimCamera+0x74 (a spare word only the constructor
+writes) 1 when it placed the camera and 0 when it fell back to first person.
+SimHuman::UpdateBurst turns a burst's free shots with RSQuat::Set(forward,
+look) and applies each round's spread (Reticule::GetShotDirection) on top;
+``aim_base`` stands in for that Set when the shooter is a player's soldier
+(control type 0) followed by a split-screen camera in third person with the
+mark set. It traces the camera's centre line -- from the camera along its
+view, which is the soldier's look -- with RSSimRoom::FindLineCollision from
+the camera's room, exactly as IkeSimulationMgr::HandleGunshot traces a round
+(kIsGunshot, faces marked kGunshotTransparent passed, the soldier himself
+ignored), so it stops on scenery and on soldiers; nothing within 1 km gives
+the point 1 km out. The burst then turns onto P - O (P that point, O the
+shot origin) instead of the look, spread unchanged. If P is not at least 0.5
+m ahead of O along the view (the line struck something beside or behind the
+soldier) the look is kept. A locked-on shot aims at its target from O rather
+than from the camera (``aim_from``, replacing SimCamera::GetLocation there).
+Zoomed or scoped (first-person placement), mounted guns, first-person view,
+AI and network soldiers: unchanged. "Shots from the eye" marks 0, so free
+shots leave the eye parallel to the camera line, landing 0.2-0.5 m off the
+reticle.
 
-The routines live in two library functions nothing calls: sceDevConsDraw
-(GR 0x0040DA50, JS 0x00176300, 456 bytes) and sceVu0DropShadowMatrix
-(GR 0x0042BC38, JS 0x001976C0, 400 bytes). Every stock word was checked
-against the retail executables, and the routines were run in an interpreter
-against RAM from single-player and split-screen savestates of both games
-(PlaceCamera and the floor query stubbed without collision): camera position,
-screen centre through the shot origin, look direction, zoom and mounted-gun
-fallback, floor clamp and both split-screen cameras all checked. Not yet
-played.
+An earlier version moved the shot origin onto the camera line instead
+(SimCamera+0x74 held the offset); from a crouch behind a car the camera's
+height let rounds clear it. Its two hook sites are ``RETIRED`` and stay in the
+stock table so a disc patched by it is put back.
+
+The routines live in three library functions nothing references:
+sceDevConsDraw (GR 0x0040DA50, JS 0x00176300, 456 bytes: cam_tp, aim_from),
+sceVu0DropShadowMatrix (GR 0x0042BC38, JS 0x001976C0, 400 bytes: aim_base)
+and GR sceMcRename 0x00421F78 (360 bytes) / JS lgAudWriteVag 0x00553928 (368
+bytes, the USB headset library's; nothing in the ELF or either overlay
+refers to it): floor_clamp. Every stock word was checked against the retail
+executables. The routines were run in an interpreter (VU0 micro-program and
+scratchpad DMA included, so PlaceCamera and FindLineCollision run for real)
+through the real SimHuman::UpdateBurst on RAM from savestates of both games
+-- single player, both split-screen cameras, online co-op in Jungle Storm's
+J03 Railroad: the Gunshot origin equals stock, the direction points at P,
+spread is kept, locked-on shots aim from the origin, and a prone soldier's
+round is stopped by the low wall in front of him that the camera line clears
+(it used to fly on). Converging shots confirmed in play 2026-09-29.
+
+"Show when cover blocks your shot" (``blocked_edits``, Jungle Storm only): while
+the round's own line is blocked short of the reticle point, the reticle turns
+amber and moves to where the round would hit (the first build, played
+2026-09-29, kept it in place and added a small amber mark there); see the
+section below.
+
+"Camera near scenery" (``build_fix`` / ``cam_fix``, the ``*_tp_smooth`` option):
+the camera stays on the line from the eye through its full-distance place, is
+pulled in front of anything the line from the eye meets (trees and props the
+sphere sweep passes), and eases back out instead of jumping.
 """
 
 from __future__ import annotations
@@ -66,10 +104,19 @@ GAMES = {
         ISSNIPER=0x003DE170,    # SimHuman::IsSniper: sniper weapon (motion type 2/3), zoom > 1x
         FLOOR=0x004DAD60,       # RSSimRoom::FindLevelPointIsOver(pt, face&, height&)
         SIMMGR=0x005EACF0,      # mIIkeSimulationMgr (cameras at +0x444 / +0x448)
-        ADDVEC=0x00359600,      # RSGameMessage::AddPayload(const RSVector3&)
-        UB_MSG="s5", UB_ORG=0xE0, UB_SCR=0xD0,            # SimHuman::UpdateBurst frame
+        FLC=0x004D8540,         # RSSimRoom::FindLineCollision(line, info&, max, ignore, flags, mask, 1, 0)
+        LCINFO=0x003835B0,      # RSLineCollisionInfo::RSLineCollisionInfo
+        QSET=0x00117C90,        # RSQuat::Set(from, to) -- normalises both
+        SHOOTFROM=0x2D4,        # SimHuman vtable: GetShootFromLocation(out, slot), the stock shot origin
+        LINE_V=0x0C,            # RSLine3: point +0, vector +0xC (12-byte RSVector3)
+        UB_SH="s4", UB_SCR=0xD0,                          # SimHuman::UpdateBurst: this, a free temp
+        AIMBASE=(0x003D2BA4, 0x0C045F24),                 # its jal RSQuat::Set before the round loop
+        CLOCK=0x005DFC20,       # RSClock (+0xD4: TotalElapsedSeconds)
+        SCENEGET=0x00359760,    # RSSimScene::Get
+        FINDROOM=0x005044E0,    # RSSimScene::FindRoom(scene, pt)
         CAVE_A=0x0040DA50, CAVE_A_BYTES=456,   # sceDevConsDraw, unreferenced
         CAVE_B=0x0042BC38, CAVE_B_BYTES=400,   # sceVu0DropShadowMatrix, unreferenced
+        CAVE_C=0x00421F78, CAVE_C_BYTES=360,   # sceMcRename, unreferenced
     ),
     "js": dict(
         key="js",
@@ -78,12 +125,29 @@ GAMES = {
         ISSNIPER=0x003BD860,    # the same test (motion types 2/3, zoom factor > 1.0)
         FLOOR=0x004C1830,
         SIMMGR=0x0062B8D0,
-        ADDVEC=0x0014E0E0,
-        UB_MSG="s0", UB_ORG=0xA0, UB_SCR=0xB0,
+        FLC=0x004C40E0,
+        LCINFO=0x00261A00,
+        QSET=0x00115D30,
+        SHOOTFROM=0x2D8,
+        LINE_V=0x10,            # point +0, vector +0x10 (16-byte RSVector3)
+        UB_SH="s5", UB_SCR=0xB0,
+        AIMBASE=(0x003B2230, 0x0C04574C),
+        CLOCK=0x00684768,
+        SCENE=0x00689E30,       # the RSSimScene (grpierce's FindRoom caller loads it the same way)
+        FINDROOM=0x004EB880,
         CAVE_A=0x00176300, CAVE_A_BYTES=456,
         CAVE_B=0x001976C0, CAVE_B_BYTES=400,
+        CAVE_C=0x00553928, CAVE_C_BYTES=368,   # lgAudWriteVag, unreferenced by the ELF and both overlays
     ),
 }
+
+#: kIsGunshot and kGunshotTransparent (GR 0x0058BC38 / 0x0058BCC0, JS 0x0059C270 /
+#: 0x0059C2F8): the flag and face mask IkeSimulationMgr::HandleGunshot traces a round with
+TRACE_FLAGS, TRACE_MASK = 2, 1
+#: how far the reticle point is looked for (metres); nothing hit -> this far along the view
+AIM_RANGE = 1000.0
+#: the reticle point is used only this far ahead of the shot origin along the view (metres)
+AIM_AHEAD = 0.5
 
 #: height above the eye, distance to the right, distance back (metres)
 PRESETS = {
@@ -95,9 +159,7 @@ PRESETS = {
 
 def _cam_tp_src(g, H, L, D, aim_cam):
     E, K = g["EYE"], g["LOOK"]
-    d3 = "swc1  $f3" if aim_cam else "sw    zero"
-    d4 = "swc1  $f4" if aim_cam else "sw    zero"
-    d5 = "swc1  $f5" if aim_cam else "sw    zero"
+    mode = 1 if aim_cam else 0
     return f"""
 cam_tp:                              ; a0 = SimCamera. v0=1 placed, v0=0 -> first-person placement
     addiu sp, sp, -0x40
@@ -160,7 +222,7 @@ cam_tp:                              ; a0 = SimCamera. v0=1 placed, v0=0 -> firs
     mtc1  at, $f12
     jal   PLACE
     mtc1  zero, $f13
-    jal   FLOORCLAMP                 ; camera >= floor + 0.25
+    jal   POSTPLACE                  ; camera >= floor + 0.25 (after cam_fix, when it is in)
     move  a0, s0
     lw    t0, 4(s0)
     lwc1  $f0, {K:#x}(t0)            ; view direction = soldier's look
@@ -172,35 +234,13 @@ cam_tp:                              ; a0 = SimCamera. v0=1 placed, v0=0 -> firs
     swc1  $f0, 0xa4(s0)
     swc1  $f1, 0xa8(s0)
     swc1  $f2, 0xac(s0)
-    lwc1  $f3, 0x10(s0)              ; d = camera - eye
-    lwc1  $f6, {E:#x}(t0)
-    sub.s $f3, $f3, $f6
-    lwc1  $f4, 0x14(s0)
-    lwc1  $f6, {E + 4:#x}(t0)
-    sub.s $f4, $f4, $f6
-    lwc1  $f5, 0x18(s0)
-    lwc1  $f6, {E + 8:#x}(t0)
-    sub.s $f5, $f5, $f6
-    mul.s $f6, $f3, $f0              ; t = d . look
-    mul.s $f7, $f4, $f1
-    add.s $f6, $f6, $f7
-    mul.s $f7, $f5, $f2
-    add.s $f6, $f6, $f7
-    mul.s $f7, $f6, $f0              ; delta = d - t*look -> SimCamera+0x74
-    sub.s $f3, $f3, $f7
-    {d3}, 0x74(s0)
-    mul.s $f7, $f6, $f1
-    sub.s $f4, $f4, $f7
-    {d4}, 0x78(s0)
-    mul.s $f7, $f6, $f2
-    sub.s $f5, $f5, $f7
-    {d5}, 0x7c(s0)
+    addiu t1, zero, {mode}           ; SimCamera+0x74 (spare): 1 = free shots converge on
+    sw    t1, 0x74(s0)               ;   the reticle point, 0 = they leave the eye parallel
     b     out
     addiu v0, zero, 1
 zoomed:
-    sw    zero, 0x74(s0)
-    sw    zero, 0x78(s0)
-    sw    zero, 0x7c(s0)
+    sw    zero, 0x74(s0)             ; first-person placement: shots as stock
+    sw    zero, 0x78(s0)             ; and cam_fix eases out again from the eye
     addiu v0, zero, 0
 out:
     ld    ra, 0x30(sp)
@@ -210,32 +250,34 @@ out:
 """
 
 
-def _cave_b_src(g):
-    E, O, S = g["EYE"], g["UB_ORG"], g["UB_SCR"]
+def _aim_from_src(g):
+    SH, S = g["UB_SH"], g["UB_SCR"]
     return f"""
-aim_from:                            ; replaces SimCamera::GetLocation for a locked-on shot
+aim_from:                            ; for SimCamera::GetLocation ahead of a locked-on shot
     lw    v1, 0x70(a0)
     addiu t0, zero, 1
     bne   v1, t0, af_ret
     addiu v0, a0, 0x10               ; not third person: the stock answer
-    lw    t0, 4(a0)                  ; third person: eye + delta, in the caller's free temp
-    lwc1  $f0, {E:#x}(t0)
-    lwc1  $f1, 0x74(a0)
-    lwc1  $f2, {E + 4:#x}(t0)
-    add.s $f0, $f0, $f1
-    lwc1  $f3, 0x78(a0)
-    swc1  $f0, {S:#x}(sp)
-    add.s $f2, $f2, $f3
-    lwc1  $f0, {E + 8:#x}(t0)
-    lwc1  $f1, 0x7c(a0)
-    swc1  $f2, {S + 4:#x}(sp)
-    add.s $f0, $f0, $f1
-    addiu v0, sp, {S:#x}
-    swc1  $f0, {S + 8:#x}(sp)
+    addiu sp, sp, -0x10              ; third person: aim from the stock shot origin, so the
+    sd    ra, 0(sp)                  ;   round flies at the target from where it starts
+    lw    t9, 0({SH})                ; the shooter (UpdateBurst's this)
+    lb    a2, 0x1e7({SH})            ; the slot that fires
+    lw    t9, {g['SHOOTFROM']:#x}(t9)  ; GetShootFromLocation
+    move  a1, {SH}
+    jalr  t9
+    addiu a0, sp, {0x10 + S:#x}       ; into the caller's free temp
+    ld    ra, 0(sp)
+    addiu v0, sp, {0x10 + S:#x}
+    addiu sp, sp, 0x10
 af_ret:
     jr    ra
     nop
+"""
 
+
+def _floor_clamp_src(g):
+    E = g["EYE"]
+    return f"""
 floor_clamp:                         ; a0 = SimCamera: cam.z = max(cam.z, floor + 0.25)
     addiu sp, sp, -0x40
     sd    ra, 0x30(sp)
@@ -270,47 +312,118 @@ fc_out:
     lq    s0, 0x20(sp)
     jr    ra
     addiu sp, sp, 0x40
+"""
 
-shot_origin:                         ; a0 = shooter: move the Gunshot origin onto the camera line
+
+def _aim_base_src(g):
+    """RSQuat::Set's stand-in ahead of a burst's free shots (frame: line +0, info +0x20,
+    origin +0x80, aim +0x90, the vector to turn onto +0x9C, ra +0xA0, quat/forward +0xA8/+0xAC)."""
+    SH, LV = g["UB_SH"], g["LINE_V"]
+    ahead = _fbits(AIM_AHEAD)
+    if ahead & 0xFFFF:
+        raise ValueError("AIM_AHEAD must be a lui-only float")
+    return f"""
+aim_base:                            ; a0 quat, a1 forward, a2 look: the stock Set's arguments
+    addiu sp, sp, -0xb0
+    sd    ra, 0xa0(sp)
+    sw    a0, 0xa8(sp)
+    sw    a1, 0xac(sp)
+    sw    a2, 0x9c(sp)               ; turn onto the look direction, as stock ...
+    jal   LCINFO                     ; RSLineCollisionInfo, for the trace
+    addiu a0, sp, 0x20
+    lw    t0, 0x138({SH})            ; ... unless a player's soldier (control type 0)
+    bnez  t0, ab_set
     lui   t0, %hi(SIMMGR)
     lw    t0, %lo(SIMMGR)(t0)
-    beqz  t0, so_done
+    beqz  t0, ab_set
+    lw    t4, 0x444(t0)              ; GetSimCamera
+    beqz  t4, ab_cam2
+    lw    t5, 0x448(t0)              ; GetSimCamera2
+    lw    t1, 4(t4)
+    beq   t1, {SH}, ab_found
     nop
-    lw    t1, 0x444(t0)              ; GetSimCamera
-    beqz  t1, so_cam2
+ab_cam2:
+    beqz  t5, ab_set
+    move  t4, t5
+    lw    t1, 4(t4)
+    bne   t1, {SH}, ab_set
+ab_found:
+    lw    t1, 0x70(t4)               ; ... follows him in third person ...
+    addiu t2, zero, 1
+    bne   t1, t2, ab_set
+    lw    t1, 0x74(t4)               ; ... placed by cam_tp, converging (not zoomed, not "from the eye")
+    bne   t1, t2, ab_set
+    lw    a0, 0x30(t4)               ; the camera's room
+    beqz  a0, ab_set
+    lwc1  $f0, 0x10(t4)              ; the camera's centre line: from the camera C ...
+    lwc1  $f1, 0x14(t4)
+    lwc1  $f2, 0x18(t4)
+    swc1  $f0, 0x00(sp)
+    swc1  $f1, 0x04(sp)
+    swc1  $f2, 0x08(sp)
+    lwc1  $f0, 0x8c(t4)              ; ... along its view V, the soldier's look
+    lwc1  $f1, 0x90(t4)
+    lwc1  $f2, 0x94(t4)
+    swc1  $f0, {LV:#x}(sp)
+    swc1  $f1, {LV + 4:#x}(sp)
+    swc1  $f2, {LV + 8:#x}(sp)
+    addiu a1, sp, 0x00
+    addiu a2, sp, 0x20
+    move  a3, {SH}                   ; his own body does not stop it
+    addiu t0, zero, {TRACE_FLAGS}    ; kIsGunshot: what a round would hit ...
+    addiu t1, zero, {TRACE_MASK}     ; ... through faces a round passes (kGunshotTransparent)
+{_li_f(12, AIM_RANGE)}    move  t3, zero
+    jal   FLC                        ; RSSimRoom::FindLineCollision
+    addiu t2, zero, 1
+    lw    t9, 0({SH})
+    lb    a2, 0x1e7({SH})            ; the slot that fires
+    lw    t9, {g['SHOOTFROM']:#x}(t9)  ; GetShootFromLocation: the stock shot origin O
+    move  a1, {SH}
+    jalr  t9
+    addiu a0, sp, 0x80
+    lwc1  $f3, 0x54(sp)              ; t = info +0x34: distance to the hit, or the range
+    lwc1  $f0, 0x00(sp)              ; aim = C + t*V - O (the reticle point P - O)
+    lwc1  $f4, {LV:#x}(sp)
+    lwc1  $f5, 0x80(sp)
+    mul.s $f6, $f4, $f3
+    sub.s $f0, $f0, $f5
+    add.s $f0, $f0, $f6
+    lwc1  $f1, 0x04(sp)
+    mul.s $f7, $f0, $f4              ; aim . V
+    swc1  $f0, 0x90(sp)
+    lwc1  $f4, {LV + 4:#x}(sp)
+    lwc1  $f5, 0x84(sp)
+    mul.s $f6, $f4, $f3
+    sub.s $f1, $f1, $f5
+    add.s $f1, $f1, $f6
+    lwc1  $f2, 0x08(sp)
+    mul.s $f6, $f1, $f4
+    swc1  $f1, 0x94(sp)
+    add.s $f7, $f7, $f6
+    lwc1  $f4, {LV + 8:#x}(sp)
+    lwc1  $f5, 0x88(sp)
+    mul.s $f6, $f4, $f3
+    sub.s $f2, $f2, $f5
+    add.s $f2, $f2, $f6
+    swc1  $f2, 0x98(sp)
+    mul.s $f6, $f2, $f4
+    lui   at, {ahead >> 16:#06x}             ; {AIM_AHEAD} m
+    mtc1  at, $f8
+    add.s $f7, $f7, $f6
+    c.lt.s $f8, $f7                  ; P lies ahead of the origin: turn onto it
+    addiu t0, sp, 0x90
+    bc1t  ab_aim
     nop
-    lw    t2, 4(t1)
-    beq   t2, a0, so_found
-    nop
-so_cam2:
-    lw    t1, 0x448(t0)              ; GetSimCamera2
-    beqz  t1, so_done
-    nop
-    lw    t2, 4(t1)
-    bne   t2, a0, so_done
-    nop
-so_found:
-    lw    t2, 0x70(t1)
-    addiu t3, zero, 1
-    bne   t2, t3, so_done
-    nop
-    lwc1  $f0, {O:#x}(sp)
-    lwc1  $f1, 0x74(t1)
-    lwc1  $f2, {O + 4:#x}(sp)
-    add.s $f0, $f0, $f1
-    lwc1  $f3, 0x78(t1)
-    swc1  $f0, {O:#x}(sp)
-    add.s $f2, $f2, $f3
-    lwc1  $f0, {O + 8:#x}(sp)
-    lwc1  $f1, 0x7c(t1)
-    swc1  $f2, {O + 4:#x}(sp)
-    add.s $f0, $f0, $f1
-    nop
-    swc1  $f0, {O + 8:#x}(sp)
-so_done:
-    move  a0, {g['UB_MSG']}
-    j     ADDVEC
-    addiu a1, sp, {O:#x}
+ab_set:
+    lw    t0, 0x9c(sp)
+ab_aim:
+    lw    a0, 0xa8(sp)
+    lw    a1, 0xac(sp)
+    jal   QSET
+    move  a2, t0
+    ld    ra, 0xa0(sp)
+    jr    ra
+    addiu sp, sp, 0xb0
 """
 
 
@@ -340,10 +453,10 @@ def _patches(g, cam_a, lb):
                 (0x003AA198, 0x8C990000, 0x00000000, "placed: nop"),
             ],
             "aim": [
-                (0x003D2C3C, 0x0C0E27D8, jal(lb["aim_from"]), "locked-on shot (player 1) aims from the camera line"),
-                (0x003D2D0C, 0x0C0E27D8, jal(lb["aim_from"]), "locked-on shot (player 2) aims from the camera line"),
-                (0x003D2DE8, 0x72A02628, jal(lb["shot_origin"]), "shot origin onto the camera line"),
-                (0x003D2DEC, 0x0C0D6580, 0x0280202D, "shot origin: a0 = shooter"),
+                (0x003D2C3C, 0x0C0E27D8, jal(lb["aim_from"]), "locked-on shot (player 1) aims from the shot origin"),
+                (0x003D2D0C, 0x0C0E27D8, jal(lb["aim_from"]), "locked-on shot (player 2) aims from the shot origin"),
+                (g["AIMBASE"][0], g["AIMBASE"][1], jal(lb["aim_base"]),
+                 "free shots turn onto the reticle point"),
             ],
             "default_tp": [
                 (0x003A6DF0, 0x44806000, 0x24020001, "SimCamera starts in third person"),
@@ -370,10 +483,10 @@ def _patches(g, cam_a, lb):
             (0x00389E4C, 0x8C990000, 0x920200DD, "placed: v0 as 0x389f00 expects"),
         ],
         "aim": [
-            (0x003B22C8, 0x0C0D9E7C, jal(lb["aim_from"]), "locked-on shot (player 1) aims from the camera line"),
-            (0x003B2398, 0x0C0D9E7C, jal(lb["aim_from"]), "locked-on shot (player 2) aims from the camera line"),
-            (0x003B2474, 0x0200202D, jal(lb["shot_origin"]), "shot origin onto the camera line"),
-            (0x003B2478, 0x0C053838, 0x02A0202D, "shot origin: a0 = shooter"),
+            (0x003B22C8, 0x0C0D9E7C, jal(lb["aim_from"]), "locked-on shot (player 1) aims from the shot origin"),
+            (0x003B2398, 0x0C0D9E7C, jal(lb["aim_from"]), "locked-on shot (player 2) aims from the shot origin"),
+            (g["AIMBASE"][0], g["AIMBASE"][1], jal(lb["aim_base"]),
+             "free shots turn onto the reticle point"),
         ],
         "default_tp": [
             (0x003869FC, 0x44806000, 0x24030001, "SimCamera starts in third person"),
@@ -443,14 +556,56 @@ _DROPSHADOW = (
     "e48d0018 e4880028 03e00008 e4810038")
 
 
+# the third cave: GR sceMcRename, JS lgAudWriteVag (the USB headset library's)
+_CAVE_C_STOCK = {
+    "gr": (
+        "27bdff70 ffb50060 ffb40050 3c150057 0080a02d ffb30040 ffb20030 00a0982d"
+        "ffb00010 00e0902d 8ea4f014 00c0802d ffbf0080 ffb60070 0c1046cc ffb10020"
+        "04410003 3c02005f 1000003d 2402ff38 24560b40 8ec30024 14600005 00000000"
+        "0c1046c0 8ea4f014 10000035 2402ff9c 12000006 00000000 82020000 10400003"
+        "00000000 16400005 3c02005f 0c1046c0 8ea4f014 1000002a 2402ff2e 24030010"
+        "24510bf0 ac540bf0 0200282d ae330004 ae230008 26240014 0c101c9c 240603ff"
+        "3c10005f 0240282d 26100ba0 a2200413 0200202d 0c101c9c 24060020 2610ffe0"
+        "0000202d ae300010 0c104758 a200003f 3c09005f 02c0202d 0220382d 25292100"
+        "afa00000 2405000e 24060001 24080414 240a0004 0c10531c 0000582d 0040802d"
+        "16000004 3c030057 24020013 10000003 ac62f010 0c1046c0 8ea4f014 0200102d"
+        "dfbf0080 dfb60070 dfb50060 dfb40050 dfb30040 dfb20030 dfb10020 dfb00010"
+        "03e00008 27bd0090"),
+    "js": (
+        "27bdffb0 3c030058 ffb50038 2475c614 8ea90000 3c028000 2408ffff ffb00010"
+        "ffb10018 00e0882d ffb30028 0080982d ffb40030 00a0a02d ffb20020 00c0802d"
+        "ffbf0040 11280041 3442000a 16000004 3c04005a 1000000b 2484f610 00000000"
+        "12200006 3c020058 8e240000 8c43c604 0064182a 10600008 00000000 3c04005a"
+        "2484f638 0c05adde 00000000 3c028000 1000002e 34420004 0c05e8c8 0120202d"
+        "3c030058 2472c60c 0200282d 8e460000 acd3000c 24c40030 8e220000 acc20020"
+        "0c05a8d6 8e260000 8e430000 3c040069 24050015 a0740012 24841240 0000302d"
+        "240a0030 8e280000 0000582d 8e470000 2508003f afa00000 00084103 00e0482d"
+        "0c05f5aa 00084100 3c04005a 1440000a 2484f670 8e420000 8c430020 8c500000"
+        "ae230000 0c05e8c0 8ea40000 10000007 0200102d 00000000 0c05adde ae200000"
+        "0c05e8c0 8ea40000 3c028000 dfb00010 dfb10018 dfb20020 dfb30028 dfb40030"
+        "dfb50038 dfbf0040 03e00008 27bd0050"),
+}
+
+#: sites an earlier version hooked (the Gunshot origin moved onto the camera line, which let
+#: rounds clear cover the soldier was behind). Nothing writes them now; they stay in the stock
+#: table so a disc patched by that version gets them put back.
+RETIRED = {
+    "gr": ((0x003D2DE8, 0x72A02628), (0x003D2DEC, 0x0C0D6580)),
+    "js": ((0x003B2474, 0x0200202D), (0x003B2478, 0x0C053838)),
+}
+
+
 def _stock_table(game):
     g = GAMES[game]
     t = _stock_words(g["CAVE_A"], _DEVCONS[game])
     t.update(_stock_words(g["CAVE_B"], _DROPSHADOW))
-    for rows in _patches(g, g["CAVE_A"], {"aim_from": g["CAVE_B"],
-                                          "shot_origin": g["CAVE_B"]}).values():
+    t.update(_stock_words(g["CAVE_C"], _CAVE_C_STOCK[game]))
+    for rows in _patches(g, g["CAVE_A"], {"aim_from": g["CAVE_A"],
+                                          "aim_base": g["CAVE_B"]}).values():
         for va, stock, _new, _note in rows:
             t[va] = stock
+    for va, stock in RETIRED[game]:
+        t[va] = stock
     return t
 
 
@@ -710,36 +865,822 @@ def unhide_edits(game):
     return out
 
 
-#: camera distance choices (metres back from the eye); "preset" keeps the preset's
-DISTANCES = ("preset", "1.75", "2.0", "2.25", "2.5", "2.75", "3.0")
+# ---------------------------------------------------------------------------
+# Third person: show when cover blocks the shot (Jungle Storm)
+# ---------------------------------------------------------------------------
+#
+# Rounds leave the soldier's eye and fly at P, the point under the reticle
+# (``aim_base``). When the camera sees over cover his eye is behind, the
+# reticle sits on open ground while the rounds hit the cover. This shows it.
+# Just before the reticle is drawn, ``tp_mark`` checks aim_base's conditions
+# for that view's soldier (third person, placed by cam_tp and converging, a
+# player's soldier) and makes one line trace a frame, the two in turn: the
+# camera line (aim_base's trace, giving P) and the round's own line from the
+# stock origin O towards P, from the room HandleGunshot traces from. P, the hit
+# and the verdict are kept per view (64 bytes at the end of cave E) and
+# cleared whenever the conditions fail. If the round's line meets anything
+# more than 0.5 m short of P -- scenery or another soldier; the soldier himself
+# is ignored -- the reticle itself is drawn amber where the round would hit,
+# over any friend/foe colour; if that point is off screen, it is drawn amber
+# in its own place, so there is always one reticle.
+#
+# The reticle is ReticuleDisplay (a UIQuadModel: one GIF REGLIST packet, 5
+# quads of 2 triangles, RGBAQ + UV/XYZ2 x 3 each, 7 quadwords a quad).
+# ReticuleDisplay::Draw (0x0025EBE0) ends with UIModel::Draw(this), which
+# UIPacket::AddModel copies into the frame's packet; the hook replaces that
+# call. When blocked, it saves the model's packet, writes amber into its
+# RGBAQs, moves every vertex by the hit's offset from the view's centre
+# (projected with the reticle's own world->screen call 0x0041EAF0 for that
+# view) when that keeps it on screen, draws it once and puts the packet back,
+# so nothing the game set is left changed. A packet of another shape (sniper,
+# binoculars) is drawn as is. (The first build drew the reticle in place and a
+# 5/8 copy at the hit; in split screen that copy landed in the wrong half.) Cost: one line trace a frame per
+# third-person view (the same trace a round makes: 20k-1.1M EE instructions in
+# the interpreter on the test saves, dense scenery costing most) and, while
+# blocked, one projection.
+BLOCKED = {
+    "js": dict(
+        HOOK=0x0025EF20, HOOK_STOCK=0x0C05686C,   # ReticuleDisplay::Draw: jal UIModel::Draw (a0 = this)
+        UIDRAW=0x0015A1B0,                        # UIModel::Draw: UIPacket::AddModel(packet, this)
+        PROJ=0x0041EAF0,                          # world -> GS (api, view, out, in, 0), as the reticle calls it
+        GFX=0x0067CF40,                           # its graphics API is *this + 0x100
+        SHOOTROOM=0x158,                          # SimHuman: GetShootFromSimRoom (IkeSimController +0x158)
+        CAVE_D=0x005544B0, CAVE_D_BYTES=784,      # three unreferenced lgAud-library functions
+        CAVE_E=0x00554950, CAVE_E_BYTES=600,      # three more, all unreferenced
+        STOCK_D=(
+            "27bdffc0 3c030058 ffb10018 2471c614 8e230000 3c028000 2406ffff ffb00010"
+            "ffb30028 00a0982d 0080802d 0060202d ffb20020 3442000a 10660020 ffbf0030"
+            "0c05e8c8 00000000 3c030058 2472c60c 3c040069 8e470000 0000302d 24050012"
+            "24080020 acf0000c 24841240 00e0482d 240a0030 0000582d 0c05f5aa afa00000"
+            "54400009 3c04005a 8e420000 8c430020 8c500000 ae630000 0c05e8c0 8e240000"
+            "10000006 0200102d 0c05adde 2484f738 0c05e8c0 8e240000 3c028000 dfb00010"
+            "dfb10018 dfb20020 dfb30028 dfbf0030 03e00008 27bd0040 27bdffc0 3c030058"
+            "ffb30028 2473c614 8e630000 3c028000 2406ffff ffb10018 ffb20020 0080902d"
+            "ffb00010 00a0882d ffbf0030 10660033 3442000a 16200008 00000000 3c04005a"
+            "0c05adde 2484f690 3c028000 1000002b 34420004 00000000 0c05e8c8 0060202d"
+            "3c030058 2470c60c 3c040069 8e020000 24841240 2405000b 0000302d ac52000c"
+            "24080030 6a230007 6e230000 6a27000f 6e270008 b0430027 b4430020 b047002f"
+            "b4470028 240a0030 afa00000 0000582d 8e070000 0c05f5aa 00e0482d 3c04005a"
+            "14400009 2484f6b8 8e020000 8e640000 9443002c 8c500000 0c05e8c0 a623000c"
+            "10000006 0200102d 0c05adde 00000000 0c05e8c0 8e640000 3c028000 dfb00010"
+            "dfb10018 dfb20020 dfb30028 dfbf0030 03e00008 27bd0040 27bdffc0 3c030058"
+            "ffb30028 2473c614 8e630000 3c028000 2406ffff ffb10018 ffb20020 0080902d"
+            "ffb00010 00a0882d ffbf0030 10660031 3442000a 16200008 00000000 3c04005a"
+            "0c05adde 2484f6d8 3c028000 10000029 34420004 00000000 0c05e8c8 0060202d"
+            "3c030058 2470c60c 3c040069 8e020000 24841240 2405000c 0000302d ac52000c"
+            "24080030 6a230007 6e230000 6a27000f 6e270008 b0430027 b4430020 b047002f"
+            "b4470028 240a0030 afa00000 0000582d 8e070000 0c05f5aa 00e0482d 3c04005a"
+            "14400007 2484f6b8 8e020000 8e640000 0c05e8c0 8c500000 10000006 0200102d"
+            "0c05adde 00000000 0c05e8c0 8e640000 3c028000 dfb00010 dfb10018 dfb20020"
+            "dfb30028 dfbf0030 03e00008 27bd0040"),
+        STOCK_E=(
+            "27bdffd0 3c030058 ffb10018 2471c614 8e230000 3c028000 2405ffff ffb00010"
+            "ffb20020 3442000a 0080802d 0060202d 1065001e ffbf0028 0c05e8c8 00000000"
+            "3c030058 2472c60c 3c040069 8e470000 24050006 0000302d 24080020 acf0000c"
+            "24841240 00e0482d 240a0020 0000582d 0c05f5aa afa00000 14400007 3c04005a"
+            "8e420000 8e240000 0c05e8c0 8c500000 10000006 0200102d 0c05adde 2484f798"
+            "0c05e8c0 8e240000 3c028000 dfb00010 dfb10018 dfb20020 dfbf0028 03e00008"
+            "27bd0030 00000000 27bdffd0 3c030058 ffb10018 2471c614 8e230000 3c028000"
+            "2405ffff ffb00010 ffb20020 3442000a 0080802d 0060202d 1065001e ffbf0028"
+            "0c05e8c8 00000000 3c030058 2472c60c 3c040069 8e470000 24050007 0000302d"
+            "24080020 acf0000c 24841240 00e0482d 240a0020 0000582d 0c05f5aa afa00000"
+            "14400007 3c04005a 8e420000 8e240000 0c05e8c0 8c500000 10000006 0200102d"
+            "0c05adde 2484f7c0 0c05e8c0 8e240000 3c028000 dfb00010 dfb10018 dfb20020"
+            "dfbf0028 03e00008 27bd0030 00000000 27bdffd0 3c030058 ffb10018 2471c614"
+            "8e230000 3c028000 2405ffff ffb00010 ffb20020 3442000a 0080802d 0060202d"
+            "1065001e ffbf0028 0c05e8c8 00000000 3c030058 2472c60c 3c040069 8e470000"
+            "24050011 0000302d 24080020 acf0000c 24841240 00e0482d 240a0020 0000582d"
+            "0c05f5aa afa00000 14400007 3c04005a 8e420000 8e240000 0c05e8c0 8c500000"
+            "10000006 0200102d 0c05adde 2484f7e8 0c05e8c0 8e240000 3c028000 dfb00010"
+            "dfb10018 dfb20020 dfbf0028 03e00008 27bd0030 00000000"),
+    ),
+}
+#: the blocked colour, GS scale (0x80 = full): amber, (255, 160, 0) -- not the reticle's
+#: red (0.94, 0.24, 0.24), green (0x4E, 0x9F, 0x2E), blue (0x5F, 0x84, 0xC3) or civilian grey
+BLOCKED_RGB = (0x80, 0x50, 0x00)
+#: the reticle moves to the hit only when it stays on screen: within MARK_X GS units of the view's
+#: centre sideways and MARK_Y up/down (MARK_Y_SPLIT in half of a split screen; a view is 640 x 448
+#: GS units, 640 x 224 split, and the reticle is 32 across). The projection (0x0041EAF0) answers
+#: in the view's own frame, centred on (2048, 2048); the reticle's quads are in the frame of the
+#: whole screen (a split-screen view's centre is 112 units above or below), so the reticle is
+#: moved by the projected point's offset from (2048, 2048).
+MARK_X, MARK_Y, MARK_Y_SPLIT = 300, 200, 95
+#: per-view state kept at the end of cave E (two views, 32 bytes each; zero on the disc)
+STATE_BYTES = 64
+#: the reticle's packet: GIF tag words 1-3 (NREG 14, REGLIST; RGBAQ, then UV/XYZ2 x 3, twice)
+_RET_TAG = (0xE4000000, 0x14343431, 0x00434343)
 
 
-def build(game, preset, aim_cam=True, distance="preset"):
-    """(words_a, labels_a, words_b, labels_b, patches) for a preset."""
+def _mark_srcs(g, b):
+    """(part in cave D, part in cave E).
+
+    Frame: line +0, info +0x20, O +0x80, H (x, y, z, 1) +0xB0, projected H +0xC0, V +0xD0,
+    reach +0xDC, mark flag +0xE0, quads +0xE4, room +0xE8, which trace +0xEC, the saved packet
+    +0x100 (36 quadwords), ra/s0-s4 +0x340. State per view, 32 bytes at STATE + 32 * view:
+    P +0, its camera +0xC (0 = none), H +0x10, phase byte +0x1C, blocked byte +0x1D."""
+    LV = g["LINE_V"]
+    R, G_, B = BLOCKED_RGB
+    cvt = lambda fd, fs: ".word %#x" % (0x46000024 | (fs << 11) | (fd << 6))   # cvt.w.s
+    part_d = f"""
+tp_mark:                             ; a0 = the ReticuleDisplay being drawn (UIModel::Draw's stand-in)
+    addiu sp, sp, -0x3a0
+    sd    ra, 0x340(sp)
+    sq    s0, 0x350(sp)
+    sq    s1, 0x360(sp)
+    sq    s2, 0x370(sp)
+    sq    s3, 0x380(sp)
+    sq    s4, 0x390(sp)
+    move  s0, a0
+    lw    t0, 0xd8(s0)               ; split number: above 0 is the second player's view
+    slt   s4, zero, t0               ; view 0 / 1, as ReticuleDisplay reads it
+    sll   t0, s4, 5
+    lui   s3, %hi(STATE)
+    addiu s3, s3, %lo(STATE)
+    addu  s3, s3, t0                 ; this view's state
+    lui   t1, %hi(SIMMGR)
+    lw    t1, %lo(SIMMGR)(t1)
+    beqz  t1, tm_off
+    sll   t0, s4, 2
+    addu  t1, t1, t0
+    lw    s1, 0x444(t1)              ; that view's SimCamera
+    beqz  s1, tm_off
+    addiu t2, zero, 1
+    lw    t0, 0x70(s1)               ; third person ...
+    bne   t0, t2, tm_off
+    lw    t0, 0x74(s1)               ; ... placed by cam_tp, shots converging (aim_base's test)
+    bne   t0, t2, tm_off
+    lw    s2, 4(s1)                  ; the soldier
+    beqz  s2, tm_off
+    nop
+    lw    t0, 0x138(s2)              ; a player's
+    bnez  t0, tm_off
+    lw    t0, 0x30(s1)               ; the camera's room
+    beqz  t0, tm_off
+    lwc1  $f0, 0x8c(s1)              ; V
+    lwc1  $f1, 0x90(s1)
+    lwc1  $f2, 0x94(s1)
+    swc1  $f0, 0xd0(sp)
+    swc1  $f1, 0xd4(sp)
+    swc1  $f2, 0xd8(sp)
+    lbu   t0, 0x1c(s3)               ; one trace a frame: the camera line and the round's line in turn
+    lw    t1, 0xc(s3)
+    bne   t1, s1, tm_cam             ; no P for this camera yet
+    nop
+    bnez  t0, tm_round               ; 1: the round's line is next
+    nop
+tm_cam:                              ; P: the camera line, traced as aim_base traces it
+    lwc1  $f3, 0x10(s1)
+    lwc1  $f4, 0x14(s1)
+    lwc1  $f5, 0x18(s1)
+    swc1  $f3, 0x00(sp)
+    swc1  $f4, 0x04(sp)
+    swc1  $f5, 0x08(sp)
+    swc1  $f0, {LV:#x}(sp)
+    swc1  $f1, {LV + 4:#x}(sp)
+    swc1  $f2, {LV + 8:#x}(sp)
+    lw    t0, 0x30(s1)
+{_li_f(0, AIM_RANGE)}    sw    t0, 0xe8(sp)
+    swc1  $f0, 0xdc(sp)
+    b     tm_trace
+    sw    zero, 0xec(sp)
+tm_round:                            ; the round's line: O towards P
+    lw    t9, 0(s2)                  ; O = GetShootFromLocation
+    lb    a2, 0x1e7(s2)
+    lw    t9, {g['SHOOTFROM']:#x}(t9)
+    move  a1, s2
+    jalr  t9
+    addiu a0, sp, 0x80
+    sh    zero, 0x1c(s3)             ; the camera line next; not blocked until this trace says so
+    lwc1  $f0, 0x00(s3)              ; D = P - O
+    lwc1  $f3, 0x80(sp)
+    lwc1  $f1, 0x04(s3)
+    lwc1  $f4, 0x84(sp)
+    lwc1  $f2, 0x08(s3)
+    lwc1  $f5, 0x88(sp)
+    sub.s $f0, $f0, $f3
+    sub.s $f1, $f1, $f4
+    sub.s $f2, $f2, $f5
+    swc1  $f3, 0x00(sp)
+    swc1  $f4, 0x04(sp)
+    swc1  $f5, 0x08(sp)
+    lwc1  $f3, 0xd0(sp)
+    lwc1  $f4, 0xd4(sp)
+    lwc1  $f5, 0xd8(sp)
+    mul.s $f6, $f0, $f3              ; D . V
+    mul.s $f7, $f1, $f4
+    add.s $f6, $f6, $f7
+    mul.s $f7, $f2, $f5
+    add.s $f6, $f6, $f7
+    lui   at, 0x3f00                 ; 0.5 m
+    mtc1  at, $f9
+    mul.s $f7, $f0, $f0
+    c.lt.s $f9, $f6                  ; P ahead of O, as aim_base requires
+    mul.s $f8, $f1, $f1
+    bc1f  tm_show
+    add.s $f7, $f7, $f8
+    mul.s $f8, $f2, $f2
+    add.s $f7, $f7, $f8
+    sqrt.s $f7, $f7                  ; |D|
+    nop
+    nop
+    sub.s $f10, $f7, $f9             ; reach: anything met before |D| - 0.5 blocks
+    c.lt.s $f9, $f10
+    div.s $f11, $f9, $f7
+    bc1f  tm_show
+    swc1  $f10, 0xdc(sp)
+    nop
+    add.s $f11, $f11, $f11           ; 1 / |D|
+    mul.s $f0, $f0, $f11
+    mul.s $f1, $f1, $f11
+    mul.s $f2, $f2, $f11
+    lw    t0, {b['SHOOTROOM']:#x}(s2)    ; the room HandleGunshot traces a round from
+    swc1  $f0, {LV:#x}(sp)
+    swc1  $f1, {LV + 4:#x}(sp)
+    swc1  $f2, {LV + 8:#x}(sp)
+    beqz  t0, tm_show
+    sw    t0, 0xe8(sp)
+    addiu t0, zero, 1
+    sw    t0, 0xec(sp)
+tm_trace:                            ; RSSimRoom::FindLineCollision as HandleGunshot calls it
+    jal   LCINFO
+    addiu a0, sp, 0x20
+    lw    a0, 0xe8(sp)
+    addiu a1, sp, 0x00
+    addiu a2, sp, 0x20
+    move  a3, s2                     ; the soldier himself does not stop it
+    addiu t0, zero, {TRACE_FLAGS}
+    addiu t1, zero, {TRACE_MASK}
+    lwc1  $f12, 0xdc(sp)
+    move  t3, zero
+    jal   FLC
+    addiu t2, zero, 1
+    lwc1  $f3, 0x54(sp)              ; t
+    lwc1  $f0, {LV:#x}(sp)           ; start + t * direction: P, or the hit H
+    lwc1  $f4, 0x00(sp)
+    lwc1  $f1, {LV + 4:#x}(sp)
+    mul.s $f0, $f0, $f3
+    lwc1  $f5, 0x04(sp)
+    mul.s $f1, $f1, $f3
+    lwc1  $f2, {LV + 8:#x}(sp)
+    lwc1  $f6, 0x08(sp)
+    mul.s $f2, $f2, $f3
+    add.s $f0, $f0, $f4
+    add.s $f1, $f1, $f5
+    add.s $f2, $f2, $f6
+    lw    t0, 0xec(sp)
+    bnez  t0, tm_hit
+    andi  v0, v0, 0xff
+    swc1  $f0, 0x00(s3)              ; camera line: P for the next frame, whose trace is the round's
+    swc1  $f1, 0x04(s3)
+    swc1  $f2, 0x08(s3)
+    addiu t1, zero, 1
+    sb    t1, 0x1c(s3)
+    b     tm_show
+    sw    s1, 0xc(s3)
+tm_hit:                              ; round's line: blocked if it met anything short of the reach
+    swc1  $f0, 0x10(s3)
+    swc1  $f1, 0x14(s3)
+    swc1  $f2, 0x18(s3)
+    sb    v0, 0x1d(s3)
+tm_show:
+    lbu   t0, 0x1d(s3)
+    beqz  t0, tm_plain               ; clear: the reticle as it is
+    lwc1  $f0, 0x10(s3)              ; blocked: H, and whether it is in front of the camera
+    lwc1  $f1, 0x14(s3)
+    lwc1  $f2, 0x18(s3)
+    lui   at, 0x3f80
+    swc1  $f0, 0xb0(sp)
+    swc1  $f1, 0xb4(sp)
+    swc1  $f2, 0xb8(sp)
+    sw    at, 0xbc(sp)
+    lwc1  $f3, 0x10(s1)              ; (H - C) . V > 0.25
+    lwc1  $f4, 0x14(s1)
+    lwc1  $f5, 0x18(s1)
+    sub.s $f0, $f0, $f3
+    sub.s $f1, $f1, $f4
+    sub.s $f2, $f2, $f5
+    lwc1  $f3, 0xd0(sp)
+    lwc1  $f4, 0xd4(sp)
+    lwc1  $f5, 0xd8(sp)
+    mul.s $f0, $f0, $f3
+    mul.s $f1, $f1, $f4
+    mul.s $f2, $f2, $f5
+    add.s $f0, $f0, $f1
+    lui   at, 0x3e80
+    add.s $f0, $f0, $f2
+    mtc1  at, $f1
+    sw    zero, 0xe0(sp)
+    c.lt.s $f1, $f0
+    nop
+    bc1f  tm_draw
+    nop
+    addiu t0, zero, 1                ; in front: project H into this view, as the reticle
+    sw    t0, 0xe0(sp)               ;   projects its target
+    lui   t0, %hi(GFX)
+    lw    t0, %lo(GFX)(t0)
+    j     tm_proj
+    addiu a0, t0, 0x100
+"""
+    part_e = f"""
+tm_proj:                             ; a0 = the graphics API
+    move  a1, s4                     ; this view
+    addiu a2, sp, 0xc0
+    addiu a3, sp, 0xb0
+    jal   PROJ
+    move  t0, zero
+tm_draw:                             ; blocked: amber reticle, and its copy at the hit
+    lw    s1, 8(s0)                  ; the model's GIF packet
+    beqz  s1, tm_plain
+    lui   t1, {_RET_TAG[0] >> 16:#x}
+    lw    t0, 4(s1)
+    bne   t0, t1, tm_plain
+    lui   t1, {_RET_TAG[1] >> 16:#x}
+    ori   t1, t1, {_RET_TAG[1] & 0xFFFF:#x}
+    lw    t0, 8(s1)
+    bne   t0, t1, tm_plain
+    lui   t1, {_RET_TAG[2] >> 16:#x}
+    ori   t1, t1, {_RET_TAG[2] & 0xFFFF:#x}
+    lw    t0, 0xc(s1)
+    bne   t0, t1, tm_plain
+    lhu   t4, 0(s1)
+    andi  t4, t4, 0x7fff             ; quads
+    beqz  t4, tm_plain
+    sltiu t0, t4, 6
+    beqz  t0, tm_plain
+    sw    t4, 0xe4(sp)
+    sll   t5, t4, 3                  ; save 7 * quads + 1 quadwords
+    subu  t5, t5, t4
+    addiu t5, t5, 1
+    move  t6, s1
+    addiu t7, sp, 0x100
+tm_save:
+    lq    t0, 0(t6)
+    addiu t5, t5, -1
+    sq    t0, 0(t7)
+    addiu t6, t6, 16
+    bnez  t5, tm_save
+    addiu t7, t7, 16
+    addiu t6, s1, 16                 ; each quad's two RGBAQs (+0, +0x38) -> amber
+    move  t5, t4
+    addiu t0, zero, {R:#x}
+    addiu t1, zero, {G_:#x}
+    addiu t2, zero, {B:#x}
+tm_tint:
+    sb    t0, 0(t6)
+    sb    t1, 1(t6)
+    sb    t2, 2(t6)
+    sb    t0, 0x38(t6)
+    sb    t1, 0x39(t6)
+    sb    t2, 0x3a(t6)
+    addiu t5, t5, -1
+    bnez  t5, tm_tint
+    addiu t6, t6, 0x70
+    lw    t0, 0xe0(sp)               ; in front of the camera: the reticle itself goes to the hit
+    beqz  t0, tm_one
+    lwc1  $f0, 0xc0(sp)              ; the hit in GS 12.4
+    lwc1  $f1, 0xc4(sp)
+    lui   at, 0x4180
+    mtc1  at, $f2
+    nop
+    mul.s $f0, $f0, $f2
+    mul.s $f1, $f1, $f2
+    {cvt(0, 0)}
+    {cvt(1, 1)}
+    mfc1  t2, $f0
+    mfc1  t3, $f1
+    addiu t2, t2, -0x8000            ; the move, 12.4: the projection is centred on this view (2048,
+    addiu t3, t3, -0x8000            ;   2048); the reticle's quads carry the split-screen offset
+    addiu t0, t2, {MARK_X * 16:#x}             ; on screen: within {MARK_X} GS sideways ...
+    sltiu t0, t0, {MARK_X * 32:#x}
+    beqz  t0, tm_one
+    lw    t1, 0xd8(s0)
+    addiu t5, zero, {MARK_Y * 16:#x}           ; ... and {MARK_Y} GS up or down for a view on its own,
+    beqz  t1, tm_ylim
+    nop
+    addiu t5, zero, {MARK_Y_SPLIT * 16:#x}     ; {MARK_Y_SPLIT} for half of a split screen
+tm_ylim:
+    addu  t0, t3, t5
+    sll   t1, t5, 1
+    sltu  t0, t0, t1
+    beqz  t0, tm_one                 ; off screen: the amber reticle stays in place
+    lw    t4, 0xe4(sp)
+    addiu t6, s1, 16
+tm_quad:
+    addiu t7, t6, 16                 ; XYZ2 at +0x10, +0x20, +0x30, +0x48, +0x58, +0x68
+    addiu t5, zero, 6
+tm_vtx:
+    lhu   t0, 0(t7)                  ; every vertex moved by the hit's offset from the view's centre
+    addu  t0, t0, t2
+    sh    t0, 0(t7)
+    lhu   t0, 2(t7)
+    addu  t0, t0, t3
+    sh    t0, 2(t7)
+    addiu t5, t5, -1
+    addiu t0, zero, 3
+    bne   t5, t0, tm_next
+    addiu t7, t7, 16
+    addiu t7, t7, 8
+tm_next:
+    bnez  t5, tm_vtx
+    nop
+    addiu t4, t4, -1
+    bnez  t4, tm_quad
+    addiu t6, t6, 0x70
+tm_one:
+    jal   UIDRAW                     ; one reticle, amber: at the hit, or in place if that is off screen
+    move  a0, s0
+tm_restore:
+    lw    t4, 0xe4(sp)               ; the packet back as the game left it
+    sll   t5, t4, 3
+    subu  t5, t5, t4
+    addiu t5, t5, 1
+    move  t6, s1
+    addiu t7, sp, 0x100
+tm_load:
+    lq    t0, 0(t7)
+    addiu t5, t5, -1
+    sq    t0, 0(t6)
+    addiu t6, t6, 16
+    bnez  t5, tm_load
+    addiu t7, t7, 16
+    b     tm_out
+    nop
+tm_off:                              ; not ours this frame: forget this view's P and hit
+    sw    zero, 0xc(s3)
+    sb    zero, 0x1d(s3)
+tm_plain:                            ; UIModel::Draw as stock
+    jal   UIDRAW
+    move  a0, s0
+tm_out:
+    ld    ra, 0x340(sp)
+    lq    s0, 0x350(sp)
+    lq    s1, 0x360(sp)
+    lq    s2, 0x370(sp)
+    lq    s3, 0x380(sp)
+    lq    s4, 0x390(sp)
+    jr    ra
+    addiu sp, sp, 0x3a0
+"""
+    return part_d, part_e
+
+
+def build_mark(game):
+    """([(base, words, name)], labels) for the blocked-shot routine."""
+    g, b = GAMES[game], BLOCKED[game]
+    d, e = _mark_srcs(g, b)
+    syms = {"SIMMGR": g["SIMMGR"], "LCINFO": g["LCINFO"], "FLC": g["FLC"],
+            "UIDRAW": b["UIDRAW"], "PROJ": b["PROJ"], "GFX": b["GFX"]}
+    state = b["CAVE_E"] + b["CAVE_E_BYTES"] - STATE_BYTES
+    syms["STATE"] = state
+    we, le = assemble(e, b["CAVE_E"], syms)
+    syms.update(le)
+    wd, ld = assemble(d, b["CAVE_D"], syms)
+    if len(wd) * 4 > b["CAVE_D_BYTES"] or b["CAVE_E"] + len(we) * 4 > state:
+        raise ValueError("%s: the blocked-shot routine outgrows its caves" % game)
+    we = we + [0] * ((state - b["CAVE_E"]) // 4 - len(we)) + [0] * (STATE_BYTES // 4)
+    return ([(b["CAVE_D"], wd, "lgAud (unreferenced)"), (b["CAVE_E"], we, "lgAud (unreferenced)")],
+            dict(ld, **le, STATE=state))
+
+
+def blocked_edits(game):
+    """[(va, value, stock, note)]: amber reticle and a mark where the round would hit."""
+    if game not in BLOCKED:
+        return []
+    b = BLOCKED[game]
+    stock = GR_STOCK if game == "gr" else JS_STOCK
+    caves, labels = build_mark(game)
+    out = []
+    for base, words, where in caves:
+        out += [(base + 4 * i, w, stock[base + 4 * i],
+                 "third-person camera: blocked-shot routine in " + where) for i, w in enumerate(words)]
+    out.append((b["HOOK"], assemble("jal %#x" % labels["tp_mark"], b["HOOK"])[0][0], b["HOOK_STOCK"],
+                "third-person camera: the reticle is drawn through tp_mark"))
+    return out
+
+
+for _g, _b in BLOCKED.items():
+    _t = GR_STOCK if _g == "gr" else JS_STOCK
+    _t.update(_stock_words(_b["CAVE_D"], _b["STOCK_D"]))
+    _t.update(_stock_words(_b["CAVE_E"], _b["STOCK_E"]))
+    _t[_b["HOOK"]] = _b["HOOK_STOCK"]
+
+
+
+# ---------------------------------------------------------------------------
+# Third person near scenery: trees, slopes, and no jumping (``cam_fix``)
+# ---------------------------------------------------------------------------
+#
+# SimCamera::PlaceCamera sweeps a 0.3 m sphere from S (eye + H up) back along
+# w; RSSimRoom::FindSphereCollision there ignores every controller
+# (kLineIgnoreAllControllers) and the result is used as it is, every frame.
+# Near scenery that gave three things: something the sweep does not stop on
+# between the camera and the soldier; a camera pulled in towards S keeps its
+# height, so the soldier drops to the bottom of the screen (H above the eye
+# over a shorter distance); and every change of the sweep is instant, so he
+# jumps between frames on broken ground.
+#
+# ``cam_fix`` runs after PlaceCamera, before the floor clamp:
+#   * framing: the camera goes on the line from the eye through the
+#     full-distance camera (N = w + H up), as far from the eye as the sweep
+#     let it be -- pulled in, he stays where he was on screen and only grows,
+#     and ground rising behind brings it nearer rather than higher;
+#   * line of sight: that line from his eye is traced the way a round is
+#     traced (scenery, trees, vehicles and props; no soldier stops
+#     it; faces a round passes are passed) and the camera comes in to 0.3 m
+#     short of anything it meets;
+#   * easing: the distance from his eye shrinks at once (and any frame not
+#     asking for more re-arms the hold), holds for EASE_HOLD s, then may grow by at most EASE_RATE m/s (about 0.4 s from
+#     the eye to 2.75 m; RSClock's frame seconds) -- on broken ground where the
+#     sweep flickers, the camera stays in instead of jumping every frame.
+#     SimCamera+0x78/+0x7C (spare; the constructor zeroes them) keep the
+#     distance and the hold's end, and a zoom resets the distance;
+#   * the room: when it moved the camera, RSSimScene::FindRoom gives the room
+#     it is now in (PlaceCamera's is for where it put it).
+# Cost: one short line trace a frame per third-person view.
+EASE_RATE = 7.0         # m/s
+EASE_MARGIN = 0.3       # m short of what the line of sight meets
+EASE_HOLD = 0.3         # s without easing out after being pulled in
+#: its cave(s), per game
+CAMFIX = {
+    # part 2 (easing, placing, the room) goes after floor_clamp in sceMcRename (cave C)
+    "gr": dict(CAVE=0x004190F8, BYTES=520, CAVE2=0x00421FF8, BYTES2=232,
+               NAME="unreferenced SIF library routine", STOCK=(
+        "27bdff70 ffb60070 ffb30040 00e0b02d ffb10020 0080982d ffb00010 00a0882d"
+        "ffbf0080 00c0802d ffb50060 ffb40050 0c10634a ffb20030 04400069 3c02ffff"
+        "0c10638a 00000000 10400004 3c14005f 3c02fffe 10000062 3442fffc 0280a82d"
+        "2692f640 1200004a ae93f640 2a2200fd 14400042 0200282d 26440104 02041025"
+        "30420007 1040001a 0200382d 260200e0 3c05005f 68e30007 6ce30000 68e6000f"
+        "6ce60008 68e80017 6ce80010 68e9001f 6ce90018 b0830007 b4830000 b086000f"
+        "b4860008 b0880017 b4880010 b089001f b4890018 24e70020 24840020 00000000"
+        "14e2ffec 00000000 10000010 00000000 260200e0 3c05005f dcea0000 dce30008"
+        "dce60010 dce80018 fc8a0000 fc830008 fc860010 fc880018 24e70020 24840020"
+        "00000000 14e2fff4 00000000 68e90007 6ce90000 68ea000f 6cea0008 68e60017"
+        "6ce60010 88e8001b 98e80018 b0890007 b4890000 b08a000f b48a0008 b0860017"
+        "b4860010 a888001b 26a3f640 240200fc b8880018 10000008 ac620004 26440104"
+        "0c100e4c 0220302d 10000002 ae510004 ae400004 3c05005f 26b0f640 24a4f840"
+        "afa00000 24050007 0000302d 0200382d 24080200 0200482d 240a0008 0c10531c"
+        "0000582d 04430004 8e030004 3c02fffe 10000003 3442ffff 8e82f640 aec30000"
+        "dfbf0080 dfb60070 dfb50060 dfb40050 dfb30040 dfb20030 dfb10020 dfb00010"
+        "03e00008 27bd0090")),
+    # the head of NewPS2Shortcut (0x002A0970): its one caller (0x0029FDD0) runs only while
+    # mInstance (0x00629278) is set, and it is only ever stored as zero (0x0023AD4C)
+    "js": dict(CAVE=0x002A0970, BYTES=656, NAME="dead NewPS2Shortcut head", STOCK=(
+            "27bdfe80 ffbf00a0 7fbe0090 7fb70080 7fb60070 7fb50060 7fb40050 0080a82d"
+            "7fb30040 7fb20030 7fb10020 7fb00010 e7b50004 0c07f308 e7b40000 0040202d"
+            "0c07f304 24050003 0040a02d 0c08690c 0280202d 0c086928 0280202d 0c08e864"
+            "00000000 46000306 0c0835f0 0280202d 0c08e860 00000000 46000306 0c08c924"
+            "0280202d 240500ff 27a40160 00a0302d 0000382d 0c10d82c 00a0402d 240500ff"
+            "27a40150 00a0302d 00a0382d 0c10d82c 00a0402d 0000982d 27be0148 02a0202d"
+            "0c0a85dc 0260282d 1440000d 26a40030 44806000 27a40130 46006346 46006386"
+            "0c040d60 460063c6 0040302d 26a40030 0c09ae48 0260282d 10000252 26730001"
+            "0260282d 0c09ae4c 27a60150 3c020063 00131900 24429290 26a40030 00438021"
+            "0260282d 0c09ae48 0200302d 0c0a7d34 0260202d 0040902d 92a2002c 10400005"
+            "00000000 2642ffff 2c410003 14200010 00000000 92a3002d 10600003 00000000"
+            "1240000b 00000000 92a2002e 10400003 00000000 12400006 00000000 92a2002f"
+            "1040000a 2a62001f 16400008 00000000 3c010059 26a40030 c42cd290 0c09ad50"
+            "0260282d 10000226 00000000 1440009e 2a610031 1020009c 0003102b 38420001"
+            "0c049174 305600ff 8c590000 0040202d 8f390064 0320f809 0000282d 0c0529f8"
+            "0040802d 8c590000 0200282d 8f390038 0320f809 0040202d 0c049180 0040882d"
+            "8e390000 0040802d 8f39006c 0320f809 0220202d 8e390000 0040b82d 8f3900a8"
+            "0320f809 0220202d 8e190000 02e0282d 02c0382d 0200202d 8f390014 0320f809"
+            "0040302d 2643ffe7 2c610002 14200008 0000802d 2643ffed 2c610003 14200005"
+            "0040202d 2403001b 16430025 2643ffea 0040202d 0c099fd8 00000000 24030002"
+            "10430017 24030001 1043000d 00000000")),
+}
+
+
+def _cam_fix_src(g, H, L, D):
+    """(part 1, part 2): framing, line of sight and easing; placing and the room."""
+    E, LV = g["EYE"], g["LINE_V"]
+    W = (D * D + L * L) ** 0.5            # |w|: right is level and square to the look
+    if "SCENE" in g:
+        scene = "    lui   t0, %hi(SCENE)\n    lw    a0, %lo(SCENE)(t0)\n"
+    else:
+        scene = "    jal   SCENEGET\n    nop\n    move  a0, v0\n"
+    part1 = f"""
+cam_fix:                             ; a0 = SimCamera, just placed; cam_tp's frame above (S +0, w +0x10)
+    addiu sp, sp, -0xa0
+    sd    ra, 0x90(sp)
+    sq    s0, 0x80(sp)
+    move  s0, a0
+    lw    t0, 4(s0)                  ; the soldier
+    lwc1  $f6, {E:#x}(t0)            ; E, the eye: the line starts there
+    lwc1  $f7, {E + 4:#x}(t0)
+    lwc1  $f8, {E + 8:#x}(t0)
+    lwc1  $f3, 0x10(s0)              ; C, where PlaceCamera put it: how far from the eye
+    lwc1  $f4, 0x14(s0)
+    lwc1  $f5, 0x18(s0)
+    swc1  $f6, 0x00(sp)
+    sub.s $f3, $f3, $f6
+    swc1  $f7, 0x04(sp)
+    sub.s $f4, $f4, $f7
+    swc1  $f8, 0x08(sp)
+    sub.s $f5, $f5, $f8
+    mul.s $f3, $f3, $f3
+    mul.s $f4, $f4, $f4
+    add.s $f3, $f3, $f4
+    mul.s $f5, $f5, $f5
+    add.s $f3, $f3, $f5
+    sqrt.s $f0, $f3                  ; d = |C - E|
+    lwc1  $f3, 0xb0(sp)              ; N = w + H up: from the eye to the full-distance camera
+    lwc1  $f4, 0xb4(sp)
+{_li_f(1, H)}    lwc1  $f5, 0xb8(sp)
+    swc1  $f0, 0x70(sp)
+    add.s $f5, $f5, $f1
+    mul.s $f0, $f3, $f3
+    mul.s $f1, $f4, $f4
+    add.s $f0, $f0, $f1
+    mul.s $f1, $f5, $f5
+    add.s $f0, $f0, $f1
+    sqrt.s $f0, $f0                  ; |N|
+    lui   at, 0x3f80
+    mtc1  at, $f1
+    nop
+    div.s $f1, $f1, $f0
+    nop
+    nop
+    mul.s $f3, $f3, $f1              ; the camera goes along N / |N|: pulled in, he stays where he was
+    mul.s $f4, $f4, $f1              ;   on screen, and a slope brings it nearer rather than higher
+    mul.s $f5, $f5, $f1
+    swc1  $f3, {LV:#x}(sp)
+    swc1  $f4, {LV + 4:#x}(sp)
+    swc1  $f5, {LV + 8:#x}(sp)
+    jal   LCINFO
+    addiu a0, sp, 0x20
+    lw    a3, 4(s0)                  ; he does not stop it, nor does any soldier
+    addiu a1, sp, 0x00
+    lw    a0, 0x158(a3)              ; his room
+    addiu a2, sp, 0x20
+    addiu t0, zero, 0x12             ; kIsGunshot | kIgnoreHumanControllers
+    addiu t1, zero, {TRACE_MASK}     ; through faces a round passes (leaves)
+    lwc1  $f12, 0x70(sp)
+    move  t3, zero
+    jal   FLC                        ; the line from his eye to the camera
+    addiu t2, zero, 1
+    andi  v0, v0, 0xff
+    beqz  v0, cf_ease
+    lwc1  $f0, 0x70(sp)
+    lwc1  $f0, 0x54(sp)              ; met something: stop short of it
+{_li_f(1, EASE_MARGIN)}    nop
+    sub.s $f0, $f0, $f1
+cf_ease:                             ; f0 = what the sweep and the line of sight allow
+    lui   t0, %hi(CLOCK)
+    lw    t0, %lo(CLOCK)(t0)
+    lwc1  $f1, 0xd4(t0)              ; now (RSClock::TotalElapsedSeconds)
+    lwc1  $f3, 0x78(s0)              ; last frame's distance
+    c.le.s $f0, $f3                  ; not farther: at once, and no easing out for EASE_HOLD s
+    lwc1  $f2, 0xd0(t0)              ; this frame's seconds (FrameElapsedSeconds)
+    bc1f  cf_out
+    nop
+{_li_f(4, EASE_HOLD)}    nop
+    add.s $f4, $f1, $f4
+    b     cf_pos
+    swc1  $f4, 0x7c(s0)              ; held until then
+cf_out:
+    lwc1  $f4, 0x7c(s0)
+    c.lt.s $f1, $f4                  ; still held: last frame's distance
+    mov.s $f5, $f0
+    bc1t  cf_pos
+    mov.s $f0, $f3
+{_li_f(4, EASE_RATE)}    nop
+    mul.s $f2, $f2, $f4
+    add.s $f0, $f3, $f2              ; out by EASE_RATE * dt at most ...
+    c.lt.s $f5, $f0                  ; ... or to what is allowed
+    nop
+    bc1f  cf_pos
+    nop
+    mov.s $f0, $f5
+cf_pos:
+    mtc1  zero, $f2
+    nop
+    c.lt.s $f0, $f2
+    nop
+    bc1f  cf_put
+    nop
+    mov.s $f0, $f2
+    j     cf_put
+    nop
+"""
+    part2 = f"""
+cf_put:
+    swc1  $f0, 0x78(s0)
+    lwc1  $f1, 0x00(sp)              ; camera = E + distance * D/|D|
+    lwc1  $f2, {LV:#x}(sp)
+    lwc1  $f3, 0x04(sp)
+    mul.s $f2, $f2, $f0
+    lwc1  $f4, {LV + 4:#x}(sp)
+    lwc1  $f5, 0x08(sp)
+    mul.s $f4, $f4, $f0
+    lwc1  $f6, {LV + 8:#x}(sp)
+    add.s $f1, $f1, $f2
+    mul.s $f6, $f6, $f0
+    add.s $f3, $f3, $f4
+    swc1  $f1, 0x10(s0)
+    add.s $f5, $f5, $f6
+    swc1  $f3, 0x14(s0)
+    swc1  $f5, 0x18(s0)
+{scene}    jal   FINDROOM                   ; the room it is in now
+    addiu a1, s0, 0x10
+    beqz  v0, cf_out2
+    nop
+    sw    v0, 0x30(s0)
+cf_out2:
+    move  a0, s0
+    ld    ra, 0x90(sp)
+    lq    s0, 0x80(sp)
+    j     FLOORCLAMP
+    addiu sp, sp, 0xa0
+"""
+    return part1, part2
+
+
+def build_fix(game, preset, distance="preset"):
+    """([(base, words)], labels) of cam_fix for a preset, or (None, None) where it has no cave."""
+    c = CAMFIX.get(game)
+    if not c:
+        return None, None
     g = GAMES[game]
     p = dict(PRESETS[preset])
     if distance not in (None, "preset"):
         p["D"] = float(distance)
-    syms = {"PLACE": g["PLACE"], "SIMMGR": g["SIMMGR"], "ADDVEC": g["ADDVEC"],
-            "FLOOR": g["FLOOR"], "ISSNIPER": g["ISSNIPER"]}
-    wb, lb = assemble(_cave_b_src(g), g["CAVE_B"], syms)
-    syms["FLOORCLAMP"] = lb["floor_clamp"]
-    wa, la = assemble(_cam_tp_src(g, p["H"], p["L"], p["D"], aim_cam), g["CAVE_A"], syms)
-    if len(wa) * 4 > g["CAVE_A_BYTES"] or len(wb) * 4 > g["CAVE_B_BYTES"]:
-        raise ValueError("%s camera routines overflow their caves" % game)
-    return wa, la, wb, lb, _patches(g, g["CAVE_A"], lb)
+    syms = {k: g[k] for k in ("LCINFO", "FLC", "CLOCK", "FINDROOM", "SCENE", "SCENEGET") if k in g}
+    syms["FLOORCLAMP"] = floor_clamp_at(game)
+    one, two = _cam_fix_src(g, p["H"], p["L"], p["D"])
+    if c.get("CAVE2"):
+        w2, l2 = assemble(two, c["CAVE2"], syms)
+        syms.update(l2)
+        w1, l1 = assemble(one, c["CAVE"], syms)
+        if len(w1) * 4 > c["BYTES"] or len(w2) * 4 > c["BYTES2"]:
+            raise ValueError("%s: cam_fix outgrows its caves" % game)
+        return [(c["CAVE"], w1), (c["CAVE2"], w2)], dict(l1, **l2)
+    w, l = assemble(one + two, c["CAVE"], syms)
+    if len(w) * 4 > c["BYTES"]:
+        raise ValueError("%s: cam_fix outgrows its cave" % game)
+    return [(c["CAVE"], w)], l
 
 
-def edits(game, preset, aim_eye=False, distance="preset"):
+def floor_clamp_at(game):
+    g = GAMES[game]
+    return assemble(_floor_clamp_src(g), g["CAVE_C"], {k: g[k] for k in ("FLOOR",)})[1]["floor_clamp"]
+
+
+for _g, _c in CAMFIX.items():
+    if _c:
+        (GR_STOCK if _g == "gr" else JS_STOCK).update(_stock_words(_c["CAVE"], _c["STOCK"]))
+
+
+#: camera distance choices (metres back from the eye); "preset" keeps the preset's
+DISTANCES = ("preset", "1.75", "2.0", "2.25", "2.5", "2.75", "3.0")
+
+
+#: the functions the three caves overwrite (none is referenced)
+CAVE_NAMES = {"gr": ("sceDevConsDraw", "sceVu0DropShadowMatrix", "sceMcRename"),
+              "js": ("sceDevConsDraw", "sceVu0DropShadowMatrix", "lgAudWriteVag")}
+
+
+def build(game, preset, aim_cam=True, distance="preset", smooth=False):
+    """([(base, words, cave name)], labels, patches) for a preset.
+
+    Cave A holds cam_tp and aim_from, cave B aim_base, cave C floor_clamp; with ``smooth``
+    (where CAMFIX has a cave) cam_fix runs between PlaceCamera and floor_clamp."""
+    g = GAMES[game]
+    p = dict(PRESETS[preset])
+    if distance not in (None, "preset"):
+        p["D"] = float(distance)
+    syms = {k: g[k] for k in ("PLACE", "SIMMGR", "FLOOR", "ISSNIPER", "FLC", "LCINFO", "QSET")}
+    wc, lc = assemble(_floor_clamp_src(g), g["CAVE_C"], syms)
+    syms["FLOORCLAMP"] = lc["floor_clamp"]
+    wf, lf = build_fix(game, preset, distance) if smooth else (None, None)
+    syms["POSTPLACE"] = lf["cam_fix"] if wf else lc["floor_clamp"]
+    wa, la = assemble(_cam_tp_src(g, p["H"], p["L"], p["D"], aim_cam) + _aim_from_src(g),
+                      g["CAVE_A"], syms)
+    wb, lb = assemble(_aim_base_src(g), g["CAVE_B"], syms)
+    caves = []
+    for (base, nbytes), words, name in zip(((g["CAVE_A"], g["CAVE_A_BYTES"]),
+                                            (g["CAVE_B"], g["CAVE_B_BYTES"]),
+                                            (g["CAVE_C"], g["CAVE_C_BYTES"])),
+                                           (wa, wb, wc), CAVE_NAMES[game]):
+        if len(words) * 4 > nbytes:
+            raise ValueError("%s camera routines overflow %s" % (game, name))
+        caves.append((base, words, name))
+    labels = dict(lc, **la, **lb)
+    if wf:
+        for base, words in wf:
+            caves.append((base, words, CAMFIX[game]["NAME"] if base == CAMFIX[game]["CAVE"]
+                          else CAVE_NAMES[game][2] + " (after floor_clamp)"))
+        labels.update(lf)
+    return caves, labels, _patches(g, g["CAVE_A"], labels)
+
+
+def edits(game, preset, aim_eye=False, distance="preset", smooth=False):
     """[(va, value, stock, note)]; preset 'off' (or anything unknown) = none."""
     if preset not in PRESETS:
         return []
-    g = GAMES[game]
     stock = GR_STOCK if game == "gr" else JS_STOCK
-    wa, _la, wb, _lb, groups = build(game, preset, aim_cam=not aim_eye, distance=distance)
+    caves, _labels, groups = build(game, preset, aim_cam=not aim_eye, distance=distance,
+                                   smooth=smooth)
     out = []
-    for base, words, where in ((g["CAVE_A"], wa, "sceDevConsDraw"),
-                               (g["CAVE_B"], wb, "sceVu0DropShadowMatrix")):
+    for base, words, where in caves:
         out += [(base + 4 * i, w, stock[base + 4 * i],
                  "third-person camera: routine in " + where)
                 for i, w in enumerate(words)]
@@ -752,13 +1693,15 @@ def edits(game, preset, aim_eye=False, distance="preset"):
 def _game_edits(game, v):
     p = game + "_"
     out = edits(game, v.get(p + "tp_camera", "off"), bool(v.get(p + "tp_aim_eye")),
-                v.get(p + "tp_distance", "preset"))
+                v.get(p + "tp_distance", "preset"), bool(v.get(p + "tp_smooth")))
     # third person cannot work without it: any first-person frame hides him for good
     if v.get(p + "tp_camera", "off") in PRESETS or v.get(p + "show_soldiers"):
         out += unhide_edits(game)
     if v.get(p + "tp_camera", "off") in PRESETS:
         out += xleader_edits(game)
         out += tppose_edits(game)
+        if v.get(p + "tp_blocked"):
+            out += blocked_edits(game)
     return out
 
 
@@ -812,23 +1755,23 @@ def selftest(gr_elf=None, js_elf=None):
                                     ("js", JS_STOCK, js_elf, 0x100)):
         g = GAMES[game]
         sizes = set()
-        for preset in PRESETS:
+        for preset, smooth in [(pr, sm) for pr in PRESETS for sm in ((False, True) if CAMFIX.get(game) else (False,))]:
             for aim_eye in (False, True):
-                wa, _la, wb, _lb, _p = build(game, preset, not aim_eye)
-                sizes.add((len(wa), len(wb)))
-                for name, words in (("A", wa), ("B", wb)):
+                caves, _labels, _p = build(game, preset, not aim_eye, smooth=smooth)
+                sizes.add((smooth,) + tuple(len(words) for _b, words, _n in caves))
+                for _base, words, name in caves:
                     if _fpu_hazards(words):
                         fails.append("%s %s cave %s: FPU hazard at word %s"
                                      % (game, preset, name, _fpu_hazards(words)))
                 seen = set()
-                for va, _w, s, _note in edits(game, preset, aim_eye):
+                for va, _w, s, _note in edits(game, preset, aim_eye, smooth=smooth):
                     if va in seen:
                         fails.append("%s %08x written twice" % (game, va))
                     seen.add(va)
                     if stock.get(va) != s:
                         fails.append("%s %08x: edit stock %08x, table %s"
                                      % (game, va, s, stock.get(va)))
-        if len(sizes) != 1:
+        if len({x[1:] for x in sizes if not x[0]}) != 1 or len({x[1:] for x in sizes if x[0]}) > 1:
             fails.append("%s: presets differ in layout %s" % (game, sizes))
         if edits(game, "off"):
             fails.append("%s: 'off' still writes words" % game)
@@ -839,6 +1782,20 @@ def selftest(gr_elf=None, js_elf=None):
         taken = {va for va, _w, _s, _n in edits(game, "ots")}
         if taken & {va for va, _w, _s, _n in uw}:
             fails.append("%s: unhide overlaps the camera routines" % game)
+        be = blocked_edits(game)
+        if be:
+            for _b, words, name in build_mark(game)[0]:
+                if _fpu_hazards(words):
+                    fails.append("%s blocked-shot cave %s: FPU hazard at word %s"
+                                 % (game, name, _fpu_hazards(words)))
+            others = taken | {va for va, _w, _s, _n in uw + xleader_edits(game) + tppose_edits(game)}
+            if others & {va for va, _w, _s, _n in be}:
+                fails.append("%s: the blocked-shot routine overlaps the camera's other words" % game)
+            if len({va for va, _w, _s, _n in be}) != len(be):
+                fails.append("%s: the blocked-shot routine writes a word twice" % game)
+            for va, _w, s, _n in be:
+                if stock.get(va) != s:
+                    fails.append("%s %08x: blocked edit stock %08x, table %s" % (game, va, s, stock.get(va)))
         if elf is not None:
             for va, want in stock.items():
                 got = struct.unpack_from("<I", elf, va - 0x00100000 + delta)[0]

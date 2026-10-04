@@ -493,10 +493,14 @@ def js_roster_words(squad=GR_SQUAD):
 #       still switched by hand). The branch goes straight to the block that
 #       ends that player's fade and sends the message.
 #
-# When the dead player's fireteam has nobody left, nothing happens: that
-# half of the screen stays faded, exactly as it does in stock split screen
-# when the respawns run out, and the mission fails through its own check
-# once every platoon soldier is down.
+# When the dead player's fireteam has nobody left, the search finds no one
+# and the handler returns. B7 has already ended that player's fade, so after
+# the six seconds his half shows his own body, the camera stays there and
+# every button is ignored (the dead soldier's ProcessMessage drops all but
+# fire, and split screen ignores fire) until the mission fails through its
+# own check once every platoon soldier is down. With grobserver
+# (js_edits(..., observer=True)) that "nobody left" branch goes to its
+# observer instead: the half follows living platoon soldiers, X cycles.
 
 GR_HANDOFF = {
     # B1  bnez v0,0x396874 -> j cave
@@ -1935,11 +1939,13 @@ def _handoff_edits(src, cave, b1, table, new, stock):
 
 def gr_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
              briefing: bool = False, teammates: bool = False, orders: bool = False,
-             js_controls: bool = False):
+             js_controls: bool = False, observer: bool = False):
     """(va, value, stock, note) for the chosen Ghost Recon options.
     `teammates` (single player's roster) needs `briefing` and replaces it;
     `orders` needs `handoff`; `js_controls`: Jungle Storm's pad layout is on
-    (grcontrols), so the orders' keys follow it."""
+    (grcontrols), so the orders' keys follow it; `observer` (pass
+    grobserver.gr_enabled(v), whose routines must be in the same build) needs
+    `handoff`."""
     out = []
     if orders and handoff:
         g = dict(ORD["GR"], keys=GR_JS_LAYOUT_KEYS) if js_controls else ORD["GR"]
@@ -1953,7 +1959,12 @@ def gr_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
     if bullet_holes:
         out += _bh_edits(GR_BH_SRC, GR_BH_CAVE, GR_BH_HOOK, GR_BH_HOOK_STOCK, GR_STOCK)
     if handoff:
-        out += _handoff_edits(GR_HANDOFF_SRC, GR_HANDOFF_CAVE, 0x0039673C,
+        src = GR_HANDOFF_SRC
+        if observer:                # nobody left in the fireteam: watch the platoon
+            from .grobserver import GR_ENTER
+            src = src.replace("none:\n    j     0x396874", "none:\n    j     %#x" % GR_ENTER, 1)
+            assert src != GR_HANDOFF_SRC
+        out += _handoff_edits(src, GR_HANDOFF_CAVE, 0x0039673C,
                               GR_HANDOFF, GR_HANDOFF_NEW, GR_STOCK)
     if fireteams:
         for i, w in enumerate(gr_roster_words()):
@@ -1966,10 +1977,15 @@ def gr_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
 
 
 def js_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
-             briefing: bool = False, teammates: bool = False, orders: bool = False):
+             briefing: bool = False, teammates: bool = False, orders: bool = False,
+             observer: bool = False, select_aim: bool = False):
     """(va, value, stock, note) for the chosen Jungle Storm options.
     `teammates` (single player's roster) needs `briefing` and replaces it;
-    `orders` needs `handoff`."""
+    `orders` needs `handoff`; `observer` (pass grobserver.enabled(v), whose
+    routines must be in the same build) needs `handoff`; `select_aim` (pass
+    grcoopctl.ss_aim_enabled(v); grcoopctl.js_edits(v) then carries the aim
+    routines) makes the handoff cave's FindNextTeamMember call grcoopctl's
+    `aimnext`: SELECT takes the fireteam AI under the reticle first."""
     out = []
     if orders and handoff:
         out += _orders_edits(ORD["JS"])
@@ -1982,7 +1998,17 @@ def js_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
     if bullet_holes:
         out += _bh_edits(JS_BH_SRC, JS_BH_CAVE, JS_BH_HOOK, JS_BH_HOOK_STOCK, JS_STOCK)
     if handoff:
-        out += _handoff_edits(JS_HANDOFF_SRC, JS_HANDOFF_CAVE, 0x003745DC,
+        src = JS_HANDOFF_SRC
+        if observer:                # nobody left in the fireteam: watch the platoon
+            from .grobserver import ENTER
+            src = src.replace("beqz  v0, out\n", "beqz  v0, %#x\n" % ENTER, 1)
+            assert src != JS_HANDOFF_SRC
+        if select_aim and orders:   # SELECT: the soldier under the reticle, else the next in order
+            from .grcoopctl import AIMNEXT
+            aimed = src.replace("jal   0x3746f0", "jal   %#x" % AIMNEXT, 1)
+            assert aimed != src
+            src = aimed
+        out += _handoff_edits(src, JS_HANDOFF_CAVE, 0x003745DC,
                               JS_HANDOFF, JS_HANDOFF_NEW, JS_STOCK)
     if fireteams:
         for i, w in enumerate(js_roster_words()):

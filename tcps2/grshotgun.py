@@ -296,15 +296,19 @@ def data_edits(v: dict, prefix: str = "js_") -> list:
     from .model import FileEdit
     pellets = PELLETS.get(str(v.get(prefix + "shotgun_pellets", "9")), 9)
     spread = v.get(prefix + "shotgun_spread", "hu")
-    out = [FileEdit("shotgun_gun", r"/G36\.GUN$", "GR.IMG", {"pellets": pellets, "spread": spread},
+    # Ghost Recon ships the guns, kits and strings in MENU.IMG as well, and a mission uses the gun
+    # parsed from there: edited in GR.IMG alone, the kit got the stock G36, whose model is not on the
+    # disc, and the soldier's null weapon model crashed the game. So there both copies are edited.
+    arc = "GR.IMG" if prefix == "js_" else ""
+    out = [FileEdit("shotgun_gun", r"/G36\.GUN$", arc, {"pellets": pellets, "spread": spread},
                     "G36.GUN becomes a %d-pellet shotgun" % pellets),
-           FileEdit("shotgun_label", r"STRINGS\.TXT$", "GR.IMG", {}, "%s = %s" % (LABEL_TOKEN, LABEL_TEXT))]
+           FileEdit("shotgun_label", r"STRINGS\.TXT$", arc, {}, "%s = %s" % (LABEL_TOKEN, LABEL_TEXT))]
     if prefix == "js_":
         out.insert(1, FileEdit("shotgun_xbg", r"/G36\.XBG$", "GR.IMG", {"pellets": pellets, "spread": spread},
                                "the compiled gun the game loads, the same %d-pellet shotgun" % pellets))
     kits = SHOTGUN_KITS.get(v.get(prefix + "shotgun_kits", "some"), ())
     if kits:
-        out.append(FileEdit("shotgun_kit", r"/(%s)\.KIT$" % "|".join(re.escape(k) for k in kits), "GR.IMG", {},
+        out.append(FileEdit("shotgun_kit", r"/(%s)\.KIT$" % "|".join(re.escape(k) for k in kits), arc, {},
                             "%d kit(s) carry the shotgun" % len(kits)))
     return out
 
