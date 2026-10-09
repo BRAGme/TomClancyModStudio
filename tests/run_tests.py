@@ -154,6 +154,10 @@ def main():
         run_claymore_prox(args)
         run_blast_decals(args)
         run_friendly_fire(args)
+        # Which script package each edit is allowed to be written into.
+        # Lives in its own file because it carries the routing table.
+        from tests_routing import run_edit_routing
+        run_edit_routing(args)
         run_property_bools(args)
         run_impact_puffs(args)
         run_keep_viewport(args)

@@ -2216,6 +2216,9 @@ def build_data(v: dict) -> list:
     _ff_note = {"fail_on_kill": "killing one fails the mission",
                 "fail_on_hit": "wounding one fails the mission"}
     _ff = [(_fail, _ff_note[_fail])] if v.get("ff_fail_mission") else []
+    #: friendly-fire regions that may only go into the SPLIT-SCREEN
+    #: package, because offline they would overwrite live code
+    _pk = []
     # Every setting including "5" (a kill) now writes the mark from the AI's
     # own damage handler. It used to lean on SetTeamKillerPenalty for a kill,
     # and that function is never entered in Terrorist Hunt -- measured: after
@@ -2235,7 +2238,17 @@ def build_data(v: dict) -> list:
             # turned -- reported from play. These write the same mark from
             # R6Pawn.R6Died and R6PlayerController.PlaySoundDamage, the two
             # places a human casualty does go through. See rseff.
-            _ff.append(("playerkill:%s:%s" % (_lvl, _side),
+            #
+            # SPLIT SCREEN ONLY, and that is not a narrowing for its own
+            # sake. Its budget inside `R6PlayerController.PlaySoundDamage`
+            # is the two `!m_bIsSplitScreen` call-out blocks, which are
+            # dead in split screen and LIVE in the offline package -- one
+            # of them is single player's own "lead is down". Written into
+            # COMMONOFF it silenced that line, reported from play: in
+            # single player a teammate said nothing when the player went
+            # down. There is no other player to shoot offline, so these
+            # regions buy nothing there anyway.
+            _pk.append(("playerkill:%s:%s" % (_lvl, _side),
                         "killing the other player turns the squad too"))
         if _side == "noside":
             # The team change alone leaves him NEUTRAL, and the bullet path
@@ -2247,6 +2260,10 @@ def build_data(v: dict) -> list:
         # COMMONOFF + COMMON_SS only: offline and split screen. The online
         # package is left alone on purpose -- see rseff.
         out.append(FileEdit("friendly_fire", rseff.SELECT, "",
+                            {"which": _which, "enable": True},
+                            "friendly fire: " + _note))
+    for _which, _note in _pk:
+        out.append(FileEdit("friendly_fire", r"/COMMON_SS\.LIN$", "",
                             {"which": _which, "enable": True},
                             "friendly fire: " + _note))
     # Terrorists that hunt you: repoint the strategy switch's non-hunt cases
