@@ -39,6 +39,40 @@ What it does NOT change
 Appending leaves every existing index alone -- names and imports are
 referenced by position, and nothing already in the file points past the old
 end -- so no other reference in the package has to be rewritten.
+
+RETRACTED 2026-10-09: NOTHING RAISES THE ACTION
+-----------------------------------------------
+
+The premise above is wrong, and the fix cannot work at any layer. **Voice
+action 95 is never raised.** Neither is 96-99, the flash/smoke/gas/phosphorus
+warnings, nor 7 and 8, `m_sndThrowFrag` and `m_sndThrowFlash`. The whole
+grenade-announcement family has no caller, so repointing which clip arm 95
+WOULD play changes nothing: the arm never runs.
+
+Measured, not inferred. Every `EX_VirtualFunction` call in the one package
+that declares `PlayRainbowVoices` (name index 1207), restricted to the script
+window 0x0f0d62..0x1786f4 so name indices are read in the space they belong
+to -- 2843 blocks parsed -- gives `PlaySoundCurrentAction` 92 literal actions
+and no call with a variable argument:
+
+    0-6, 10, 12-18, 20-45, 47-88, 90, 92-94, 100-104
+
+So 7, 8, 9, 11, 19, 89, 91 and 95-99 are armed and unreachable, and 46 is
+neither armed nor raised (the switch jumps 44 -> 47 while 45 IS raised, so 45
+falls to `default: Return(Nothing())`). That 100 and 101 DO appear is what
+shows the scan finds real call sites rather than nothing.
+
+What is actually missing is a CALLER, not a pointer. Supplying one means new
+bytecode in a package that is a recorded read stream, which is the same wall
+the import version hit -- or a one-byte pnach over an existing
+`PlaySoundCurrentAction(N)` call site, which adds nothing and never touches
+the recording. The obstacle there is that no script call site fires when a
+teammate throws a grenade: arm 7, the throw line itself, is unraised too, so
+there is nothing nearby to borrow.
+
+Not checked: the per-level packages. This was measured on the shared
+`COMMONOFF.LIN` only, so a level script raising 95 is not excluded -- though
+no shared code does.
 """
 
 from __future__ import annotations
@@ -260,5 +294,21 @@ def cards(prefix: str, group: str) -> list:
                     "for. Each voice package already exports "
                     "Play_<name>_FragThrown as an orphan the engine never "
                     "imports, so the material is there; the price is that some "
-                    "other voice line has to be given up to carry it.")),
+                    "other voice line has to be given up to carry it.\n\n"
+                    "RETRACTED 2026-10-09: do not spend that price, because "
+                    "the pointer was never the problem. VOICE ACTION 95 IS "
+                    "NEVER RAISED -- nor 96-99, the other grenade warnings, "
+                    "nor 7 and 8, the throw lines themselves. The whole "
+                    "grenade-announcement family has no caller, so repointing "
+                    "which clip arm 95 would play changes nothing: the arm "
+                    "never runs. Measured by decoding every virtual call in "
+                    "the one package that declares PlayRainbowVoices, in its "
+                    "own name-index space, over 2843 parsed blocks: "
+                    "PlaySoundCurrentAction raises 92 literal actions -- 0-6, "
+                    "10, 12-18, 20-45, 47-88, 90, 92-94, 100-104 -- and makes "
+                    "no call with a variable argument. 100 and 101 appearing "
+                    "is what shows the scan finds real call sites. What is "
+                    "missing is a CALLER, not a pointer, and arm 7 being "
+                    "unraised too means there is no throw-time call site "
+                    "nearby to borrow. See the module docstring.")),
     ]
