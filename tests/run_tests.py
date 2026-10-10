@@ -8969,19 +8969,46 @@ def run_flashlight_hands_pass(args):
 
     from collections import Counter
     from tcps2 import rsecarry
-    check("carry-over: the 70 words are the shipped ones in the two natives",
-          len(rsecarry.WORDS) == 70
+    from tcps2 import rsedeadpath as _dp
+    # 2026-10-10: 73 words, not 70 -- the first version spent both of split
+    # screen's saved records on the two players, so a teammate killed in part A
+    # was alive again in part B. This one saves the AI too. REPAIR puts back
+    # the nine words that version took and this one does not, so a disc
+    # carrying it is healed rather than left half-patched.
+    check("carry-over: the 73 words are the shipped ones in the two natives",
+          len(rsecarry.WORDS) == 73
           and all(img.read_word(va) == st for va, st, _n, _t in rsecarry.WORDS)
           and all(0x003B6160 <= va < 0x003B7200 for va, *_r in rsecarry.WORDS))
+    check("and the nine repair words carry the shipped value, at addresses "
+          "the patch itself does not write",
+          len(rsecarry.REPAIR) == 9
+          and all(img.read_word(va) == w for va, w, _t in rsecarry.REPAIR)
+          and not {va for va, *_r in rsecarry.REPAIR}
+                  & {va for va, *_r in rsecarry.WORDS})
+    check("and no address is written twice across the two sets",
+          len({va for va, *_r in rsecarry.words()}) == len(rsecarry.words()))
+    check("and none of it lands in the shared code cave",
+          not any(_dp.CAVE <= va < _dp.CAVE + _dp.CAVE_WORDS * 4
+                  for va, *_r in rsecarry.words()))
     # 2026-09-24: a player who died in part A starts part B dead. The first
     # version skipped his record here; the shipped words are back.
     check("carry-over: a dead player's record takes the shipped dead path",
           not {0x003B62BC, 0x003B62C0} & {va for va, *_r in rsecarry.WORDS})
     new = {va: n for va, _s, n, _t in rsecarry.WORDS}
-    check("and the closing pass visits player 2's slot first, player 1's last",
-          new.get(0x003B69E8) == 0x8FA800A8 and new.get(0x003B69EC) == 0x0008800B
-          and new.get(0x003B69F0) == 0x0112800A
-          and new.get(0x003B61D0) == 0xAFA900A8)
+    # The closing pass still visits player 2's slot first and player 1's last,
+    # but it now WALKS DOWN rather than being reordered in place: the prologue
+    # stores a start index and a step, and the pass loads them. Upward is not a
+    # style choice -- with two dead AI the guard at 0x3B69DC fires early and the
+    # second never enters the dead state, which is the standing-corpse defect.
+    check("and the closing pass walks down: player 2's slot first, player 1's "
+          "last, and every AI in between",
+          new.get(0x003B61D4) == 0xAFAF00B4      # sw $t7, 0xb4($sp)  start
+          and new.get(0x003B61DC) == 0xAFAE00B8  # sw $t6, 0xb8($sp)  step
+          and new.get(0x003B69CC) == 0x8FB200B4  # lw $s2, 0xb4($sp)
+          and new.get(0x003B6A08) == 0x8FB700B8  # lw $s7, 0xb8($sp)
+          and new.get(0x003B6AF8) == 0x02579021) # addu $s2, $s2, $s7
+    check("and its loop test is UNSIGNED, so walking down stops at -1",
+          new.get(0x003B6AFC) == 0x025E182B)     # sltu, not slt
     carry = {va for va, *_r in rsecarry.WORDS}
     squad = {e.va: e.value for e in PROFILE.build_edits(PROFILE.effective(
         dict(PROFILE.defaults(), split_squad=True, split_carry=True)))}

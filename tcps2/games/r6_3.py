@@ -321,9 +321,10 @@ for _va, _stock, _new, _note in rsedebrief.EDITS:
     STOCK[_va] = _stock
 for _va, _word, _stock, _note in rsehudteam.speak_words():
     STOCK[_va] = _stock
-# Part A -> part B carry-over by player, not by slot (rsecarry).
-for _va, _stock, _new, _note in rsecarry.WORDS:
-    STOCK[_va] = _stock
+# Part A -> part B carry-over by player, with the AI losses (rsecarry).
+# stock_words() covers the REPAIR set too -- the words the first version
+# of that patch wrote and this one does not -- so a revert puts them back.
+STOCK.update(rsecarry.stock_words())
 # The shrapnel-decal cave (rsedecal) hooks the explosion native's epilogue.
 # The cave itself is a cheat-file thing; only the hijack is an overlay word.
 STOCK[rsedecal.HIJACK_AT] = rsedecal.HIJACK_STOCK
