@@ -66,6 +66,20 @@ PRESETS = {
             "terro_nerve": "timid",
             "aim_assist": 5,
         }),
+        ("Tarkov — the ballistics and the handling", {
+            "tarkov_ballistics": "tarkov",
+            "tarkov_handling": "tarkov",
+            "reticule": False,
+            "radar": False,
+            "aim_assist": 0,
+            "hide_bodies": False,
+        }),
+        ("Tarkov — easing into it", {
+            "tarkov_ballistics": "half",
+            "tarkov_handling": "tarkov",
+            "radar": False,
+            "aim_assist": 0,
+        }),
         ("Stock", {}),
     ],
 

@@ -16,6 +16,7 @@ so that is asserted on hundreds of real files rather than on one fixture.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import shutil
@@ -240,6 +241,120 @@ def test_globs():
                                                   "Equip/ak47_npc.gun"])
     check("not: excludes", engine.in_scope("Equip/e_x.gun", "not:e_*") is False)
     check("only: includes", engine.in_scope("Equip/e_x.gun", "only:e_*") is True)
+
+
+def test_rs3_tarkov_table():
+    r"""The Tarkov conversion's arithmetic, against this repository's own
+    measurement of the game.
+
+    `_rs3_tarkov.CALIBRES` writes down a stock energy per calibre, and every
+    scale the option emits is that number divided into a Tarkov damage figure.
+    A wrong stock figure there is not a wrong balance decision, it is a wrong
+    MULTIPLIER applied to the real value in the package -- so it is checked
+    against `research/rs3_ammo.csv`, which was produced by reading the
+    packages, rather than against itself.
+    """
+    import csv
+
+    print("\n[Raven Shield: the Tarkov conversion table]")
+    from tcpc.games import _rs3_tarkov as tk
+
+    path = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "research", "rs3_ammo.csv")
+    measured = {}
+    with open(path, newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                measured[row["class"]] = int(row["m_iEnergy"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    check("the measured ammunition dataset is there (%d classes)"
+          % len(measured), len(measured) > 55)
+
+    # Every row's stock figure must be the strongest load that its own glob
+    # catches, because that is the load the Tarkov figure is matched to.
+    wrong = []
+    for glob, stock, _load, _dmg, _conf in tk.CALIBRES:
+        hits = [e for cls, e in measured.items()
+                if fnmatch.fnmatch(cls, glob)]
+        if not hits:
+            continue                    # an expansion calibre, not in the CSV
+        if max(hits) != stock:
+            wrong.append("%s: table says %d, packages say %d"
+                         % (glob, stock, max(hits)))
+    check("every calibre's stock energy matches the packages", not wrong,
+          "; ".join(wrong))
+
+    # 9mm Parabellum is the anchor of the whole conversion: the scale is its
+    # own stock energy divided by its own Tarkov damage, so it must come out
+    # at exactly 1.0 or nothing else in the table means what it says.
+    anchor = next(r for r in tk.CALIBRES if r[0] == "ammo9mmParabellum*")
+    check("9mm Parabellum is the fixed point (scale %.4f)"
+          % tk.scale_for(anchor[1], anchor[3], 1.0),
+          abs(tk.scale_for(anchor[1], anchor[3], 1.0) - 1.0) < 1e-9)
+
+    # The claim the option is built on: pistol and PDW calibres are already
+    # Tarkov-shaped and rifles are not. Asserted as the exact split, so a
+    # changed figure shows up here rather than as a surprise in the game.
+    skipped = [g for g, st, _l, d, _c in tk.CALIBRES
+               if abs(tk.scale_for(st, d, 1.0) - 1.0) < tk.DEADBAND]
+    check("five calibres are already within %d%% of Tarkov and are left alone"
+          % int(tk.DEADBAND * 100), len(skipped) == 5,
+          str(skipped))
+    check("and all five are pistol or PDW calibres",
+          all(("9mm" in g or "9x21" in g or "9x39" in g or "57x28" in g
+               or "45cal" in g) for g in skipped), str(skipped))
+
+    rifles = ("ammo556mmNATO*", "ammo762mmNATO*", "ammo762x54mmR*")
+    for glob in rifles:
+        row = next(r for r in tk.CALIBRES if r[0] == glob)
+        f = tk.scale_for(row[1], row[3], 1.0)
+        check("%s comes down to %.2f" % (row[2], f), 0.15 < f < 0.45)
+
+    buck = next(r for r in tk.CALIBRES if r[0] == "ammo12gaugeBuck")
+    check("buckshot is the one round Tarkov rates HIGHER (%.2f)"
+          % tk.scale_for(buck[1], buck[3], 1.0),
+          tk.scale_for(buck[1], buck[3], 1.0) > 1.5)
+
+    # "Halfway" has to be the geometric midpoint. An arithmetic one is not
+    # half as strong a change to a multiplier, it is a different change.
+    row = next(r for r in tk.CALIBRES if r[0] == "ammo762mmNATO*")
+    full = tk.scale_for(row[1], row[3], 1.0)
+    half = tk.scale_for(row[1], row[3], 0.5)
+    check("halfway is the geometric midpoint (%.3f = sqrt %.3f)" % (half, full),
+          abs(half * half - full) < 1e-6)
+
+    # The spread compression is the entire point, and it has an exact answer
+    # rather than a direction: scaling every calibre by the same energy-per-
+    # point means the converted spread IS Tarkov's spread over the same
+    # calibres. Asserting equality rather than "smaller" is what makes this a
+    # check on the conversion and not just on the sign of it.
+    before, after, tarkov = [], [], []
+    for glob, stock, _load, dmg, _conf in tk.CALIBRES:
+        if glob in ("ammo12gaugeBuck", "ammo12gaugeSlug"):
+            continue                    # shot is not a bullet; different job
+        before.append(stock)
+        after.append(stock * tk.scale_for(stock, dmg, 1.0))
+        tarkov.append(dmg)
+    spread_before = max(before) / min(before)
+    spread_after = max(after) / min(after)
+    spread_tarkov = float(max(tarkov)) / float(min(tarkov))
+    check("the bullet spread compresses from %.1fx to %.1fx"
+          % (spread_before, spread_after),
+          spread_before > 15.0 and spread_after < spread_before / 5.0)
+    check("and %.2fx is exactly Tarkov's own spread over the same calibres"
+          % spread_tarkov, abs(spread_after - spread_tarkov) < 1e-6,
+          "%.6f vs %.6f" % (spread_after, spread_tarkov))
+
+    # The option must be inert when another option owns the same property.
+    profile = next(p for p in PROFILES if p.id == "ravenshield")
+    values = dict(profile.defaults())
+    values.update(tarkov_ballistics="tarkov", ammo_damage="x2")
+    effective = profile.effective(values)
+    check("Tarkov ballistics goes inert when bullet damage is also set",
+          effective["tarkov_ballistics"] == "stock")
+    check("and the profile says which option is in the way",
+          profile.unmet("tarkov_ballistics", effective) != [])
 
 
 def test_numbers():
@@ -1993,6 +2108,137 @@ def test_rs3_ammo_character(dets):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_rs3_tarkov(dets):
+    r"""Apply the Tarkov conversion to a sandbox copy and measure the result.
+
+    The table test above checks the arithmetic. This checks that the
+    arithmetic reached the bytes: that 9mm did not move, that the rifles came
+    down, that buckshot went up, that the handling moved in four directions at
+    once in the right four directions, and that the package is still the same
+    length and still parses.
+    """
+    det = next((d for d in dets if d.profile.id == "ravenshield"), None)
+    if det is None:
+        return
+    print("\n[Raven Shield: the Tarkov conversion, applied]")
+    profile = det.profile
+    from tcpc.games import _rs3_tarkov as tk
+
+    rel_ammo = os.path.join("system", "R6Weapons.u")
+    rel_guns = os.path.join("system", "R63rdWeapons.u")
+    stock_ammo = upackage.Package.load(os.path.join(det.path, rel_ammo))
+    stock_guns = upackage.Package.load(os.path.join(det.path, rel_guns))
+
+    tmp = tempfile.mkdtemp(prefix="tcpc-tarkov-")
+    try:
+        root = sandbox_for(det, tmp)
+        values = dict(profile.defaults())
+        values.update(tarkov_ballistics="tarkov", tarkov_handling="tarkov",
+                      tarkov_keybinds=True)
+        values = profile.effective(values)
+        check("Raven Shield: the Tarkov options survive their requirements",
+              values["tarkov_ballistics"] == "tarkov"
+              and values["tarkov_handling"] == "tarkov")
+
+        result = engine.apply(root, profile, values)
+        check("Raven Shield: the Tarkov conversion applies", result.ok,
+              "; ".join(result.warnings[:3]))
+
+        after_ammo = upackage.Package.load(os.path.join(root, rel_ammo))
+        after_guns = upackage.Package.load(os.path.join(root, rel_guns))
+
+        # the anchor must not have moved
+        check("Raven Shield: 9mm Parabellum is untouched, as the anchor",
+              after_ammo.get("ammo9mmParabellumNormalJHP", "m_iEnergy")
+              == stock_ammo.get("ammo9mmParabellumNormalJHP", "m_iEnergy"))
+
+        down = [("ammo556mmNATONormalJHP", "5.56mm"),
+                ("ammo762mmNATONormalJHP", "7.62x51mm"),
+                ("ammo762x54mmRNormalJHP", "7.62x54mmR")]
+        for cls, label in down:
+            was = stock_ammo.get(cls, "m_iEnergy")
+            now = after_ammo.get(cls, "m_iEnergy")
+            if was is None:
+                continue
+            check("Raven Shield: %s falls %d -> %d" % (label, was, now),
+                  now is not None and now < was)
+
+        was = stock_ammo.get("ammo12gaugeBuck", "m_iEnergy")
+        now = after_ammo.get("ammo12gaugeBuck", "m_iEnergy")
+        if was is not None:
+            check("Raven Shield: buckshot rises %d -> %d" % (was, now),
+                  now > was)
+
+        # the spread, measured on the real bytes rather than on the table
+        picked = [c for c in ("ammo9mmParabellumNormalJHP",
+                              "ammo556mmNATONormalJHP",
+                              "ammo762mmNATONormalJHP",
+                              "ammo762x54mmRNormalJHP")
+                  if stock_ammo.get(c, "m_iEnergy")]
+        if len(picked) == 4:
+            b = [stock_ammo.get(c, "m_iEnergy") for c in picked]
+            a = [after_ammo.get(c, "m_iEnergy") for c in picked]
+            check("Raven Shield: the measured spread compresses %.1fx -> %.1fx"
+                  % (max(b) / min(b), max(a) / min(a)),
+                  (max(a) / min(a)) < (max(b) / min(b)) / 2.0)
+
+        # penetration is deliberately never touched -- see _rs3_ammo.py
+        moved = [e.name for e in stock_ammo.classes()
+                 if e.name.startswith("ammo")
+                 and stock_ammo.find_property(e.name, "m_iPenetrationFactor")
+                 and after_ammo.get(e.name, "m_iPenetrationFactor")
+                 != stock_ammo.get(e.name, "m_iPenetrationFactor")]
+        check("Raven Shield: not one penetration divisor was touched",
+              not moved, "%d moved" % len(moved))
+
+        # handling: four directions at once
+        gun = "NormalAssaultM4"
+        if stock_guns.find_property(gun, "m_stAccuracyValues.fWeaponJump"):
+            def gv(pkg, prop):
+                return pkg.get(gun, "m_stAccuracyValues." + prop)
+            check("Raven Shield: muzzle climb up (%.2f -> %.2f)"
+                  % (gv(stock_guns, "fWeaponJump"), gv(after_guns, "fWeaponJump")),
+                  gv(after_guns, "fWeaponJump") > gv(stock_guns, "fWeaponJump"))
+            check("Raven Shield: settle slower (%.3f -> %.3f)"
+                  % (gv(stock_guns, "fReticuleTime"),
+                     gv(after_guns, "fReticuleTime")),
+                  gv(after_guns, "fReticuleTime")
+                  > gv(stock_guns, "fReticuleTime"))
+            check("Raven Shield: standing still is TIGHTER (%.3f -> %.3f)"
+                  % (gv(stock_guns, "fBaseAccuracy"),
+                     gv(after_guns, "fBaseAccuracy")),
+                  gv(after_guns, "fBaseAccuracy")
+                  < gv(stock_guns, "fBaseAccuracy"))
+            check("Raven Shield: moving is WORSE (%.2f -> %.2f)"
+                  % (gv(stock_guns, "fWalkingAccuracy"),
+                     gv(after_guns, "fWalkingAccuracy")),
+                  gv(after_guns, "fWalkingAccuracy")
+                  > gv(stock_guns, "fWalkingAccuracy"))
+
+        for rel, name in ((rel_ammo, "R6Weapons.u"), (rel_guns, "R63rdWeapons.u")):
+            check("Raven Shield: %s is unchanged in length" % name,
+                  os.path.getsize(os.path.join(det.path, rel))
+                  == os.path.getsize(os.path.join(root, rel)))
+
+        # the medical keys
+        user = os.path.join(root, "Save", "Profiles", "user.ini")
+        if os.path.exists(user):
+            with open(user, "r", errors="replace") as fh:
+                text = fh.read()
+            bound = [k for k, cmd in tk.KEYBINDS if (k + "=" + cmd) in text]
+            check("Raven Shield: all %d medical keys are bound"
+                  % len(tk.KEYBINDS), len(bound) == len(tk.KEYBINDS),
+                  "bound: %s" % bound)
+
+        # and revert must put every byte back
+        engine.revert(root, profile)
+        back = upackage.Package.load(os.path.join(root, rel_ammo))
+        check("Raven Shield: revert restores the ammunition package exactly",
+              back.to_bytes() == stock_ammo.to_bytes())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_rse_damage(dets):
     r"""Weapon damage, and the armour factors base Ghost Recon leaves out.
 
@@ -2139,6 +2385,7 @@ def main():
     test_profiles()
     test_globs()
     test_numbers()
+    test_rs3_tarkov_table()
     test_created_files()
     if dets:
         test_roundtrip(dets)
@@ -2152,6 +2399,7 @@ def main():
         test_rs3_modes(dets)
         test_rs3_expansions(dets)
         test_rs3_ammo_character(dets)
+        test_rs3_tarkov(dets)
         test_sides(dets)
         test_graw_direction(dets)
         test_npc_split(dets)

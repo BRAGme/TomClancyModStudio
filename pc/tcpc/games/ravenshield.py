@@ -32,7 +32,7 @@ Options that write to `user.ini` still apply; options that reason about stock
 class behaviour may not.
 """
 
-from . import _rs3_ammo, _rs3_modes, _rs3_weapons
+from . import _rs3_ammo, _rs3_modes, _rs3_tarkov, _rs3_weapons
 from ..model import (BOOL, CHOICE, Choice, GameProfile, INPLACE, INT,
                      IniEdit, Layout, Setting)
 
@@ -208,7 +208,8 @@ SETTINGS = [
              "installation actually reads -- it overrides the engine's own "
              "DesiredFOV of 90.",
         confidence="experimental", touches="config"),
-] + _rs3_modes.settings() + _rs3_weapons.settings() + _rs3_ammo.settings()
+] + (_rs3_modes.settings() + _rs3_weapons.settings()
+     + _rs3_ammo.settings() + _rs3_tarkov.settings())
 
 SKILL_SCALE = {"green": 0.66, "hard": 1.5}
 NERVE = {
@@ -324,6 +325,13 @@ def build_edits(values):
     # -- weapons and ammunition, in the compiled packages -----------------
     out.extend(_rs3_weapons.edits(v))
     out.extend(_rs3_ammo.edits(v))
+
+    # -- the Tarkov conversion, last ---------------------------------------
+    # Last on purpose. It writes the same two kinds of property the two groups
+    # above do, and its own settings require those to be stock, so ordering
+    # cannot decide a value here -- but if that guard is ever relaxed, the
+    # option whose name says what it is for should be the one that wins.
+    out.extend(_rs3_tarkov.edits(v))
     return out
 
 
@@ -336,6 +344,7 @@ def combination_warnings(values):
         out.append("Elite templates on the Elite difficulty level is two "
                    "increases at once: skill at 95 AND the shortest reaction "
                    "time.")
+    out.extend(_rs3_tarkov.warnings(values))
     return out
 
 
@@ -393,6 +402,30 @@ ammunition pairs are retuned alongside the rest. Any OTHER mod in Mods\ is
 deliberately left alone, which matters here: with ForceStartMod=SupplyDrop set,
 the guns SupplyDrop adds keep their own figures, and options tuned against
 stock weapons will not describe them.
+
+THE TARKOV GROUP, AND WHERE THE REST OF IT IS
+
+Those three options are the half of an Escape from Tarkov conversion that
+needs no compiler: the damage spread, the weapon handling and the keys. The
+finding behind the first one is worth the two lines it takes -- Raven Shield
+stores muzzle energy and Tarkov stores wound damage, so across the five
+common rifle and pistol calibres Raven Shield's figures span 7.1x and
+Tarkov's span 1.5x. Compressing onto Tarkov's shape, anchored on 9mm, leaves
+every pistol and PDW calibre in the game untouched, because they are already
+inside five percent of where Tarkov would put them. It is the rifles that are
+the outlier.
+
+The other half -- seven body zones totalling 440 points, light and heavy
+bleeding, fractures, destroyed limbs that pass damage to the chest, and a
+medical kit with use times that a round landing on you cancels -- cannot be
+configured into existence. Raven Shield has one health figure per pawn and no
+ini key adds six more. That part is UnrealScript, and the source for it is in
+`mods\TarkovRvS\` with its own README: it swaps the pawn, controller and HUD
+classes through the one `ServerActors` line that the mod descriptor exposes.
+This profile does not install it, deliberately -- shipping an option that
+cannot work until somebody runs a compiler the tool does not ship would be a
+trap, and `tarkov_keybinds` is as far as that goes, off by default and saying
+so on its own card.
 
 Nothing in this profile has been watched working in a running game.
 """

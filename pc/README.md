@@ -117,6 +117,10 @@ tcpc/
   engine.py     planning, applying, verifying, reverting
   games/        one declarative profile per game
 gui/            the window: skins, chrome painters, controls, cards
+tools/          command-line readers that are not part of the manager
+                (`rs3_probe.py` -- what Raven Shield calls its own classes)
+mods/           UnrealScript source for mods the manager does not install
+                (`TarkovRvS/` -- Tarkov's health model in Raven Shield)
 docs/FORMATS.md what was reverse-engineered, and how it was settled
 ```
 
@@ -134,3 +138,34 @@ The reverse-engineering behind the option catalogues is written up in
 enemy-accuracy technique is lifted from the `PS2Accuracy` mod already installed
 in this Ghost Recon, which is the reference implementation for separating the
 enemy's weapons from the player's.
+
+## Two things in here that are not the mod manager
+
+**`tools/rs3_probe.py`** reads an installed Raven Shield and prints what it
+actually calls its own classes -- the pawn tree, which pawn classes the AI
+templates spawn, and any property whose name matches a pattern, with its type
+and byte offset. It is built on the same `tcpc.upackage` the manager patches
+weapon statistics with, so anything it can see is something the manager could
+edit. It reads; it has no argument that could write.
+
+```
+python tools\rs3_probe.py "<game folder>"              the three questions
+python tools\rs3_probe.py "<game folder>" --pawns      the pawn class tree
+python tools\rs3_probe.py "<game folder>" --grep armour
+```
+
+**`mods/TarkovRvS/`** is UnrealScript source for a drop-in Raven Shield mod
+that replaces one health figure per pawn with Escape from Tarkov's seven body
+zones: 440 points across head, thorax, stomach, arms and legs, light and heavy
+bleeding, fractures, destroyed limbs that pass damage to the chest, and
+bandages, tourniquets, splints, surgical kits and painkillers with use times
+that a round landing on you cancels. Raven Shield's own AI still drives the
+terrorists -- it changes the body, not the brain.
+
+It is source, not a build, and the manager deliberately does **not** install
+it: shipping an option that cannot work until somebody runs a compiler this
+tool does not ship would be a trap. What the manager does ship is the half of
+the conversion that needs no compiler -- the **Tarkov** option group, which
+reshapes the damage spread and the weapon handling. `mods/TarkovRvS/README.md`
+builds and installs the rest; `research/dossier-tarkov-rvs.md` is the whole
+design, including what is not reachable and why.

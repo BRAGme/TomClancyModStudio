@@ -1,0 +1,108 @@
+//=============================================================================
+// TarkovTerrorist -- TEMPLATE, NOT COMPILED. Rename to TarkovTerrorist.uc
+// once you know what your install calls its terrorist pawn class.
+//
+// WHY THIS IS A TEMPLATE AND NOT A CLASS.
+//
+// Everything on the player's side of this mod extends a class name that is
+// written down in `Mods\RavenShield.mod` and therefore known for certain:
+// `R6Characters.R6RainbowLight`, `.R6RainbowMedium`, `.R6RainbowHeavy`. The
+// terrorist pawn class is not in any descriptor. It is named in the AI
+// templates -- `template\*.tpt` carries weighted `NNN, Package.Class` lines
+// for each terrorist's pawn -- so your own install knows, but this repository
+// does not.
+//
+// A wrong parent class in a `.uc` file does not fail quietly: `ucc make`
+// stops, and it stops the WHOLE package, which would mean a guess here
+// blocking the player-side health model from building at all. So this ships
+// as a template.
+//
+// TO TURN IT ON, two steps:
+//
+//   1. python ..\..\tools\rs3_probe.py "<game folder>" --pawns
+//      prints every pawn class in `R6Characters.u` with its parent, and the
+//      pawn classes each `.tpt` actually spawns. Pick the terrorist base.
+//
+//   2. Rename this file to `TarkovTerrorist.uc`, put that name in the
+//      `extends` line, rebuild, and point the templates at it:
+//      `tools\rs3_probe.py --rewrite-templates TarkovRvS.TarkovTerrorist`
+//      prints the `.tpt` edits needed. Raven Shield's own AI still drives
+//      them -- this changes the BODY, not the brain, which is the whole
+//      point: regular Raven Shield terrorist AI, Tarkov wounds.
+//
+// Terrorists get no medical kit, because nothing in the AI would use one. A
+// terrorist who takes a round through the thigh bleeds until he dies, which
+// is roughly what happens to the ones who do have kits too.
+//=============================================================================
+class TarkovTerrorist extends R6Terrorist;       // <-- VERIFY with tools\rs3_probe.py --pawns
+
+var TarkovHealth Wounds;
+
+const LETHAL = 10000;
+
+function PostBeginPlay()
+{
+	Super.PostBeginPlay();
+	Wounds = Spawn(class'TarkovHealth', self);
+	if (Wounds != None)
+		Wounds.Init(self);
+}
+
+simulated function Destroyed()
+{
+	if (Wounds != None)
+	{
+		Wounds.Destroy();
+		Wounds = None;
+	}
+	Super.Destroyed();
+}
+
+// VERIFY -- see the class comment.
+function R6TakeDamage(int Damage, Pawn InstigatedBy, vector HitLocation,
+	vector Momentum, class<DamageType> DamageType)
+{
+	local int saved;
+
+	if (Wounds == None)
+	{
+		Super.R6TakeDamage(Damage, InstigatedBy, HitLocation, Momentum, DamageType);
+		return;
+	}
+
+	if (Wounds.Route(Damage, InstigatedBy, HitLocation))
+	{
+		Super.R6TakeDamage(LETHAL, InstigatedBy, HitLocation, Momentum, DamageType);
+		return;
+	}
+
+	saved = Health;
+	Super.R6TakeDamage(class'TarkovConfig'.default.NativeFlinchDamage,
+		InstigatedBy, HitLocation, Momentum, DamageType);
+	if (Health > 0)
+		Health = saved;
+}
+
+function TakeDamage(int Damage, Pawn InstigatedBy, vector HitLocation,
+	vector Momentum, class<DamageType> DamageType)
+{
+	local int saved;
+
+	if (Wounds == None)
+	{
+		Super.TakeDamage(Damage, InstigatedBy, HitLocation, Momentum, DamageType);
+		return;
+	}
+
+	if (Wounds.Route(Damage, InstigatedBy, HitLocation))
+	{
+		Super.TakeDamage(LETHAL, InstigatedBy, HitLocation, Momentum, DamageType);
+		return;
+	}
+
+	saved = Health;
+	Super.TakeDamage(class'TarkovConfig'.default.NativeFlinchDamage,
+		InstigatedBy, HitLocation, Momentum, DamageType);
+	if (Health > 0)
+		Health = saved;
+}

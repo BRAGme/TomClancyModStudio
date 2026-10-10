@@ -30,13 +30,27 @@ friendly fire), AI templates (competence across eight skill stats, the six-way
 personality mix, helmets), Stealth (footstep audibility per posture, gunfire
 alert radius, quiet reloads), Interface (crosshair, radar, the seven HUD
 elements, aim assist, corpses, field of view), Weapons (recoil, accuracy in all
-five stances, reticule settle time, extra magazines) and Ammunition (bullet
+five stances, reticule settle time, extra magazines), Ammunition (bullet
 damage, penetration, and whether the loadout menu's stat bars are rewritten to
-match what was changed).
+match what was changed) and Tarkov (the damage spread and weapon handling of
+Escape from Tarkov, and the medical keybinds its script mod uses).
 
-The last two groups are the only ones in the whole tool that write binary: they
-patch class defaults inside Raven Shield's compiled `system\*.u` packages at
-identical width. See section 7 of `docs/FORMATS.md`.
+Weapons, Ammunition and most of Tarkov are the only options in the whole tool
+that write binary: they patch class defaults inside Raven Shield's compiled
+`system\*.u` packages at identical width. See section 7 of `docs/FORMATS.md`.
+
+The Tarkov group needs one note the card also carries. Raven Shield stores
+muzzle **energy** and Tarkov stores **wound damage**, and across the five
+common calibres Raven Shield's figures span 7.1x while Tarkov's span 1.5x --
+a units disagreement, not a balance one. The option compresses onto Tarkov's
+spread, anchored on 9mm so nothing gets stronger except buckshot, and the
+result is that every pistol and PDW calibre in the game is left alone: five of
+them are already inside five percent of where Tarkov would put them. It is the
+rifles that are the outlier, and they come down to about a third. The three
+options cover the half of a Tarkov conversion that is configuration; the limb
+model, bleeding and fractures are UnrealScript and live in `mods/TarkovRvS/`,
+which this tool does not install. `research/dossier-tarkov-rvs.md` is the
+design and says what is not reachable.
 
 **Ghost Recon** — Enemies (marksmanship and the other three skill rungs, body
 armour, whether multiplayer enemies are included), Lethality (the seven
