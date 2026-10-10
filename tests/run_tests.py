@@ -983,8 +983,33 @@ def run_raw_and_data(args, work):
                 original = arc.read_entry(e)
                 plain = rselzo.unpack(original)
                 new = plain
-                for ed in applies:
-                    new, _n = dataedit.OPS[ed.op](new, ed.params)
+                # The same three-way dispatch apply_data uses. Calling every op
+                # with two arguments crashed the whole run here: `shotgun_snd_sb`
+                # is in _WANTS_SIBLING because the .SB body is written from the
+                # lengths in its own .SH, and it RAISES rather than guessing when
+                # that is missing. A section that aborts reports nothing about
+                # the other 70 files, so the dispatch is mirrored and anything
+                # still unhappy is recorded as a failure instead.
+                try:
+                    for ed in applies:
+                        fn = dataedit.OPS[ed.op]
+                        if ed.op in dataedit._WANTS_CONTAINER:
+                            new, _n = fn(new, ed.params, original)
+                        elif ed.op in dataedit._WANTS_SIBLING:
+                            want = dataedit._WANTS_SIBLING[ed.op](e.path).upper()
+                            sib = arc.files.get(want)
+                            if sib is None:
+                                raise dataedit.DataEditError(
+                                    "%s is built from %s, which is not in the "
+                                    "archive" % (ed.op, want))
+                            new, _n = fn(new, ed.params,
+                                         rselzo.unpack(arc.read_entry(sib)))
+                        else:
+                            new, _n = fn(new, ed.params)
+                except Exception as exc:
+                    check("%s: %s applies" % (e.path, ed.op), False,
+                          "%s: %s" % (type(exc).__name__, exc))
+                    continue
                 if new == plain:
                     continue
                 # Only a COMPRESSED file has to keep its length: its chunk
@@ -2747,10 +2772,18 @@ def run_rse_weapons(args):
         # under Weapons -- Jungle Storm has carried smoke and quick-trigger
         # cards there for a while. It went unnoticed because the check only
         # runs when that game's ISO is passed, and it usually is not.
+        # ...and narrowing it to the four stat SUFFIXES was still too loose,
+        # because `shotgun_spread` -- the shotgun's pattern, a code edit and
+        # not a side dial -- also ends in "spread". The eight are a side times
+        # a stat, so select on both. Same root cause as before: this only runs
+        # with the game's own ISO, so it sat behind the crash in the Ghost
+        # Recon data section and nobody saw it fail.
         stat = ("mag", "rate", "recoil", "spread")
+        side = ("ally", "enemy")
         cards = [x for x in profile.settings
                  if x.group == "Weapons"
-                 and x.key.rsplit("_", 1)[-1] in stat]
+                 and x.key.rsplit("_", 1)[-1] in stat
+                 and x.key.rsplit("_", 2)[-2] in side]
         check("there are eight gun-stat cards, four per side",
               len(cards) == 8, str(sorted(c.key for c in cards)))
         check("and they are all data edits",
