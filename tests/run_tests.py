@@ -156,8 +156,11 @@ def main():
         run_friendly_fire(args)
         # Which script package each edit is allowed to be written into.
         # Lives in its own file because it carries the routing table.
-        from tests_routing import run_edit_routing
+        from tests_routing import run_edit_routing, run_stock_coverage
         run_edit_routing(args)
+        # Can every word this tool writes be put back? Needs no disc, so it
+        # runs on every invocation of the suite.
+        run_stock_coverage(args)
         run_property_bools(args)
         run_impact_puffs(args)
         run_keep_viewport(args)

@@ -359,3 +359,212 @@ def run_edit_routing(args):
     check("every edit's select matches at least one file on the disc",
           not dead,
           "matches nothing, so it is silently inert: %s" % ", ".join(dead))
+
+
+# ---------------------------------------------------------------------------
+# every word a card writes has to be in the profile's STOCK map
+# ---------------------------------------------------------------------------
+#
+# This is the check that makes a revised patch SAFE TO SHIP over an older one.
+#
+# `engine.load_pristine` recovers the shipped overlay three ways: from the
+# backup container beside the disc, from the live image when it already hashes
+# to `spec.image_sha1`, or -- when neither is available -- by writing every
+# word in `profile.stock_words` and then DEMANDING that hash. That last arm is
+# the one that matters here. An address a card writes but STOCK does not list
+# cannot be put back by it, so the image stays patched, the hash misses, and
+# the user is told their disc "has been changed by something other than this
+# tool -- restore the disc from a clean copy" for damage this tool itself did.
+# `stock_container` in run_tests.py refuses the ISO by the same route, so the
+# suite would stop being able to read the disc it is meant to be testing.
+#
+# It bites hardest when a patch is REVISED. A new version that drops some of
+# the old version's addresses has to keep emitting them -- at the shipped
+# value, so they are no-ops on a clean disc -- or every disc carrying the old
+# version becomes unrecoverable in exactly this way. `rsecarry` does that with
+# its REPAIR tuple, and this check is what holds the next revision to it.
+#
+# The sweep sets each setting to every value it can take, with its
+# requirements satisfied, and audits every word edit that comes back. The
+# per-card attribution in a failure names whichever setting was being swept,
+# which is a diagnostic hint rather than proof of ownership: the profile's
+# default-on settings contribute their edits to every build.
+
+
+def _sweep_values(s):
+    """Every value this setting can be asked for."""
+    if s.kind == "bool":
+        return [True, False]
+    if s.kind == "choice":
+        return [c.value for c in s.choices]
+    if s.kind == "int":
+        return sorted({s.minimum, s.maximum, s.default})
+    return [s.default]
+
+
+def _satisfy(profile, values, key, seen=None):
+    """Give `key` its requirements, so its edits are actually built."""
+    seen = set() if seen is None else seen
+    if key in seen:
+        return
+    seen.add(key)
+    s = profile.setting(key)
+    if s is None:
+        return
+    for dep_key, want in s.requires.items():
+        if profile.setting(dep_key) is None:
+            continue
+        want = list(want) if isinstance(want, (list, tuple, set)) else [want]
+        values[dep_key] = want[0]
+        _satisfy(profile, values, dep_key, seen)
+
+
+def _audit_stock_coverage(name, profile, stock):
+    missing, raised = {}, []
+    built = 0
+    for s in profile.settings:
+        for val in _sweep_values(s):
+            values = profile.defaults()
+            values[s.key] = val
+            _satisfy(profile, values, s.key)
+            try:
+                edits = profile.build_edits(profile.effective(values))
+            except Exception as exc:                      # noqa: BLE001
+                raised.append("%s=%r -> %s: %s"
+                              % (s.key, val, type(exc).__name__, exc))
+                continue
+            for e in edits:
+                if not hasattr(e, "va") or getattr(e, "target", "main") != "main":
+                    continue
+                built += 1
+                if e.va not in stock:
+                    missing.setdefault(e.va, set()).add("%s=%r" % (s.key, val))
+
+    # Today every one of these three profiles builds its disc words through a
+    # local `w(va, value, note)` helper that reads `WordEdit(va, value,
+    # STOCK[va], note)`, which has two consequences worth being plain about:
+    #
+    #   * a missing address raises KeyError inside build_edits, so it lands on
+    #     the "no setting raises" check below rather than here. This one is a
+    #     BACKSTOP, for a future builder that appends a WordEdit directly.
+    #   * comparing `e.stock` against `STOCK[e.va]` could never fail, because
+    #     the former IS the latter. A check for it was written, found to be
+    #     vacuous by mutation testing, and removed rather than shipped as
+    #     decoration. The honest version of that comparison needs an
+    #     independent source for the shipped word: against the pristine image
+    #     it is run_tests.py's own "every stock word in the profile matches
+    #     the image", and against each module's own declaration it is
+    #     `_audit_stock_declarations` below.
+    #
+    # `build_pnach` is deliberately NOT swept. Its rows are emulator cheat
+    # lines that never touch the disc -- several pass a literal 0 as the stock
+    # word -- so they need no STOCK entry and would fail this wrongly.
+    check("%s: every address a card writes onto the disc is in STOCK, so "
+          "load_pristine can put it back (%d word edits over %d settings, "
+          "%d stock words)"
+          % (name, built, len(profile.settings), len(stock)),
+          not missing,
+          "written but unrecoverable: %s"
+          % "; ".join("0x%08X (while sweeping %s)"
+                      % (va, ", ".join(sorted(missing[va])[:2]))
+                      for va in sorted(missing)[:6]))
+    check("%s: and no setting raises while building its edits, at any value "
+          "it can take -- which is where a STOCK gap actually surfaces" % name,
+          not raised, "; ".join(raised[:4]))
+
+
+#: Every module that declares its own shipped words. The profile folds these
+#: into STOCK with a sequence of `update()` and `STOCK[va] = ...` statements --
+#: 46 of them in r6_3.py alone -- and a later one silently wins. That is the
+#: one direction the sweep above cannot see: it reads `e.stock` straight out
+#: of STOCK, so a clobbered value looks consistent to it while being wrong on
+#: the disc. Asking each module what it declared is the independent source.
+STOCK_DECLARERS = ("rseburstsnd", "rsecarry", "rseflashcost", "rsemirror",
+                   "rsemolotov", "rsemsgpos", "rsepenetrate", "rsethirdperson")
+
+
+def _audit_stock_declarations(stock):
+    """Did a later STOCK.update quietly overwrite an earlier module's word?"""
+    import importlib
+
+    absent, clobbered = [], []
+    declared = 0
+    for name in STOCK_DECLARERS:
+        mod = importlib.import_module("tcps2." + name)
+        if not hasattr(mod, "stock_words"):
+            absent.append("%s no longer declares stock_words()" % name)
+            continue
+        own = mod.stock_words()
+        declared += len(own)
+        for va, want in own.items():
+            if va not in stock:
+                absent.append("%s 0x%08X" % (name, va))
+            elif stock[va] != want:
+                clobbered.append("%s 0x%08X declares %08X, STOCK carries %08X"
+                                 % (name, va, want, stock[va]))
+
+    # The list above is written out rather than discovered, so that adding a
+    # module does not silently widen what this check covers -- but a list
+    # nobody maintains is worse than no list. Find the declarers in the source
+    # instead of importing every module, and fail on a mismatch either way.
+    import os
+    import re as _re
+    pkg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "tcps2")
+    found = set()
+    for fn in sorted(os.listdir(pkg)):
+        if not fn.endswith(".py"):
+            continue
+        with open(os.path.join(pkg, fn), encoding="utf-8") as fh:
+            if _re.search(r"^def stock_words", fh.read(), _re.M):
+                found.add(fn[:-3])
+    check("the list of stock-word declarers is still the whole list (%d)"
+          % len(found),
+          found == set(STOCK_DECLARERS),
+          "source declares %s; this check knows %s"
+          % (sorted(found), sorted(STOCK_DECLARERS)))
+
+    check("every word a module declares as shipped survives into the "
+          "profile's STOCK (%d words from %d modules)"
+          % (declared, len(STOCK_DECLARERS)),
+          not absent, "not in STOCK: %s" % "; ".join(absent[:6]))
+    check("and none of them was overwritten by a later STOCK update, which "
+          "the sweep above cannot see because it reads the shipped word out "
+          "of STOCK itself",
+          not clobbered, "; ".join(clobbered[:4]))
+
+
+def run_stock_coverage(args):
+    """Can every word this tool writes be put back? Needs no disc."""
+    print("\n[every word written can be put back]")
+    from tcps2.games import ghost_recon, jungle_storm, r6_3
+
+    for name, mod in (("Rainbow Six 3", r6_3),
+                      ("Ghost Recon", ghost_recon),
+                      ("Jungle Storm", jungle_storm)):
+        _audit_stock_coverage(name, mod.PROFILE, mod.STOCK)
+
+    _audit_stock_declarations(r6_3.STOCK)
+
+    # The revision case, named for what it protects: a disc carrying the
+    # FIRST version of the carry-over patch. That version wrote nine
+    # addresses this one does not, and they are only recoverable because it
+    # still emits them at the shipped value.
+    from tcps2 import rsecarry
+    sw = rsecarry.stock_words()
+    core = {va for va, _s, _n, _note in rsecarry.WORDS}
+    rep = {va: shipped for va, shipped, _note in rsecarry.REPAIR}
+    check("the carry-over's repair words are addresses it no longer writes, "
+          "so a disc carrying the first version is healed rather than left "
+          "half-patched (%d repair, %d written)" % (len(rep), len(core)),
+          rep and not (set(rep) & core),
+          "also written, so not a repair: %s"
+          % ", ".join("0x%08X" % va for va in sorted(set(rep) & core)))
+    check("and stock_words() covers both sets, so a revert puts all %d back"
+          % (len(core) + len(rep)),
+          set(sw) == core | set(rep),
+          "covers %d of %d" % (len(set(sw)), len(core | set(rep))))
+    check("and the profile's STOCK carries every one of them",
+          not (set(sw) - set(r6_3.STOCK)),
+          "uncovered: %s" % ", ".join("0x%08X" % va
+                                      for va in sorted(set(sw) - set(r6_3.STOCK))[:6]))
