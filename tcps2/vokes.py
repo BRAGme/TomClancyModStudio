@@ -452,6 +452,100 @@ class Vokes:
                 self.r.write(a, b"\x00" * (b - a))
         return dest
 
+    def add_file(self, name, data, raw_size=None):
+        """Add a file the archive does not already hold. Returns its index.
+
+        `write` only replaces an existing slot. A genuinely new member needs
+        four things, and missing the last one leaves a file that is present and
+        unreachable:
+
+          * a spare 48-byte record between `ent_end` and the name table,
+          * room for its name in the name table,
+          * a provably blank data run, from `allocate`,
+          * **a splice into the `next` chain.** That chain is one globally
+            name-sorted list over every record (see the module docstring), and
+            it is how the engine resolves a name to a record. A record that is
+            not in it is invisible even though its bytes are on the disc.
+
+        These archives are FLAT -- every file record on Ghost Recon, Jungle
+        Storm and Rainbow Six 3 carries `parent = 0`, and record 0's
+        `firstChild` is simply the head of that one chain -- so there is no
+        directory tree to maintain and `firstChild` only moves when the new
+        name sorts before every existing one.
+        """
+        key = name.upper().lstrip("/")
+        count = (self.ent_end - self.ent_off) // self.rec_size
+        names = {}
+        for i in range(count):
+            names[self._name(self.rec(i)[0]).upper()] = i
+        if key in names:
+            raise VokesError("%s already holds %s" % (self.r.name, key))
+        if self.ent_end + self.rec_size > self.name_off:
+            raise VokesError("%s has no spare record slot" % self.r.name)
+
+        tail = 0
+        for i in range(count):
+            off = self.rec(i)[0]
+            end = self.names.find(b"\0", off)
+            tail = max(tail, (end if end >= 0 else off) + 1)
+        blob = key.encode("latin-1") + b"\0"
+        if tail + len(blob) > len(self.names):
+            raise VokesError("%s has no room left in its name table"
+                             % self.r.name)
+
+        size = len(data)
+        second = raw_size if raw_size is not None else size
+        offset = self.allocate(size)
+
+        # where it belongs in the sorted chain
+        prev, head = None, self.rec(0)[3]
+        cur, seen = head, set()
+        while cur and cur < count and cur not in seen:
+            seen.add(cur)
+            if self._name(self.rec(cur)[0]).upper() > key:
+                break
+            prev, cur = cur, self.rec(cur)[1]
+        nxt = cur if cur and cur < count else 0
+
+        idx = count
+        rec = [0] * (self.rec_size // 4)
+        rec[0], rec[1], rec[2], rec[3] = tail, nxt, 0, 0
+        rec[5], rec[6], rec[7], rec[8] = 1, size, second, offset
+        base = idx * self.rec_size
+        self.ent.extend(bytes(self.rec_size))
+        struct.pack_into("<%dI" % len(rec), self.ent, base, *rec)
+        self.names = bytearray(self.names)
+        self.names[tail:tail + len(blob)] = blob
+
+        if prev is None:                       # sorts before everything
+            struct.pack_into("<I", self.ent, 0x0C, idx)
+            self.r.write(self.ent_off + 0x0C, struct.pack("<I", idx))
+        else:
+            struct.pack_into("<I", self.ent, prev * self.rec_size + 0x04, idx)
+            self.r.write(self.ent_off + prev * self.rec_size + 0x04,
+                         struct.pack("<I", idx))
+
+        self.ent_end += self.rec_size
+        self.r.write(self.ent_off + base, bytes(self.ent[base:base + self.rec_size]))
+        self.r.write(self.name_off + tail, blob)
+        self.r.write(0x0C, struct.pack("<I", self.ent_end))
+        self.r.write(offset, data)
+        self.files["/" + key] = Entry(idx, "/" + key, size, offset)
+        return idx
+
+    def check_chain(self):
+        """(visited, total, sorted?) for the global `next` chain.
+
+        The one assertion that catches every way a bad splice can go wrong.
+        """
+        count = (self.ent_end - self.ent_off) // self.rec_size
+        cur, seen, order = self.rec(0)[3], set(), []
+        while cur and cur < count and cur not in seen:
+            seen.add(cur)
+            order.append(self._name(self.rec(cur)[0]).upper())
+            cur = self.rec(cur)[1]
+        return len(order), count, order == sorted(order)
+
     def replace(self, path, data):
         """Backwards-compatible name for `write`."""
         return self.write(path, data)

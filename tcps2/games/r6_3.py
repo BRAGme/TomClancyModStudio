@@ -41,7 +41,7 @@ from .. import (rseaicover, rsecanon, rseclark, rsedebrief, rsefragwarn, rsechat
                 rsedowncall, rseroguecall, rsethuntai, rsegadget,
                 rsehostagerun, rseflashcost, rsecorpsehit, rsegunaudio,
                 rsethirdperson, rseregroup, rsewindowfrag, rsemsgpos,
-                rseclaymore, rseff,
+                rseclaymore, rseff, rs3cheats, rseanimcut,
                 rsedecal, rseaihunt, rsesmoke, rseuzilight, rsepuffs,
                 rseviewport, rsespectate, rsetracer, rseslomo,
                 rsepenetrate,
@@ -1381,6 +1381,8 @@ def _build_settings():
         rsesquad.card("", "Split Screen"),
         rsehudteam.card("", "Split Screen"),
         rsemsgpos.card("", "Split Screen"),
+        rs3cheats.card("", "Split Screen"),
+        rseanimcut.card("", "World"),
         rseclark.card("", "Split Screen"),
         rseteam.card("", "Split Screen"),
         rserescue.card("", "Split Screen"),
@@ -1964,6 +1966,26 @@ def build_data(v: dict) -> list:
     if ini:
         out.append(FileEdit("ini_values", r"/R6GAMESETTINGS\.INI$", "",
                             {"values": ini}, "AI and control settings"))
+    # The developer console on a spare pad slot. Its own file, not
+    # R6GAMESETTINGS.INI -- the bindings live in /PSX2USER.INI. See
+    # rs3cheats: the gate on R6CheatManager returns True on its first
+    # instruction, so there is nothing to unlock, only a button to
+    # press it from.
+    # Animations that ship bound to nothing. Two bytes per swap inside
+    # RainbowAnim's own AnimSeqs array, so no name table grows. See
+    # rseanimcut for which level costs what.
+    _anim = str(v.get("anim_restore") or "stock")
+    if rseanimcut.chosen(_anim):
+        out.append(FileEdit("anim_restore", rseanimcut.SELECT, "",
+                            {"level": _anim},
+                            "unbound animations: %d swap(s)"
+                            % len(rseanimcut.chosen(_anim))))
+    _cheat = rs3cheats.ini_values(str(v.get("cheat_key") or "off"))
+    if _cheat:
+        out.append(FileEdit("ini_values", r"/PSX2USER\.INI$", "",
+                            {"values": _cheat},
+                            "developer console: %s on %s"
+                            % (list(_cheat.values())[0], rs3cheats.FREE_SLOT)))
     g1 = v.get("team_gadget_1", "stock")
     g2 = v.get("team_gadget_2", "stock")
     mine = bool(v.get("team_match_player"))

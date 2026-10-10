@@ -257,6 +257,11 @@ def _op_ss_man_down(plain, params):
     return rsemandown.apply(plain, bool(params.get("enable", True)))
 
 
+def _op_anim_restore(plain, params):
+    from . import rseanimcut
+    return rseanimcut.apply_auto(plain, str(params.get("level") or "stock"))
+
+
 def _op_frag_warning(plain, params):
     from . import rsefragwarn
     return rsefragwarn.apply(plain, bool(params.get("enable", True)))
@@ -426,6 +431,7 @@ OPS = {
     "team_recording": _op_team_recording,
     "muzzle": _op_muzzle,
     "rescue_flag": _op_rescue_flag,
+    "anim_restore": _op_anim_restore,
     "frag_warning": _op_frag_warning,
     "ss_man_down": _op_ss_man_down,
     "ss_chatter": _op_ss_chatter,

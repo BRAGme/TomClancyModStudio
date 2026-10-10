@@ -25,7 +25,7 @@ accordingly in the interface.
 from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grcontrols, grextras, grhitblur, grshrapnel,
-               grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger,
+               grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger, gropposing,
                grsprintspeed, grobserver, grdeathmusic, grcombatmusic, grawareness, grzoomhold,
                grsmoke, grtactics, grsuppress, grfrag, grgunfar, grpierce)
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
@@ -77,6 +77,7 @@ STOCK.update(grcontrols.GR_STOCK)
 STOCK.update(grcallouts.GR_STOCK)
 STOCK.update(grtotalwar.GR_STOCK)
 STOCK.update(grsight.GR_STOCK)
+STOCK.update(gropposing.GR_STOCK)
 STOCK.update(grtrigger.GR_STOCK)
 STOCK.update(grdeathmusic.GR_STOCK)
 STOCK.update(grcombatmusic.GR_STOCK)
@@ -1416,6 +1417,8 @@ def build_edits(v: dict) -> list:
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grsight.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
+    for va, value, stock, note in gropposing.gr_edits(v):
+        e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grtrigger.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grdeathmusic.gr_edits(v):
@@ -1620,6 +1623,7 @@ PROFILE = GameProfile(
     pcsx2_crc="3E571E95",
     overlays=[ELF],
     settings=(_settings() + rseweapons.cards('gr_')
+              + [gropposing.card('gr_', 'Enemies')]
               + _mission_settings()),
     build_edits=build_edits,
     build_pnach=lambda v: [],
