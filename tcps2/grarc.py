@@ -239,7 +239,7 @@ GAMES = {
         HOOK=0x00423C98, HOOK_STOCK=0x0C10C6DC, HOOK_DELAY=0x00423C9C,
         HOOK_DELAY_STOCK=0x8E246274, TRACER_RENDER=0x00431B70,
         HOOK_SPLIT=None, EFFMGR_REG="s1", VIEW_REG="s0",
-        SIM_MGR=0x0062B8D0, CAM_AT=0x448, MOTION=0x458, HOLD=0x510,
+        SIM_MGR=0x0062B8D0, CAM_AT=0x444, MOTION=0x458, HOLD=0x510,
         VT_POS=0x330, VT_DIR=0x2D8, CAVE=None, CAVE_WORDS=0,
         CAVE_NAME=None,
         #: The routine is SPLIT here, because no single free run holds the
@@ -279,6 +279,14 @@ GAMES = {
     ),
 }
 
+#: The per-view SimCamera lives at `mIIkeSimulationMgr + 0x444 + 4*view`, so
+#: 0x444 is VIEW 0 and 0x448 is VIEW 1 -- in BOTH games. `grcamera`'s note
+#: "cameras at +0x444 / +0x448" names the two views, not the two games, and
+#: reading it the other way is what made the first Jungle Storm build draw
+#: nothing: it looked at view 1, which is null outside split screen, and took
+#: the early-out every frame. Measured in a savestate taken mid-throw:
+#: +0x444 held 0x03175E00 and +0x448 held 0.
+#:
 #: `HumanMotion+0x38`, the freeze flag HandleThrowItem sets while the throw
 #: button is held. One byte, and only the thrown-item path can set it, which
 #: is why it is preferred over walking the inventory through two vtables.
@@ -481,7 +489,7 @@ def card(prefix, group):
 
 _JS_PART1 = (
     0x27BDFF20, 0xAFBF00AC, 0xAFA400A8, 0xAFB000B0, 0xAFB100B4, 0xAFB200B8,
-    0xAFB400BC, 0x3C090063, 0x8D29B8D0, 0x1120127C, 0x00000000, 0x8D2A0448,
+    0xAFB400BC, 0x3C090063, 0x8D29B8D0, 0x1120127C, 0x00000000, 0x8D2A0444,
     0x11401279, 0x00000000, 0x8D520004, 0x12401276, 0x00000000, 0x8E480138,
     0x15001273, 0x00000000, 0x8E480458, 0x11001270, 0x00000000, 0x91090038,
     0x1120126D, 0x00000000, 0x3C110018, 0x263120A0, 0xC6420510, 0xC6230000,
