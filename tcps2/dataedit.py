@@ -44,6 +44,11 @@ def _op_reveal_hidden(plain, params):
     return transforms.reveal_hidden(plain)
 
 
+def _op_enemy_launcher(plain, params):
+    from . import grlauncher
+    return grlauncher.fit_launcher(plain)
+
+
 def _op_bump_tier(plain, params):
     return transforms.bump_enemy_tier(plain, int(params.get("steps", 1)))
 
@@ -413,6 +418,7 @@ def _op_ws_slot(plain, params):
 OPS = {
     "strip_difficulty": _op_strip_difficulty,
     "reveal_hidden": _op_reveal_hidden,
+    "enemy_launcher": _op_enemy_launcher,
     "bump_tier": _op_bump_tier,
     "bump_stats": _op_bump_stats,
     "gtf_variables": _op_gtf_variables,

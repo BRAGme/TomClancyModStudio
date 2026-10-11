@@ -479,16 +479,25 @@ def _audit_stock_coverage(name, profile, stock):
 #: one direction the sweep above cannot see: it reads `e.stock` straight out
 #: of STOCK, so a clobbered value looks consistent to it while being wrong on
 #: the disc. Asking each module what it declared is the independent source.
-STOCK_DECLARERS = ("rseburstsnd", "rsecarry", "rseflashcost", "rsemirror",
-                   "rsemolotov", "rsemsgpos", "rsepenetrate", "rsethirdperson")
+#: Not every declarer feeds the same profile: `grarc` declares Ghost Recon
+#: words, the rest Rainbow Six 3's. So each module is checked against
+#: whichever profiles actually carry its addresses, rather than against one.
+STOCK_DECLARERS = ("grarc", "rseburstsnd", "rsecarry", "rseflashcost",
+                   "rsemirror", "rsemolotov", "rsemsgpos", "rsepenetrate",
+                   "rsethirdperson")
 
 
-def _audit_stock_declarations(stock):
-    """Did a later STOCK.update quietly overwrite an earlier module's word?"""
+def _audit_stock_declarations(stocks):
+    """Did a later STOCK.update quietly overwrite an earlier module's word?
+
+    `stocks` is {profile name: its STOCK}. A module is audited against every
+    profile that carries ANY of its addresses -- which is how a per-game
+    module like `grarc` (Ghost Recon) is held to the same standard as the
+    Rainbow Six 3 ones without being compared to a map it never feeds.
+    """
     import importlib
 
-    absent, clobbered = [], []
-    declared = 0
+    absent, clobbered, declared = [], [], 0
     for name in STOCK_DECLARERS:
         mod = importlib.import_module("tcps2." + name)
         if not hasattr(mod, "stock_words"):
@@ -496,17 +505,20 @@ def _audit_stock_declarations(stock):
             continue
         own = mod.stock_words()
         declared += len(own)
-        for va, want in own.items():
-            if va not in stock:
-                absent.append("%s 0x%08X" % (name, va))
-            elif stock[va] != want:
-                clobbered.append("%s 0x%08X declares %08X, STOCK carries %08X"
-                                 % (name, va, want, stock[va]))
+        where = [p for p, st in stocks.items() if set(own) & set(st)]
+        if not where:
+            absent.append("%s: none of its %d words is in any profile's STOCK"
+                          % (name, len(own)))
+            continue
+        for p in where:
+            st = stocks[p]
+            for va, want in own.items():
+                if va not in st:
+                    absent.append("%s 0x%08X missing from %s" % (name, va, p))
+                elif st[va] != want:
+                    clobbered.append("%s 0x%08X declares %08X, %s carries %08X"
+                                     % (name, va, want, p, st[va]))
 
-    # The list above is written out rather than discovered, so that adding a
-    # module does not silently widen what this check covers -- but a list
-    # nobody maintains is worse than no list. Find the declarers in the source
-    # instead of importing every module, and fail on a mismatch either way.
     import os
     import re as _re
     pkg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -524,10 +536,10 @@ def _audit_stock_declarations(stock):
           "source declares %s; this check knows %s"
           % (sorted(found), sorted(STOCK_DECLARERS)))
 
-    check("every word a module declares as shipped survives into the "
-          "profile's STOCK (%d words from %d modules)"
+    check("every word a module declares as shipped survives into the STOCK of "
+          "each profile that carries it (%d words from %d modules)"
           % (declared, len(STOCK_DECLARERS)),
-          not absent, "not in STOCK: %s" % "; ".join(absent[:6]))
+          not absent, "; ".join(absent[:6]))
     check("and none of them was overwritten by a later STOCK update, which "
           "the sweep above cannot see because it reads the shipped word out "
           "of STOCK itself",
@@ -544,7 +556,9 @@ def run_stock_coverage(args):
                       ("Jungle Storm", jungle_storm)):
         _audit_stock_coverage(name, mod.PROFILE, mod.STOCK)
 
-    _audit_stock_declarations(r6_3.STOCK)
+    _audit_stock_declarations({"Rainbow Six 3": r6_3.STOCK,
+                               "Ghost Recon": ghost_recon.STOCK,
+                               "Jungle Storm": jungle_storm.STOCK})
 
     # The revision case, named for what it protects: a disc carrying the
     # FIRST version of the carry-over patch. That version wrote nine

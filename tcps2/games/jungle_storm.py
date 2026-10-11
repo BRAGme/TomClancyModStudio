@@ -25,7 +25,7 @@ Two differences from Ghost Recon worth knowing, both measured:
 from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grextras, grhitblur, grshrapnel, grsight, grsquad,
-               grdeathmusic, grfrag, grhu, grhuspot, grpierce, grselcopy, grsmoke, grsplat, grsuppress,
+               grdeathmusic, grfrag, grhu, grlauncher, grhuspot, grpierce, grselcopy, grsmoke, grsplat, grsuppress,
                grtotalwar, grtrigger, grsprint, grshotgun, grshotsound, grlan, grcooplabel,
                grcooporders, grobserver, grcoopctl, grsprintspeed, grlanmenu, grcoophandicap,
                grawareness, grtactics, grgunfar, grcoophud, grcombatmusic, gralarm, grsidearm,
@@ -411,6 +411,11 @@ def _settings():
                            "Past 30 m an AI soldier throws at 32 m/s (reaches about 53 m)."),
                     Choice("60", "Up to 60 m",
                            "Past 30 m an AI soldier throws at 36 m/s (reaches about 63 m)."),
+                    Choice("75", "Up to 75 m (as far as a launcher)",
+                           "Past 30 m an AI soldier throws at 42 m/s (reaches about 77 m). "
+                           "The same distance the grenade launcher already fires to, by "
+                           "hand. Further than a man can really throw: pick this for the "
+                           "fight, not for the realism."),
                 ],
                 help="How far away a soldier will throw a hand grenade (a grenade "
                      "launcher still fires out to 75 m). The game aims a throw as if "
@@ -1653,6 +1658,12 @@ def build_data(v: dict) -> list:
     if v.get("js_reveal_hidden"):
         out.append(FileEdit("reveal_hidden", r"\.MIS$", "GR.IMG",
                             note="spawn the script-held reinforcements"))
+    _gl = str(v.get("js_enemy_launcher") or "off")
+    if _gl != "off":
+        out.append(FileEdit("enemy_launcher",
+                            grlauncher.select(_gl, "js"), "GR.IMG",
+                            note="a GP-25 in slot 1 of "
+                                 + ", ".join(grlauncher.kits_for(_gl, "js"))))
     skill = int(v.get("js_skill", 0))
     if skill:
         out.append(FileEdit("bump_stats", r"\.ATR$", "GR.IMG", {"steps": skill},
@@ -1679,7 +1690,8 @@ PROFILE = GameProfile(
     volume_hint="SLUS_20820",
     pcsx2_crc="DE1E4DEE",
     overlays=[ELF],
-    settings=(_settings() + rseweapons.cards('js_')
+    settings=(_settings() + [grlauncher.card('js_', 'Enemies')]
+              + rseweapons.cards('js_')
               + _mission_settings()),
     build_edits=build_edits,
     build_pnach=lambda v: [],

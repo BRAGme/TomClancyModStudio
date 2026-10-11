@@ -27,7 +27,8 @@ from __future__ import annotations
 from .. import (grcallouts, grcamera, grcontrols, grextras, grhitblur, grshrapnel,
                grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger, gropposing,
                grsprintspeed, grobserver, grdeathmusic, grcombatmusic, grawareness, grzoomhold,
-               grsmoke, grtactics, grsuppress, grfrag, grgunfar, grpierce)
+               grsmoke, grtactics, grsuppress, grfrag, grgunfar, grpierce, grlauncher, grarc,
+               )
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
 from . import rseweapons, rstuning
@@ -87,6 +88,10 @@ STOCK.update(grsmoke.GR_STOCK)
 STOCK.update(grtactics.GR_STOCK)
 STOCK.update(grsuppress.GR_STOCK)
 STOCK.update(grfrag.GR_STOCK)
+#: 211 words: the hooked jal, 170 of routine in sceCdSearchFile and 40
+#: of tables in sceIpuInit. Both stubs are the target of no jal in the
+#: mapped span and neither overlaps anything else STOCK declares.
+STOCK.update(grarc.stock_words())
 STOCK.update(grpierce.GR_STOCK)
 STOCK.update(grgunfar.GR_STOCK)
 STOCK.update(grsplat.GR_STOCK)
@@ -237,6 +242,11 @@ def _settings():
                            "Past 30 m an AI soldier throws at 36 m/s (reaches about 63 m). "
                            "The distance 'more readily' alone allowed, now with a throw "
                            "that gets there."),
+                    Choice("75", "Up to 75 m (as far as a launcher)",
+                           "Past 30 m an AI soldier throws at 42 m/s (reaches about 77 m). "
+                           "The same distance the grenade launcher already fires to, by "
+                           "hand. Further than a man can really throw: pick this for the "
+                           "fight, not for the realism."),
                 ],
                 help="How far away a soldier will throw a hand grenade (a grenade "
                      "launcher still fires out to 75 m). The game aims a throw as if "
@@ -1327,6 +1337,13 @@ def build_edits(v: dict) -> list:
     def w(va, value, note):
         e.append(WordEdit(va, value, STOCK[va], note))
 
+    if v.get("gr_grenade_arc"):
+        # The arc routine and its tables. The hooked jal is included, and the
+        # routine tail-jumps to the tracer renderer it displaced, so nothing
+        # the game drew there stops being drawn. See grarc.
+        for _va, _new, _st, _note in grarc.words("gr"):
+            w(_va, _new, _note)
+
     pool = int(v.get("gr_decal_pool", 20))
     if pool != 20:
         w(0x0046D9D0, 0x24050000 | (pool & 0xFFFF), "bullet-hole pool = %d" % pool)
@@ -1588,6 +1605,12 @@ def build_data(v: dict) -> list:
     if v.get("gr_reveal_hidden"):
         out.append(FileEdit("reveal_hidden", r"\.MIS$", "GR.IMG",
                             note="spawn the script-held reinforcements"))
+    _gl = str(v.get("gr_enemy_launcher") or "off")
+    if _gl != "off":
+        out.append(FileEdit("enemy_launcher",
+                            grlauncher.select(_gl, "gr"), "GR.IMG",
+                            note="a GP-25 in slot 1 of "
+                                 + ", ".join(grlauncher.kits_for(_gl, "gr"))))
     tier = v.get("gr_tier", "stock")
     if tier == "up1":
         out.append(FileEdit("bump_tier", r"\.MIS$", "GR.IMG", {"steps": 1},
@@ -1622,7 +1645,9 @@ PROFILE = GameProfile(
     volume_hint="GHOST_RECON",
     pcsx2_crc="3E571E95",
     overlays=[ELF],
-    settings=(_settings() + rseweapons.cards('gr_')
+    settings=(_settings() + [grlauncher.card('gr_', 'Enemies')]
+              + [grarc.card('gr_', 'Weapons')]
+              + rseweapons.cards('gr_')
               + [gropposing.card('gr_', 'Enemies')]
               + _mission_settings()),
     build_edits=build_edits,

@@ -147,9 +147,21 @@ FRAG_CHANCES = {
     "max": (0x3F81, 0x3F81, 0x3F81),
 }
 #: js_enemy_frag_range -> (the hand decision's limit in m, the AI's throw speed x the game's 25 m/s).
-#: With the drag the grenade flies with, 25 m/s reaches ~36 m, x1.28125 (32 m/s) ~53 m and x1.4375
-#: (35.9 m/s) ~63 m on the level; the last two still reach their limit 3 m uphill.
-RANGES = {"35": (35.0, 1.0), "50": (50.0, 1.28125), "60": (60.0, 1.4375)}
+#: With the drag the grenade flies with, 25 m/s reaches ~36 m, x1.28125 (32 m/s) ~53 m, x1.4375
+#: (35.9 m/s) ~63 m and x1.6640625 (41.6 m/s) ~77 m on the level; the last three still reach their
+#: limit 3 m uphill, which is what picks each multiplier rather than the level reach.
+#:
+#: Each multiplier is written as a bare `lui` immediate (ARM_HI, see _assemble_aim's assert), so its
+#: float must have a zero low half-word -- the legal values are 1/128 steps. 75 m uphill wants the
+#: smallest of those at or past it: x1.6640625 = 0x3FD50000, which makes 77.2 m level and 75.1 m
+#: 3 m up. x1.6328125 (0x3FD10000) looks right on the level at 75.1 m and is NOT, because it comes
+#: down at 73.1 m once the target is 3 m above the thrower.
+#:
+#: Worked out by integrating the game's own flight -- force = -AirResistanceConstant x velocity,
+#: k = 0.125 / 0.39 kg = 0.32 /s for FRAG.PRJ, g 9.8 -- which reproduces the three figures this
+#: table already carried to within half a metre (36.0, 52.6, 62.4 against ~36, ~53, ~63).
+RANGES = {"35": (35.0, 1.0), "50": (50.0, 1.28125), "60": (60.0, 1.4375),
+          "75": (75.0, 1.6640625)}
 NEAR = 30.0                  # m: nearer, the AI throws at the game's own speed (reaches ~36 m)
 BOOST = 0x5A5A               # aim_vel's mark for a harder throw
 
