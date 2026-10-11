@@ -25,7 +25,7 @@ Two differences from Ghost Recon worth knowing, both measured:
 from __future__ import annotations
 
 from .. import (grcallouts, grcamera, grextras, grhitblur, grshrapnel, grsight, grsquad,
-               grdeathmusic, grfrag, grhu, grlauncher, grhuspot, grpierce, grselcopy, grsmoke, grsplat, grsuppress,
+               grdeathmusic, grfrag, grhu, grlauncher, grarc, grhuspot, grpierce, grselcopy, grsmoke, grsplat, grsuppress,
                grtotalwar, grtrigger, grsprint, grshotgun, grshotsound, grlan, grcooplabel,
                grcooporders, grobserver, grcoopctl, grsprintspeed, grlanmenu, grcoophandicap,
                grawareness, grtactics, grgunfar, grcoophud, grcombatmusic, gralarm, grsidearm,
@@ -113,6 +113,12 @@ STOCK.update(grtactics.JS_STOCK)
 STOCK.update(grgunfar.JS_STOCK)
 STOCK.update(grcoophud.JS_STOCK)
 STOCK.update(grsuppress.JS_STOCK)
+#: 213 words: the hooked jal, the routine split 88/84 across sceTtyHandler
+#: and sceDclose, and 40 of tables in sceSifSearchModuleByName. All three
+#: stubs are the target of no jal in Jungle Storm -- which had to be
+#: re-tested here, since four stubs that are dead in Ghost Recon are live
+#: in this build. See grarc.
+STOCK.update(grarc.stock_words('js'))
 STOCK.update(grselcopy.JS_STOCK)
 STOCK.update(grobserver.JS_STOCK)
 STOCK.update(grsmoke.JS_STOCK)
@@ -1406,6 +1412,13 @@ def build_edits(v: dict) -> list:
     def w(va, value, note):
         e.append(WordEdit(va, value, STOCK[va], note))
 
+    if v.get("js_grenade_arc"):
+        # Split across two stubs with a branch between; the hooked jal is
+        # included and the routine tail-jumps to the tracer renderer it
+        # displaced. See grarc.
+        for _va, _new, _st, _note in grarc.words("js"):
+            w(_va, _new, _note)
+
     pool = int(v.get("js_decal_pool", 20))
     if pool != 20:
         w(0x00431930, 0x24050000 | (pool & 0xFFFF), "bullet-hole pool = %d" % pool)
@@ -1691,6 +1704,7 @@ PROFILE = GameProfile(
     pcsx2_crc="DE1E4DEE",
     overlays=[ELF],
     settings=(_settings() + [grlauncher.card('js_', 'Enemies')]
+              + [grarc.card('js_', 'Weapons')]
               + rseweapons.cards('js_')
               + _mission_settings()),
     build_edits=build_edits,
