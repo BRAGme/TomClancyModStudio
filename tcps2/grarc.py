@@ -243,6 +243,29 @@ GAMES = {
         VT_POS=0x330, VT_DIR=0x2D8, CAVE=None, CAVE_WORDS=0,
         CAVE_NAME=None,
         DATA_CAVE=None, DATA_WORDS=0, DATA_CAVE_NAME=None,
+        #: Jungle Storm is stripped -- no symtab, and not even a `.text`
+        #: section header -- so its dead stubs were found by matching Ghost
+        #: Recon's. Every GR `sce*` function that no `jal` targets was masked
+        #: (jal targets, `lui` halves and load/store displacements removed,
+        #: opcodes and registers kept) and looked up in an index of every
+        #: 20-word window of the Jungle Storm image; 100 stubs, kept only
+        #: where the match was UNIQUE. The matcher is right: it independently
+        #: reproduces six JS caves the repo already documents elsewhere --
+        #: sceVu0ViewScreenMatrix 0x001975B8 (grsuppress), sceDread 0x00180160
+        #: (grfrag), sceDevConsDrawS 0x001764C8 (grpierce) and
+        #: sceChstat/sceRename/sceSync 0x00180458/0x00180698/0x001808A8
+        #: (grcallouts).
+        #:
+        #: Deadness must then be re-tested IN JUNGLE STORM, not inherited:
+        #: sceDevctl, sceIpuInit, sceCdDiskReady and sceIpuRestartDMA are all
+        #: dead in Ghost Recon and all `jal` targets here.
+        #:
+        #: What is left after subtracting JS STOCK -- 283 words in four runs,
+        #: and the stub space is very nearly gone:
+        FREE=((0x0017B710, 101, "sceTtyHandler"),
+              (0x0017FFF8, 90, "sceDclose"),
+              (0x0017D978, 52, "sceSifRegisterRpc"),
+              (0x001820A0, 40, "sceSifSearchModuleByName")),
     ),
 }
 
@@ -347,7 +370,7 @@ _GR_CODE = (
     0x27BDFF20, 0xAFBF00AC, 0xAFA400A8, 0xAFB000B0, 0xAFB100B4, 0xAFB200B8,
     0xAFB400BC, 0x3C09005F, 0x8D29ACF0, 0x11200098, 0x00000000, 0x8D2A0444,
     0x11400095, 0x00000000, 0x8D520004, 0x12400092, 0x00000000, 0x8E480138,
-    0x1500008F, 0x00000000, 0x8E480458, 0x1100008C, 0x00000000, 0x8D090038,
+    0x1500008F, 0x00000000, 0x8E480458, 0x1100008C, 0x00000000, 0x91090038,
     0x11200089, 0x00000000, 0x3C110041, 0x26311458, 0xC64204F0, 0xC6230000,
     0x46031034, 0x45010004, 0x26340064, 0xC6240008, 0x10000003, 0x00000000,
     0x26340028, 0xC6240004, 0xE7A400A0, 0x8E590000, 0x8F3902D4, 0x0240282D,
