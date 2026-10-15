@@ -102,6 +102,12 @@ COOP_AI = (
     (0x0037755C, 0x1040000F, 0x1440000F, "bnez: no fill unless the game is co-op"),
 )
 JS_STOCK = {va: stock for va, stock, _new, _note in COOP_AI}
+# The lobby name and the port belong here too. Re-applying puts back a word an earlier apply wrote only when its
+# address is in the profile's stock table (engine.load_pristine); without these, re-patching a disc that already
+# points at a lobby was refused -- "0x0059e490 reads 322e3632" -- until it was restored first.
+JS_STOCK.update({HOST_VA + 4 * i: w
+                 for i, w in enumerate(struct.unpack("<%dI" % (HOST_ROOM // 4), HOST_STOCK))})
+JS_STOCK[PORT_VA] = PORT_STOCK
 
 
 class LanError(Exception):
