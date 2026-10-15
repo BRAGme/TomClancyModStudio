@@ -29,7 +29,7 @@ from .. import (grcallouts, grcamera, grextras, grhitblur, grshrapnel, grsight, 
                grtotalwar, grtrigger, grsprint, grshotgun, grshotsound, grlan, grcooplabel,
                grcooporders, grobserver, grcoopctl, grsprintspeed, grlanmenu, grcoophandicap,
                grawareness, grtactics, grgunfar, grcoophud, grcombatmusic, gralarm, grsidearm,
-               grzoomhold)
+               grzoomhold, grnadeorder, grmorale, grsniper, grshuffle, grreinforce, grsquadreact)
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
 from . import rseweapons, rstuning
@@ -105,6 +105,12 @@ STOCK.update(grdeathmusic.JS_STOCK)
 STOCK.update(grlan.JS_STOCK)
 STOCK.update(grcooplabel.JS_STOCK)
 STOCK.update(grcooporders.JS_STOCK)
+STOCK.update(grnadeorder.JS_STOCK)
+STOCK.update(grmorale.JS_STOCK)
+STOCK.update(grsniper.JS_STOCK)
+STOCK.update(grshuffle.JS_STOCK)
+STOCK.update(grreinforce.JS_STOCK)
+STOCK.update(grsquadreact.JS_STOCK)
 STOCK.update(grcoopctl.JS_STOCK)
 STOCK.update(grlanmenu.JS_STOCK)
 STOCK.update(grcoophandicap.JS_STOCK)
@@ -394,6 +400,33 @@ def _settings():
                         "that savestate carried a grenade launcher. Throw "
                         "distance and aim changed 2026-09-29; never played "
                         "since."),
+        Setting("js_enemy_frag_replan", "Enemies throw after indecisive re-plans",
+                BOOL, True, "Enemies", confidence="experimental",
+                requires={"js_enemy_grenades": True},
+                help="When an enemy has reconsidered his open-fight orders a few times (four, "
+                     "or what 'Re-plans before an enemy throws' says), "
+                     "ask the game's guarded grenade routine to throw at the last known "
+                     "enemy position. The throw still requires a grenade, a safe arc, "
+                     "the configured range and no nearby friendly. At most one throw is "
+                     "queued per fireteam during that open fight; the soldier finishes "
+                     "throwing before receiving another movement order. Jungle Storm "
+                     "provides frag grenades for this behavior, not smoke grenades.",
+                caution="Experimental; not yet verified in play."),
+        Setting("js_enemy_frag_replans", "Re-plans before an enemy throws", CHOICE, "4",
+                "Enemies", confidence="experimental",
+                requires={"js_enemy_frag_replan": True},
+                choices=[
+                    Choice("4", "Four (as first built)", ""),
+                    Choice("3", "Three", ""),
+                    Choice("2", "Two", "Decides about twice as fast as four."),
+                    Choice("1", "One", "Asks for a throw the first time he re-plans."),
+                ],
+                help="How many times an enemy reconsiders his open-fight orders before he asks "
+                     "to throw a grenade at your last known position. Fewer means he makes up "
+                     "his mind sooner. Every safety check still applies, and a fireteam still "
+                     "queues one throw at a time.",
+                caution="Not played at any count. The count is the same counter 'Enemies throw "
+                        "after indecisive re-plans' uses; only the number it waits for changes."),
         Setting("js_enemy_suppress", "Enemies suppress when they lose sight of you",
                 BOOL, False, "Enemies", confidence="experimental",
                 help="Jungle Storm's soldiers seldom lay down suppressive fire: "
@@ -1396,10 +1429,13 @@ def _settings():
                 caution="Never played. Stacks with 'extra skill' and "
                         "marksmanship dials."),
     ] + grlan.cards("js_", "Online") + grcooplabel.cards("js_", "Online") \
-      + grcooporders.cards("js_", "Online") + grcoopctl.cards("js_", "Online") \
+      + grcooporders.cards("js_", "Online") + grnadeorder.cards("js_", "Online") \
+      + grcoopctl.cards("js_", "Online") \
       + grlanmenu.cards("js_", "Online") + grcoophandicap.cards("js_", "Online") \
       + grcoophud.cards("js_", "Online") \
       + grawareness.cards("js_", "Enemies") \
+      + grmorale.cards("js_", "Enemies") + grsniper.cards("js_", "Enemies") \
+      + grshuffle.cards("js_", "Enemies") + grreinforce.cards("js_", "Enemies") \
       + rstuning.cards("js_")
 
 
@@ -1464,6 +1500,9 @@ def build_edits(v: dict) -> list:
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grcooporders.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
+    # the hold-R2 grenade order's routines; grsquad and grcooporders route the hold to them (see grnadeorder)
+    for va, value, stock, note in grnadeorder.js_edits(v):
+        e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grcoopctl.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grlanmenu.js_edits(v):
@@ -1476,6 +1515,9 @@ def build_edits(v: dict) -> list:
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grtactics.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
+    for mod in (grmorale, grsniper, grshuffle, grreinforce, grsquadreact):
+        for va, value, stock, note in mod.js_edits(v):
+            e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grgunfar.js_edits(v):
         e.append(WordEdit(va, value, stock, note))
 
@@ -1497,7 +1539,8 @@ def build_edits(v: dict) -> list:
             teammates=bool(v.get("js_ss_teammates")),
             orders=bool(v.get("js_ss_orders")),
             observer=grobserver.enabled(v),
-            select_aim=grcoopctl.ss_aim_enabled(v)):
+            select_aim=grcoopctl.ss_aim_enabled(v),
+            r2_hold=grnadeorder.js_mode(v)):
         e.append(WordEdit(va, value, stock, note))
 
     for va, value, stock, note in grsprint.js_edits(v):
@@ -1705,6 +1748,7 @@ PROFILE = GameProfile(
     overlays=[ELF],
     settings=(_settings() + [grlauncher.card('js_', 'Enemies')]
               + [grarc.card('js_', 'Weapons')]
+              + grsquadreact.cards('js_', 'Squad')
               + rseweapons.cards('js_')
               + _mission_settings()),
     build_edits=build_edits,

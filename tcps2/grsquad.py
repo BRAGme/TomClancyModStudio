@@ -1288,6 +1288,10 @@ def _spr_edits(src, cave, syms, hooks, p2, stock):
 # replaces the stock split-screen binding there (MapKey keeps one binding
 # per keycode) -- GR_JS_LAYOUT_KEYS.
 #
+# Hold the order key: "move to" (mv, below). With grnadeorder's r2_hold
+# 'frag' / 'smoke' the long press calls grnadeorder's nade_ss instead -- one
+# word of ord changes; with 'move' nothing does.
+#
 # Caves: NewPS2Shortcut::RelinkBravo (GR 0x002D4A40) and RelinkAlpha/Bravo
 # (JS 0x002A23E0). NewPS2Shortcut::mInstance is only ever stored with zero
 # (GR 0x0023BA24, JS 0x0023AD4C; no gp-relative access), so its update --
@@ -1893,15 +1897,31 @@ GR_STOCK.update(ORD["GR"]["STOCK"])
 JS_STOCK.update(ORD["JS"]["STOCK"])
 
 
-def _orders_edits(g):
+#: the long press's call in ``ord``; grnadeorder's r2_hold 'frag' / 'smoke' sends it to nade_ss instead
+_MOVETO_CALL = " jal   mv                         ; (FireTeamAI, SimHuman)\n"
+
+
+def _orders_edits(g, nade_ss=None):
+    """`nade_ss`: the address of grnadeorder's split-screen grenade order, which the long press then
+    calls in place of ``mv`` (one word differs); None: the move-to, as always."""
     mw, _ = assemble(_ord_map_src(g), g["CAVE"])
     ord_base = g["CAVE"] + 4 * len(mw)
-    ow, _ = assemble(_ord_src(g) + _mv_src(g), ord_base)
+    src = _ord_src(g)
+    ow, _ = assemble(src + _mv_src(g), ord_base)
     words = mw + ow
+    notes = ["orders + switching: routine"] * len(words)
+    if nade_ss is not None:
+        nade = src.replace(_MOVETO_CALL, " jal   %#x                   ; grenade there (grnadeorder)\n" % nade_ss, 1)
+        assert nade != src
+        nw = mw + assemble(nade + _mv_src(g), ord_base)[0]
+        assert len(nw) == len(words) and sum(a != b for a, b in zip(nw, words)) == 1
+        notes = [n if a == b else "orders + switching: hold = a teammate throws a grenade there"
+                 for n, a, b in zip(notes, nw, words)]
+        words = nw
     if len(words) > len("".join(g["stock_hex"].split())) // 8:
         raise ValueError("orders routines outgrow their stock table")
     st = g["STOCK"]
-    out = [(g["CAVE"] + 4 * i, w, st[g["CAVE"] + 4 * i], "orders + switching: routine")
+    out = [(g["CAVE"] + 4 * i, w, st[g["CAVE"] + 4 * i], notes[i])
            for i, w in enumerate(words)]
     va, s = g["MAP_HOOK"]
     out.append((va, assemble("jal %#x" % g["CAVE"], va)[0][0], s,
@@ -1939,17 +1959,22 @@ def _handoff_edits(src, cave, b1, table, new, stock):
 
 def gr_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
              briefing: bool = False, teammates: bool = False, orders: bool = False,
-             js_controls: bool = False, observer: bool = False):
+             js_controls: bool = False, observer: bool = False, r2_hold: str = "move"):
     """(va, value, stock, note) for the chosen Ghost Recon options.
     `teammates` (single player's roster) needs `briefing` and replaces it;
     `orders` needs `handoff`; `js_controls`: Jungle Storm's pad layout is on
     (grcontrols), so the orders' keys follow it; `observer` (pass
     grobserver.gr_enabled(v), whose routines must be in the same build) needs
-    `handoff`."""
+    `handoff`; `r2_hold` (pass grnadeorder.gr_mode(v), whose routines must be in
+    the same build): 'move' as always, 'frag' / 'smoke' -- the long press is a
+    grenade order."""
     out = []
     if orders and handoff:
         g = dict(ORD["GR"], keys=GR_JS_LAYOUT_KEYS) if js_controls else ORD["GR"]
-        out += _orders_edits(g)
+        nade = None
+        if r2_hold != "move":
+            from .grnadeorder import GR_NADE_SS as nade
+        out += _orders_edits(g, nade)
     if teammates and briefing:
         out += _spr_edits(GR_SPR_SRC, GR_UI_CAVE, GR_SPR_SYMS, GR_SPR_HOOKS,
                           GR_SPR_P2, GR_STOCK)
@@ -1978,17 +2003,23 @@ def gr_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
 
 def js_edits(fireteams: bool, handoff: bool = False, bullet_holes: bool = False,
              briefing: bool = False, teammates: bool = False, orders: bool = False,
-             observer: bool = False, select_aim: bool = False):
+             observer: bool = False, select_aim: bool = False, r2_hold: str = "move"):
     """(va, value, stock, note) for the chosen Jungle Storm options.
     `teammates` (single player's roster) needs `briefing` and replaces it;
     `orders` needs `handoff`; `observer` (pass grobserver.enabled(v), whose
     routines must be in the same build) needs `handoff`; `select_aim` (pass
     grcoopctl.ss_aim_enabled(v); grcoopctl.js_edits(v) then carries the aim
     routines) makes the handoff cave's FindNextTeamMember call grcoopctl's
-    `aimnext`: SELECT takes the fireteam AI under the reticle first."""
+    `aimnext`: SELECT takes the fireteam AI under the reticle first;
+    `r2_hold` (pass grnadeorder.js_mode(v); grnadeorder.js_edits(v) carries
+    the routines): 'move' as always, 'frag' / 'smoke' -- the long press is a
+    grenade order."""
     out = []
     if orders and handoff:
-        out += _orders_edits(ORD["JS"])
+        nade = None
+        if r2_hold != "move":
+            from .grnadeorder import JS_NADE_SS as nade
+        out += _orders_edits(ORD["JS"], nade)
     if teammates and briefing:
         out += _spr_edits(JS_SPR_SRC, JS_UI_CAVE, JS_SPR_SYMS, JS_SPR_HOOKS,
                           JS_SPR_P2, JS_STOCK)
@@ -2070,10 +2101,11 @@ def selftest(gr_elf_bytes=None, js_elf_bytes=None):
             fails.append("%s roster cave too big" % name)
         # every word any option combination writes has its stock value on record
         fn = gr_edits if name == "GR" else js_edits
-        for combo in ((True, True, True, True, True, True),
-                      (True, True, True, True, False, True),
-                      (True, False, False, False, False, False)):
-            for va, _w, s, _n in fn(*combo):
+        for combo, hold in (((True, True, True, True, True, True), "move"),
+                            ((True, True, True, True, False, True), "move"),
+                            ((True, False, False, False, False, False), "move"),
+                            ((True, True, True, True, True, True), "frag")):
+            for va, _w, s, _n in fn(*combo, r2_hold=hold):
                 if stock.get(va) != s:
                     fails.append("%s %08x: edit stock %08x, table %s"
                                  % (name, va, s, stock.get(va)))

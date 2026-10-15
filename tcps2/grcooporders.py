@@ -94,6 +94,11 @@ so no waypoint is added. Real waypoints (single player's command map, fireteams 
 through. A stock host finds no fireteam 0x10+ and does nothing. The joiner's own copy of the
 message finds no fireteam either (mv returns at once).
 
+Grenade there instead (js_r2_hold 'frag' / 'smoke', tcps2/grnadeorder.py): the long press posts the
+same AddWaypoint with fireteam + 0x20 (TEAM_NADE); on the host ``disp`` looks the fireteam up by its
+low nibble and hands the point to grnadeorder's ``nade_disp`` (fireteam + 0x10 still goes on to
+``mv``). Three words differ (_NADE_SUBS); with 'move' none does. The tap is unchanged.
+
 The press time is noted by a hook on the press path's `jal 0x1255E0` (0x00285F34; also runs in
 single player, where it only writes the word); the release and the per-frame preview compare the
 game clock (RSClock 0x00684768 +0xD4) with it, against the one threshold TAP (0.4 s).
@@ -815,11 +820,31 @@ def _labels(src):
     return out
 
 
-def build():
+#: grnadeorder (js_r2_hold 'frag' / 'smoke'): the three words that make a long press a grenade order.
+#: The order goes out as fireteam + TEAM_NADE; on the host disp looks the fireteam up by its low nibble
+#: and hands the point to grnadeorder's nade_disp, which passes fireteam + 0x10 on to mv as before.
+TEAM_NADE = 0x20
+_NADE_SUBS = (
+    ("BODY", "    li    s2, TEAM_MOVE\n", "    li    s2, TEAM_NADE\n"),
+    ("SRC", "    addiu a3, a3, -0x10\n", "    andi  a3, a3, 0xf\n"),
+    ("SRC", "    jal   mv\n    lw    a1, 0x00(sp)\n", "    jal   NADE_DISP\n    lw    a1, 0x00(sp)\n"),
+)
+
+
+def build(r2_hold: str = "move"):
     """(cave words, cave-B words, branch words, labels). Two passes: the first sizes each piece
-    with every other piece's labels standing in at its base, the second resolves them."""
-    pieces = (("SRC", SRC, CAVE, CAVE_END), ("SRC_B", SRC_B, CAVE_B, CAVE_B_END),
-              ("BODY", BODY, BRANCH, BRANCH_END))
+    with every other piece's labels standing in at its base, the second resolves them.
+    `r2_hold`: 'move' (as always) or 'frag' / 'smoke' (grnadeorder: three words differ)."""
+    srcs = {"SRC": SRC, "SRC_B": SRC_B, "BODY": BODY}
+    syms_extra = {}
+    if r2_hold != "move":
+        from .grnadeorder import JS_NADE_DISP
+        for piece, old, new in _NADE_SUBS:
+            assert srcs[piece].count(old) == 1, old
+            srcs[piece] = srcs[piece].replace(old, new)
+        syms_extra = dict(TEAM_NADE=TEAM_NADE, NADE_DISP=JS_NADE_DISP)
+    pieces = (("SRC", srcs["SRC"], CAVE, CAVE_END), ("SRC_B", srcs["SRC_B"], CAVE_B, CAVE_B_END),
+              ("BODY", srcs["BODY"], BRANCH, BRANCH_END))
     stand_in = {}
     for _name, src, base, _end in pieces:
         for lab in _labels(src):
@@ -829,7 +854,8 @@ def build():
         out, new = {}, {}
         for name, src, base, end in pieces:
             own = _labels(src)
-            syms = dict(SYMS, **{k: v for k, v in labels.items() if k not in own})
+            syms = dict(SYMS, **syms_extra)
+            syms.update({k: v for k, v in labels.items() if k not in own})
             words, lab = assemble(src, base, syms)
             if base + 4 * len(words) > end:
                 raise ValueError("co-op orders: %s is %d words, room %d"
@@ -840,9 +866,9 @@ def build():
     return out["SRC"], out["SRC_B"], out["BODY"], labels
 
 
-def edits() -> list:
-    """(va, value, stock, note)."""
-    cave, cave_b, body, labels = build()
+def edits(r2_hold: str = "move") -> list:
+    """(va, value, stock, note). `r2_hold` as build()."""
+    cave, cave_b, body, labels = build(r2_hold)
     out = [(CAVE + 4 * i, w, JS_STOCK[CAVE + 4 * i], "co-op orders: routines")
            for i, w in enumerate(cave)]
     out += [(CAVE_B + 4 * i, w, JS_STOCK[CAVE_B + 4 * i],
@@ -862,11 +888,22 @@ def edits() -> list:
                     "co-op orders: " + note))
     out.append((HOOK_MARK, assemble("jal %#x" % labels["mkgate"], HOOK_MARK)[0][0],
                 JS_STOCK[HOOK_MARK], "co-op orders: online, a tap's release: no sound, no marker"))
+    if r2_hold != "move":            # name the words that make the long press a grenade order
+        move = {va: w for va, w, _s, _n in edits()}
+        if set(move) != {va for va, *_ in out}:
+            raise ValueError("co-op orders: the grenade build writes other words than the move build")
+        out = [(va, w, s, n if move[va] == w else
+                "co-op orders: hold = a teammate throws a grenade there (%s), on the host" % r2_hold)
+               for va, w, s, n in out]
     return out
 
 
 def js_edits(v: dict) -> list:
-    return edits() if v.get("js_coop_orders") else []
+    """With js_coop_orders; js_r2_hold (grnadeorder.js_mode) picks what a long press sends."""
+    if not v.get("js_coop_orders"):
+        return []
+    from .grnadeorder import js_mode
+    return edits(js_mode(v))
 
 
 def cards(prefix: str = "js_", group: str = "Online") -> list:
@@ -896,12 +933,13 @@ def selftest(js_elf=None) -> list:
     """[] = pass: stock table vs the executable, no VA twice, every edit has a stock word."""
     import struct
     fails = []
-    e = edits()
-    if len({va for va, *_ in e}) != len(e):
-        fails.append("duplicate VA")
-    for va, _w, s, _n in e:
-        if JS_STOCK.get(va) != s:
-            fails.append("%08x: edit stock %08x, table %s" % (va, s, JS_STOCK.get(va)))
+    for hold in ("move", "frag"):
+        e = edits(hold)
+        if len({va for va, *_ in e}) != len(e):
+            fails.append("duplicate VA")
+        for va, _w, s, _n in e:
+            if JS_STOCK.get(va) != s:
+                fails.append("%08x: edit stock %08x, table %s" % (va, s, JS_STOCK.get(va)))
     if js_elf is not None:
         for table in (JS_STOCK, JS_CONTEXT):
             for va, want in table.items():

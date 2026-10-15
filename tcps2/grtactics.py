@@ -179,12 +179,19 @@ from __future__ import annotations
 import struct
 
 from .grasm import assemble
+from . import grcallouts
 
 HOOK, HOOK_STOCK = 0x001B56D0, 0x0C044A8C       # jal RSRandom::Int (delay: move t0, zero)
 CAVE, CAVE_END = 0x00553A98, 0x00553B88          # lgAudPrepareForReboot twin + padding, 60 words
+FRAG_CAVE, FRAG_CAVE_END = 0x00180728, 0x001808A8  # unused tail after callouts' contact routine
 PROBE = 0x001B56F4                               # lui at, 0x63; jal ProbePool ... (stock probe block)
 COVER = 0x001B58F4                               # jal CoverAreaPool; lw a0, -0x3908(at) (stock CoverArea block)
 RANDINT = 0x00112A30
+FRAG_DECIDE = 0x00180160
+FRAG_HELPER_CAVE = CAVE
+NEXT_MEMBER = 0x001B5944
+FLAG_READ, FLAG_READ_STOCK = 0x001B572C, 0x8C63002C  # OpenFight's per-member run-for-cover flag
+FLAG_WRITE, FLAG_WRITE_STOCK = 0x001B5768, 0xAE420000
 
 # js_ai_advance: (K, advance range in m) -- a hostile soldier's roll is RSRandom::Int(-K, difficulty)
 ADVANCE = {"stock": (1, 75.0), "more": (2, 150.0), "aggressive": (3, 300.0)}
@@ -233,6 +240,116 @@ tr_ret:
     jr    ra
     addiu sp, sp, 0x20
 """
+
+# This larger entry lives after callouts' contact routine. The high three bits of each existing
+# per-member run-for-cover word count OpenFight replans; bit 11 of member zero reserves the team's
+# one pending grenade. The low byte remains the stock boolean, so its stock read/write use byte ops.
+SRC_FRAG = """
+tac_roll:
+    addiu sp, sp, -0x20
+    sd    ra, 0x10(sp)
+    lw    s2, 0x14(s0)
+    lw    s2, 0x458(s2)
+    lbu   s2, 0xb7(s2)
+    beqz  s2, tr_rng
+    nop
+    lw    t1, 0xc(s0)
+    lw    t1, 4(t1)
+    addiu t1, t1, -0x17
+    beqz  t1, tr_skip              ; FragLocation is already on top; let it run
+    nop
+tr_rng:
+{CHANCE}    beqz  s2, tr_ret
+    nop
+    sw    v0, 0xc(sp)
+    jal   FRAG_HELPER_CAVE
+    nop
+    bnez  v0, tr_skip
+    nop
+    lw    v0, 0xc(sp)
+    bgez  v0, tr_stay
+    lui   t1, {RANGE}
+    mtc1  t1, f0
+    lw    t1, 0xc(s0)
+    c.lt.s f20, f0
+    bc1f  tr_stay
+    lw    t1, 4(t1)
+    .word {MOVZ}
+    lw    t1, 4(t1)
+    addiu t1, t1, -0x14
+    beqz  t1, tr_stay
+{GO}    j     PROBE
+    addiu sp, sp, 0x20
+tr_stay:
+{HOLD}    move  v0, zero
+tr_ret:
+    ld    ra, 0x10(sp)
+    jr    ra
+    addiu sp, sp, 0x20
+tr_skip:
+    ld    ra, 0x10(sp)
+    addiu sp, sp, 0x20
+    j     NEXT_MEMBER
+    nop
+"""
+
+FRAG_HELPER = """
+frag_replan:
+    addiu sp, sp, -0x20
+    sd    ra, 0x10(sp)
+    addiu t0, s5, 0x2c             ; member zero carries the fireteam reservation
+    lw    t1, 0(t0)
+    andi  t2, t1, 0x800
+    bnez  t2, fr_done               ; one FragLocation queued for this OpenFight
+    move  v0, zero
+    sll   t0, s1, 2
+    addu  t0, s5, t0
+    addiu t0, t0, 0x2c
+    lw    t1, 0(t0)
+    srl   t2, t1, 8
+    andi  t2, t2, 7
+    sltiu t3, t2, {AFTER}
+    beqz  t3, fr_try_frag
+    nop
+    addiu t2, t2, 1
+    sll   t3, t2, 8
+    andi  t1, t1, 0xf8ff
+    or    t1, t1, t3
+    sw    t1, 0(t0)
+    sltiu t3, t2, {AFTER}
+    bnez  t3, fr_done
+    move  v0, zero
+fr_try_frag:
+    swc1  f23, 0(sp)
+    swc1  f22, 4(sp)
+    swc1  f21, 8(sp)
+    move  a0, zero
+    move  a1, s0
+    move  a2, sp
+    lui   a3, 0x3f81                ; always ask; grfrag keeps its safety checks
+    jal   FRAG_DECIDE
+    nop
+    beqz  v0, fr_done
+    nop
+    lw    t0, 0x2c(s5)
+    ori   t0, t0, 0x800             ; reserve against simultaneous team members
+    sw    t0, 0x2c(s5)
+fr_done:
+    ld    ra, 0x10(sp)
+    jr    ra
+    addiu sp, sp, 0x20
+"""
+
+def frag_helper(after=4):
+    """The re-plan counter's helper; `after` re-plans (1..7, the counter's 3 bits) before it asks for a throw."""
+    if not 1 <= after <= 7:
+        raise ValueError("re-plans before a throw must be 1..7, not %r" % after)
+    words, labels = assemble(FRAG_HELPER.replace("{AFTER}", str(after)), FRAG_HELPER_CAVE,
+                             dict(FRAG_DECIDE=FRAG_DECIDE))
+    if FRAG_HELPER_CAVE + 4 * len(words) > CAVE_END:
+        raise ValueError("grenade helper outgrows its cave (%d of %d words)"
+                         % (len(words), (CAVE_END - FRAG_HELPER_CAVE) // 4))
+    return words, labels
 
 # the roll: a1 = -1 - s2 * (K - 1); the last instruction fills the jal's delay slot
 SRC_CHANCE = {
@@ -285,17 +402,22 @@ th_no:
 """
 
 
-def routine(advance="stock", flank=False, hold=False):
+def routine(advance="stock", flank=False, hold=False, frag_after=0):
     """(words, labels) of the cave for these settings."""
     k, rng = ADVANCE[advance]
-    src = SRC.format(CHANCE=SRC_CHANCE[k], RANGE=hex(_hi(rng)), MOVZ=hex(MOVZ_T1_S5_T1),
-                     GO=SRC_FLANK.format(OFFSET=hex(_hi(FLANK_OFFSET))) if flank else "    nop\n",
-                     HOLD=SRC_HOLD if hold else "")
-    words, labels = assemble(src, CAVE, dict(RANDINT=RANDINT, PROBE=PROBE, COVER=COVER, SCENE=SCENE,
-                                             FINDLEVEL=FINDLEVEL))
-    if CAVE + 4 * len(words) > CAVE_END:
+    cave = FRAG_CAVE if frag_after else CAVE
+    end = FRAG_CAVE_END if frag_after else CAVE_END
+    src = (SRC_FRAG if frag_after else SRC).format(
+        CHANCE=SRC_CHANCE[k], RANGE=hex(_hi(rng)), MOVZ=hex(MOVZ_T1_S5_T1),
+        GO=SRC_FLANK.format(OFFSET=hex(_hi(FLANK_OFFSET))) if flank else "    nop\n",
+        HOLD=SRC_HOLD.replace("lw    t1, 0x2c(t1)", "lbu   t1, 0x2c(t1)") if frag_after and hold
+             else SRC_HOLD if hold else "")
+    words, labels = assemble(src, cave, dict(RANDINT=RANDINT, PROBE=PROBE, COVER=COVER, SCENE=SCENE,
+                                             FRAG_DECIDE=FRAG_DECIDE, NEXT_MEMBER=NEXT_MEMBER,
+                                             FRAG_HELPER_CAVE=FRAG_HELPER_CAVE, FINDLEVEL=FINDLEVEL))
+    if cave + 4 * len(words) > end:
         raise ValueError("tactics routine outgrows its cave (%d of %d words)"
-                         % (len(words), (CAVE_END - CAVE) // 4))
+                         % (len(words), (end - cave) // 4))
     return words, labels
 
 
@@ -317,31 +439,50 @@ def _stock_words(base, hexwords):
 
 
 JS_STOCK = _stock_words(CAVE, _CAVE_STOCK_HEX)
+JS_STOCK.update({va: grcallouts.JS_STOCK[va] for va in range(FRAG_CAVE, FRAG_CAVE_END, 4)})
 JS_STOCK[HOOK] = HOOK_STOCK
-assert len(JS_STOCK) == (CAVE_END - CAVE) // 4 + 1
+JS_STOCK[FLAG_READ] = FLAG_READ_STOCK
+JS_STOCK[FLAG_WRITE] = FLAG_WRITE_STOCK
+assert len(JS_STOCK) == ((CAVE_END - CAVE) // 4
+                         + (FRAG_CAVE_END - FRAG_CAVE) // 4 + 3)
 
 
 def enabled(v: dict) -> bool:
     return (v.get("js_ai_advance", "stock") != "stock" or bool(v.get("js_ai_flank"))
-            or bool(v.get("js_ai_hold_cover")))
+            or bool(v.get("js_ai_hold_cover") or (v.get("js_enemy_grenades")
+                                                    and v.get("js_enemy_frag_replan", True))))
 
 
-def edits(advance="stock", flank=False, hold=False):
+def edits(advance="stock", flank=False, hold=False, frag_after=0):
     """(va, value, stock, note); [] when every setting is stock."""
-    if advance == "stock" and not flank and not hold:
+    if advance == "stock" and not flank and not hold and not frag_after:
         return []
-    words, labels = routine(advance, flank, hold)
+    words, labels = routine(advance, flank, hold, frag_after)
     what = ", ".join(x for x, on in (("advance %s" % advance, advance != "stock"), ("flank", flank),
                                      ("hold cover", hold)) if on)
-    out = [(CAVE + 4 * i, w, JS_STOCK[CAVE + 4 * i], "enemy tactics: open-fight re-plan (%s)" % what)
+    cave = FRAG_CAVE if frag_after else CAVE
+    out = [(cave + 4 * i, w, JS_STOCK[cave + 4 * i], "enemy tactics: open-fight re-plan (%s)" % what)
            for i, w in enumerate(words)]
+    if frag_after:
+        helper, _ = frag_helper(frag_after)
+        out.extend((FRAG_HELPER_CAVE + 4 * i, w, JS_STOCK[FRAG_HELPER_CAVE + 4 * i],
+                    "enemy tactics: count re-plans and ask the grenade routine")
+                   for i, w in enumerate(helper))
     out.append((HOOK, assemble("jal %#x" % labels["tac_roll"], HOOK)[0][0], HOOK_STOCK,
                 "enemy tactics: OpenFight's re-plan roll goes through the tactics routine"))
+    if frag_after:
+        out.append((FLAG_READ, 0x9063002C, FLAG_READ_STOCK,
+                    "enemy tactics: the re-plan counter preserves the run-for-cover flag"))
+        out.append((FLAG_WRITE, 0xA2420000, FLAG_WRITE_STOCK,
+                    "enemy tactics: the run-for-cover flag preserves the re-plan counter"))
     return out
 
 
 def js_edits(v: dict):
-    return edits(v.get("js_ai_advance", "stock"), bool(v.get("js_ai_flank")), bool(v.get("js_ai_hold_cover")))
+    frag_after = (int(v.get("js_enemy_frag_replans", "4"))
+                  if v.get("js_enemy_grenades") and v.get("js_enemy_frag_replan", True) else 0)
+    return edits(v.get("js_ai_advance", "stock"), bool(v.get("js_ai_flank")),
+                 bool(v.get("js_ai_hold_cover")), frag_after)
 
 
 # ---------------------------------------------------------------------------

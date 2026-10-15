@@ -28,6 +28,7 @@ from .. import (grcallouts, grcamera, grcontrols, grextras, grhitblur, grshrapne
                grhu, grhuspot, grshotgun, grshotsound, grsight, grsplat, grsquad, grtotalwar, grtrigger, gropposing,
                grsprintspeed, grobserver, grdeathmusic, grcombatmusic, grawareness, grzoomhold,
                grsmoke, grtactics, grsuppress, grfrag, grgunfar, grpierce, grlauncher, grarc,
+               grnadeorder, grmorale, grsniper, grshuffle, grreinforce, grsquadreact,
                )
 from ..model import (BOOL, CHOICE, INT, Choice, FileEdit, GameProfile, Overlay,
                      Setting, WordEdit)
@@ -70,6 +71,12 @@ STOCK = {
 }
 # split-screen fireteams: the hook plus the whole cave region
 STOCK.update(grsquad.GR_STOCK)
+STOCK.update(grnadeorder.GR_STOCK)
+STOCK.update(grmorale.GR_STOCK)
+STOCK.update(grsniper.GR_STOCK)
+STOCK.update(grshuffle.GR_STOCK)
+STOCK.update(grreinforce.GR_STOCK)
+STOCK.update(grsquadreact.GR_STOCK)
 STOCK.update(grextras.GR_STOCK)
 STOCK.update(grshrapnel.GR_STOCK)
 STOCK.update(grcamera.GR_STOCK)
@@ -385,6 +392,10 @@ def _settings():
                 caution="Never played; checked in a RAM interpreter on Ghost Recon savestates. Your squad may "
                         "open fire from farther away and give away its position sooner."),
         *grawareness.cards("gr_", "Enemies"),
+        *grmorale.cards("gr_", "Enemies"),
+        *grsniper.cards("gr_", "Enemies"),
+        *grshuffle.cards("gr_", "Enemies"),
+        *grreinforce.cards("gr_", "Enemies"),
         Setting("gr_soldier_draw", "How far away soldiers are drawn", CHOICE,
                 "80", "Enemies", confidence="experimental",
                 choices=[
@@ -1407,7 +1418,11 @@ def build_edits(v: dict) -> list:
             teammates=bool(v.get("gr_ss_teammates")),
             orders=bool(v.get("gr_ss_orders")),
             js_controls=v.get("gr_controls", "stock") != "stock",
-            observer=grobserver.gr_enabled(v)):
+            observer=grobserver.gr_enabled(v),
+            r2_hold=grnadeorder.gr_mode(v)):
+        e.append(WordEdit(va, value, stock, note))
+    # the hold-order grenade routines grsquad routes the long press to (see grnadeorder)
+    for va, value, stock, note in grnadeorder.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grobserver.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
@@ -1448,7 +1463,8 @@ def build_edits(v: dict) -> list:
         e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grsmoke.gr_edits(v):
         e.append(WordEdit(va, value, stock, note))
-    for mod in (grtactics, grsuppress, grfrag, grpierce, grgunfar):
+    for mod in (grtactics, grsuppress, grfrag, grpierce, grgunfar, grmorale, grsniper, grshuffle, grreinforce,
+                grsquadreact):
         for va, value, stock, note in mod.gr_edits(v):
             e.append(WordEdit(va, value, stock, note))
     for va, value, stock, note in grsprintspeed.gr_edits(v):
@@ -1647,6 +1663,8 @@ PROFILE = GameProfile(
     overlays=[ELF],
     settings=(_settings() + [grlauncher.card('gr_', 'Enemies')]
               + [grarc.card('gr_', 'Weapons')]
+              + grnadeorder.cards('gr_', 'Split Screen')
+              + grsquadreact.cards('gr_', 'Squad')
               + rseweapons.cards('gr_')
               + [gropposing.card('gr_', 'Enemies')]
               + _mission_settings()),
