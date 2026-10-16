@@ -917,6 +917,17 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
     # must actually undo it -- and it breaks it silently, because `verify_data`
     # only asks whether the file still decodes, which a leftover edit does.
     restored = 0
+    # Leftovers are NOT written straight back to the offset they shipped at. An
+    # earlier run may have moved one out (it outgrew its slot) and handed that
+    # slot to another file it relocated; writing the original there blind puts
+    # two entries on the same bytes, and whichever is written last wins. Found
+    # 2026-10-15: a friend re-patching 10-11 -> 10-15 got G36.GUN (shotgun off
+    # again) restored on top of PARTICLE_EFFECT14.POB, which the 10-11 run had
+    # moved into G36's vacated slot. So a leftover joins the files written
+    # below, with its shipped slot as home: it goes home only when that slot is
+    # free (`Vokes.send_home` / `write` refuse an occupied one) and otherwise
+    # stays where it is or relocates, like every other file.
+    leftovers = []
     if selector is None:
         for rec in store.entries():
             arc = arcs.get(rec["archive"].upper())
@@ -931,10 +942,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
             data, offset = got
             if ent.offset == offset and arc.read_entry(ent) == data:
                 continue                   # already stock, nothing to undo
-            if ent.offset != offset:
-                arc.r.write(ent.offset, b"\x00" * ent.size)
-            arc.r.write(offset, data)
-            arc._set_entry(ent, offset, len(data), data=data)
+            leftovers.append((len(data), arc, ent, data, (offset, len(data))))
             restored += 1
         if restored:
             say("Put back %d file%s an earlier run had edited"
@@ -1001,6 +1009,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
                     packed = shorter
                     break
         built.append((len(packed), arc, ent, packed, home))
+    built.extend(leftovers)                # see the leftover loop above
     built.sort(key=lambda r: -r[0])
 
     # Homecoming, before a single byte is allocated.
@@ -1048,7 +1057,7 @@ def apply_data(iso, profile, edits, store, progress=None, selector=None,
             % (fitted, "" if fitted == 1 else "s"))
     if built:
         say("Rewrote %d data file%s" % (written, "" if written == 1 else "s"))
-    return {"files": written - put_back, "restored": restored + put_back,
+    return {"files": written - put_back - len(leftovers), "restored": restored + put_back,
             "changes": counts}
 
 
