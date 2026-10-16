@@ -997,6 +997,15 @@ TABLE_VA = 0x0057C630
 TABLE_STRIDE = 84
 LAN_MASK_VA = 0x0057D090
 
+#: the online map check (0x305550) never range-checks the map index, which a
+#: memory-card profile restores as saved: a card that last saw a longer table
+#: hands back row 31, whose "+0x4C" is a mask word that passes every type, and
+#: Setup then searches the strings forever for its name. $a1 = 7*index here,
+#: so `sltiu v1,a1,7*31` rejects it and the selector moves to a real row.
+MAP_GUARD = {0x003056DC: (0x03E00008, 0x2CA300D9),   # jr ra -> sltiu v1,a1,0xd9
+             0x003056E4: (0x00000000, 0x03E00008),   # -> jr ra
+             0x003056E8: (0x00000000, 0x00431024)}   # -> and v0,v0,v1
+
 #: VoxLists::GetWaveName, the branch that picks the enemy voice list.
 #: addiu $s1,$v0,0xC78 (mITEnemyList) -> addiu $s1,$v0,0x990 (mEnemyList)
 VOICE_VA = 0x00256D18
@@ -1037,6 +1046,8 @@ def enable_coop_slots(out_path, rows):
         if want != lan:
             struct.pack_into("<I", blob, lan_off, want)
             lanbits = bin(want ^ lan).count("1")
+        for va, (_old, new) in MAP_GUARD.items():
+            struct.pack_into("<I", blob, va - 0x00100000 + 0x100, new)
         iso.write(ent.lba, bytes(blob))
         iso.flush()
     return nrows, lanbits
